@@ -1,161 +1,196 @@
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="Grokbot Clone — Your team. Their own computers." width="100%">
+  <img src="assets/readme-banner.svg" alt="Bot HQ. Your team. Their own computers." width="100%">
 </p>
 
 <p align="center">
-  A self-hosted Grok Bot clone with computer use, connected apps, memory, and voice.<br>
-  Built with the public Grok API, Orgo, and Composio.
+  A team of AI agents you chat with, each with its own screen on one cloud computer.<br>
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> runs the bots, <a href="https://orgo.ai">Orgo</a> gives them screens, <a href="https://composio.dev">Composio</a> connects their apps, and <a href="https://x.ai">xAI</a> gives them a voice and research on X.
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#what-you-can-do">Features</a> ·
+  <a href="#what-you-get">What you get</a> ·
+  <a href="#how-it-fits-together">How it works</a> ·
+  <a href="#install-on-the-computer">Install</a> ·
+  <a href="#run-it-locally">Run locally</a> ·
   <a href="docs/ARCHITECTURE.md">Architecture</a> ·
-  <a href="#development">Development</a> ·
-  <a href="https://github.com/nickvasilescu/grokbot-clone/issues">Issues</a>
+  <a href="#status-and-limits">Limits</a>
+</p>
+
+<p align="center">
+  <img alt="Node 22 or newer" src="https://img.shields.io/badge/node-%E2%89%A522-3c873a">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-1c1c1c">
+  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-fd690f">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/chat-dark.png">
+    <img src="assets/screenshots/chat-light.png" alt="A chat with a bot. The bot's steps are listed while it works, its screen is live in the side panel, and the Engine panel shows its model." width="100%">
+  </picture>
 </p>
 
 ---
 
-Give a Bot a job, connect the apps it needs, and follow its work in chat. Each Bot has a name, a look, its own memory, and a desktop you can watch or take over. Bots can work together, run recurring tasks, and talk with you over voice.
+Give a bot a job, connect the apps it needs, and follow its work in chat. Each bot has a name, a look, its own memory, and a screen you can watch or take over. Bots can message each other, run recurring tasks, and talk with you over voice.
 
-Grokbot Clone recreates the Grok Bot experience with a runtime you can run and modify yourself. You bring your own API keys; conversations, settings, and agent state live in a local SQLite database.
+The interface is modeled on Grok Bot. Underneath, every bot is a Hermes agent, so it can run on the model subscriptions you already pay for (Claude, ChatGPT, Grok and others) or on API keys.
 
-## What you can do
+## What you get
 
-- **Give every Bot a role.** Set its instructions, appearance, thinking effort, skills, and memories. Make one your primary point of contact.
-- **Put it to work on a computer.** Bots browse websites, run shell commands, and use a full Linux desktop through Orgo. Watch live, take control, and find saved work in the Library.
-- **Connect your apps.** Google sign-in and app connections run through Composio. Read actions run automatically; Composio write actions pause for approval, with an option to remember your choice.
-- **Build a team.** Bots delegate work, start subagents, and join group chats with @mentions.
-- **Keep work moving.** Schedule routines, react to app events, and let your primary Bot check in proactively.
-- **Keep context.** Bots retain durable memories, recall earlier facts, and compact long conversations.
-- **Talk it through.** Realtime voice calls hand tasks to the same Bot runtime. Voice selection, speed, previews, and push-to-talk dictation are included.
+| | |
+|---|---|
+| **Chat that shows the work** | While a bot works you see what it is doing right now, how long it has been at it, and each step it took. Finished turns fold into a "Worked for 2m 10s · 7 steps" chip you can open. |
+| **A screen per bot** | Every bot has its own desktop on the shared computer. Watch it live in the side panel, open it full size, or take control with your own mouse and keyboard. |
+| **Your existing Hermes agent, kept as it is** | The first bot is the Hermes agent already running on the computer. Its messaging channels, skills and memory keep working; the app only calls its API. |
+| **Connected apps with approvals** | Bots ask for the app they need and you connect it through Composio. Actions that write (send, post, delete) wait for your OK on a card in the chat. |
+| **Model and subscription per bot** | Pick the provider and model in the bot's Engine panel, or sign in to a subscription on the bot's own screen. |
+| **Voice** | Talk to a bot with xAI's realtime voice modes. Real work is handed to the same bot, with the same memory and tools. |
+| **Research on X** | Every bot has an `x_search` tool, backed by xAI. |
+| **Routines, tasks and a Library** | Recurring jobs on a schedule, a task list per bot, and a place where bots save the files they make. |
 
-Each user's Bots share one Orgo VM, with up to four separate Bot desktops active at once. Idle computers can sleep and wake when needed.
+<table>
+  <tr>
+    <td width="50%"><img src="assets/screenshots/viewer.png" alt="The full-size viewer showing a bot's Chrome window, live."></td>
+    <td width="50%"><img src="assets/screenshots/home-screen.jpg" alt="A bot's home screen: clock, the bot's name and role, and its apps."></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Watching a bot's screen live</sub></td>
+    <td align="center"><sub>Each screen is dressed as that bot's own computer</sub></td>
+  </tr>
+</table>
 
-## Quick start
+<sub>The chat screenshot at the top uses the sample data built into the dev server (add <code>?fixtures</code> to the URL). The two above are from a running install.</sub>
 
-### 1. Get the project
+## How it fits together
 
-Install **Node.js 22.22 or newer**, then:
+```mermaid
+flowchart LR
+  B["Browser<br/>chat · viewer · voice"] -- "HTTP + SSE" --> S["Bot HQ server<br/>Node · Hono · SQLite"]
+  B -- "WebSocket (VNC)" --> S
+  S -- "POST /v1/responses" --> H1["Hermes gateway<br/>first bot (already running)"]
+  S -- "POST /v1/responses" --> H2["Hermes gateway<br/>one per extra bot"]
+  H1 -- "MCP /mcp/primary" --> S
+  H2 -- "MCP /mcp/&lt;bot&gt;" --> S
+  S --> O["Orgo computer<br/>one screen per bot"]
+  S --> C["Composio<br/>connected apps"]
+  S --> X["xAI<br/>voice · X search"]
+```
+
+- **One computer, one screen per bot.** All bots live on a single Orgo Linux computer. The first bot uses the computer's main screen; each further bot gets an Orgo screen of its own. Orgo allows four screens per computer, so four bots.
+- **The first bot is the Hermes agent that already runs on that computer.** The app talks to its gateway and never restarts it or rewrites its settings.
+- **Every other bot gets its own Hermes home and gateway**, started by the app. Each has its own model, sign-in, memory, browser profile and files.
+- **The app's tools reach Hermes over MCP.** The server exposes `/mcp/<bot>`. Each agent gets connected apps, `x_search`, tasks, routines, the Library, and messages to other bots.
+- **Screens are dressed to look like the bot's own computer**: a light desktop with a dock, and a home screen with the bot's name and apps as Chrome's new tab page.
+
+More detail is in the [architecture guide](docs/ARCHITECTURE.md).
+
+### How this relates to Hermes Bot Mode
+
+Hermes Desktop has its own Bot Mode. Bot HQ uses the same Hermes engine but does **not** use Bot Mode: it has its own bot layer on top of the gateway's HTTP API.
+
+| | Bot HQ | Hermes Bot Mode |
+|---|---|---|
+| A bot is | A separate Hermes home (the first bot is the default profile) | A Hermes profile |
+| Gateways | One per extra bot | One, serving every profile |
+| Transport | HTTP, `/v1/responses` | JSON-RPC over WebSocket |
+| Routines | The app's own scheduler | Hermes cron jobs |
+| Bot to bot | The app's `send_to_bot` tool | Hermes' `message_agent` tool |
+
+So bots made here do not show up in Hermes Desktop's Bots tab, and bots made there do not show up here.
+
+## Install on the computer
+
+The app is meant to run on the same Orgo computer as Hermes.
+
+1. On your machine: `npm ci && scripts/pack.sh hq-app.tgz`. Copy `hq-app.tgz` and `scripts/install-on-computer.sh` to the computer.
+2. In Orgo, create a public URL for port `8787` on that computer.
+3. On the computer, as root:
+
+   ```bash
+   PUBLIC_URL=https://<name>.orgo.dev ORGO_COMPUTER_ID=<uuid> ALLOWED_EMAILS=you@example.com \
+   KEYS_FILE=/root/keys.txt PRIMARY_CDP_URL=http://127.0.0.1:9333 \
+     bash install-on-computer.sh hq-app.tgz
+   ```
+
+   `KEYS_FILE` holds `XAI_API_KEY=` and `COMPOSIO_API_KEY=` lines (and `ORGO_API_KEY=` if Hermes' own `.env` has none); it is deleted after the first install. `PRIMARY_CDP_URL` is only for a main agent that already has its own Chrome. The script installs to `/opt/hq`, adds one supervisor program (`hq-app`), and leaves Hermes alone. Running it again with a newer `hq-app.tgz` upgrades the app and keeps its settings and data.
+4. Give the main agent the app's tools: `python3 /opt/hq/app/scripts/add-hq-to-hermes.py`. It adds one `mcp_servers.hq` entry to Hermes' `config.yaml`, keeps a dated copy of the file, and Hermes picks the change up without a restart. `--remove` takes it out again.
+5. Open the public URL and sign in with Google. If Google sign-in is not set up yet, `bash /opt/hq/app/scripts/sign-in-link.sh you@example.com` on the computer prints a one-time sign-in link.
+
+<details>
+<summary><b>Remove everything</b></summary>
+
+On the computer:
 
 ```bash
-git clone https://github.com/nickvasilescu/grokbot-clone.git
-cd grokbot-clone
+python3 /opt/hq/hq-screen.py undress 99                      # main screen back to how it was (99 = its X display)
+python3 /opt/hq/app/scripts/add-hq-to-hermes.py --remove     # take the tools out of Hermes
+supervisorctl stop hq-app && supervisorctl remove hq-app
+rm -rf /etc/supervisor/conf.d/hq-app.conf /opt/hq /var/log/hq /root/grokbot /etc/opt/chrome/policies/managed/hq.json
+```
+
+Then delete the public URL in Orgo. Screens of the other bots are released when you delete those bots in the app.
+
+</details>
+
+## Run it locally
+
+You need **Node.js 22 or newer** and a Hermes gateway with its API server on (`API_SERVER_KEY` in `~/.hermes/.env`).
+
+```bash
+git clone https://github.com/nickvasilescu/bot-hq.git
+cd bot-hq
 npm ci
-cp .env.example .env
+cp .env.example .env      # fill in the keys; comments in the file explain each one
+npm run dev -w server     # API on :8787
+npm run dev -w web        # app on :5173
 ```
 
-### 2. Configure your keys
+With `HQ_LOCAL=0` the server reaches the computer through the Orgo API instead of running commands on it, which is enough for development. `DEV_LOGIN=1` enables the email-only sign-in form; never set it on a public address.
 
-Fill in these values in `.env`:
+`npm run build && npm start` serves the built app from the API port.
 
-| Variable | Purpose |
-| --- | --- |
-| `XAI_API_KEY` | Grok text and voice API access |
-| `COMPOSIO_API_KEY` | App connections, tool catalog, and Google sign-in |
-| `ORGO_API_KEY` | Cloud computer access |
-| `ORGO_WORKSPACE_ID` | Workspace in which to create computers |
-| `SESSION_SECRET` | Secret used to sign sessions |
+The keys you need:
 
-Generate a session secret with:
+| Key | Used for |
+|---|---|
+| `ORGO_API_KEY`, `ORGO_COMPUTER_ID` | The computer and its screens |
+| `COMPOSIO_API_KEY` | Connected apps |
+| `XAI_API_KEY` | Voice and `x_search` |
+| `SESSION_SECRET` | Sign-in sessions and the tokens agents use to reach `/mcp` |
 
-```bash
-openssl rand -hex 32
-```
+## Models and subscriptions
 
-Paste the result into `SESSION_SECRET`. The example environment file includes the local URLs, computer size, and optional voice settings. The default text model is `grok-4.7`; change `XAI_MODEL` to use another compatible model available to your account.
-
-### 3. Start the app
-
-Run the API in one terminal:
-
-```bash
-npm run dev -w server
-```
-
-Run the frontend in a second terminal:
-
-```bash
-npm run dev -w web
-```
-
-Open **[localhost:5173](http://localhost:5173)**. The frontend proxies API requests to port `8787`.
-
-Use **Sign in with Google**, or use the local email form with `DEV_LOGIN=1` (enabled in `.env.example`). Your account starts with a primary Bot. Create another Bot, give it a role, and send it a task.
-
-The first computer task provisions an Orgo VM. Model calls, app actions, and computers use your provider accounts and may incur charges.
-
-### Run a built version
-
-```bash
-npm run build
-npm start
-```
-
-The API serves the built app at **[localhost:8787](http://localhost:8787)**. Set both `APP_URL` and `SERVER_URL` to that address, or to your public HTTPS URL when hosting it, so sign-in redirects return to the right place. Disable `DEV_LOGIN` before exposing the server to other users.
-
-## How it works
-
-| Layer | Implementation |
-| --- | --- |
-| Web app | React, TypeScript, Vite, and Zustand |
-| Server | Node.js, Hono, SQLite, and Server-Sent Events |
-| Agent runtime | Grok Responses API with streaming, tools, memory, and approval handling |
-| Computers | Orgo VM lifecycle and per-Bot desktops; noVNC viewer through a server-side relay |
-| Connected apps | Composio catalog, sessions, authentication, tools, and triggers |
-| Voice | Grok realtime sessions with a relay into the text agent's task loop |
-
-The server owns the agent loop. It builds context, streams a model response, executes tools, pauses for approvals when required, and continues until the task is done. Voice hands work to that same loop.
-
-For the details, read the [architecture guide](docs/ARCHITECTURE.md), [Orgo integration guide](docs/orgo-builder-guide.md), and [Grok and Composio integration guide](docs/xai-and-composio.md).
+Open a bot's details panel, **Engine**. Pick a provider and model there. **Sign in to a subscription** opens a terminal on the bot's screen running Hermes' own sign-in for that provider (for example Claude Pro/Max), so you finish it in the viewer and the bot uses that subscription from then on. Check your provider's terms before running an agent on a consumer subscription.
 
 ## Development
 
 ```bash
-npm run typecheck       # Check the server and frontend
-npm run build           # Build both workspaces
+npm run typecheck       # server and web
+npm run build
+node tests/e2e.mjs https://<your-url>    # needs DEV_LOGIN=1, or E2E_SESSION=<session cookie>
 ```
 
-The main source directories are:
+The e2e suite creates a temporary bot (with its own Hermes gateway and screen), exercises chat, the browser on its screen, the live viewer, connected apps, voice sessions and settings, then deletes it. It calls real providers.
 
 ```text
-server/src/     API routes, agent runtime, tools, and integrations
-web/src/        Chat, Bot settings, app connections, computer viewer, and voice
-web/artwork/    Original design assets used to generate Bot avatars
-web/public/     Static UI assets
-tests/          Playwright integration and voice scripts
-docs/           Architecture and integration guides
+server/src/         API, Hermes adapter (agent/loop.ts), engines (engine.ts), MCP endpoint (mcp.ts), screens (computer.ts)
+server/box/         what runs on the computer to dress a screen (desktop, dock, home screen, Chrome)
+web/src/            chat, bot settings, app connections, computer viewer, voice
+scripts/            pack, install, Hermes config helper, sign-in link
+tests/              Playwright end-to-end test
+docs/               architecture; the Orgo and xAI/Composio guides predate the Hermes engine
 ```
 
-### Integration tests
+## Status and limits
 
-With the server running and `DEV_LOGIN=1`:
-
-```bash
-node tests/e2e.mjs http://localhost:8787
-```
-
-The suite creates a temporary Bot and exercises chat, computer tools, the live viewer, search, app connections, voice sessions, groups, and settings. Set `E2E_EMAIL` to choose the test account. It calls real providers and requires Google Chrome at `/usr/bin/google-chrome`.
-
-The separate `tests/voice-call.mjs` script is a development harness for two-way audio. It currently contains machine-specific paths and needs adapting before use on another system.
-
-### Contributing
-
-Bug reports, improvements, and pull requests are welcome. For a bug, include the steps to reproduce, expected behavior, Node version, and relevant logs with secrets removed. For larger changes, open an [issue](https://github.com/nickvasilescu/grokbot-clone/issues) first to discuss the approach.
-
-Keep changes focused, run the typecheck and build, and describe how you verified the affected flow. Never commit API keys, `.env` files, databases, or screenshots containing personal information.
-
-## Project status
-
-This is an experimental project. The core workflows are implemented, but it has not undergone a security audit. Bots within an account share a VM; Composio write approvals do not cover every possible action a Bot can take through its browser or shell.
-
-Planned work includes a faster executor inside each VM, file-based skills and task recording, a local-computer companion, and meeting support.
-
-Configuration options for idle suspension, memory consolidation, and history compaction are described in the [architecture guide](docs/ARCHITECTURE.md). Start with [`.env.example`](.env.example) for connection settings.
+- Experimental, no security audit. Bots share one computer and can reach each other's files there.
+- Approval cards cover Composio write actions. What a bot does through its browser or shell is not gated, and Hermes' own "risky command" prompts are not shown in the app yet.
+- Four bots at most, because of Orgo's four-screen limit.
+- The app still calls itself "Grokbot" in places (page title, package names, the database file).
+- The screen look is an original implementation inspired by OrgoAI/bops; no code or assets from that repository are used.
 
 ## License and credits
 
-Project code is available under the [MIT license](LICENSE). Third-party artwork and trademarks retain their owners' rights; see [third-party notices](THIRD_PARTY_NOTICES.md).
+Project code is available under the [MIT license](LICENSE). The bot artwork and some icons come from Grok Bot's design and remain the property of their owners, as do third-party app logos; the MIT license does not cover them. See [third-party notices](THIRD_PARTY_NOTICES.md).
 
-Inspired by Grok Bot. Built with [Grok](https://x.ai), [Orgo](https://orgo.ai), and [Composio](https://composio.dev). This is an independent project, unaffiliated with xAI or Cursor/Anysphere.
+Continued from [grokbot-clone](https://github.com/nickvasilescu/grokbot-clone). Built with [Hermes Agent](https://github.com/NousResearch/hermes-agent), [Orgo](https://orgo.ai), [Composio](https://composio.dev), and [xAI](https://x.ai). This is an independent project, unaffiliated with xAI, Cursor/Anysphere or Nous Research.

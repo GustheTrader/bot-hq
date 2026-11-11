@@ -1,12 +1,6 @@
-import { db, now as dbNow } from './db.js';
-import { getLive } from './store.js';
-import { suspendComputer } from './computer.js';
-import { isBotBusy } from './agent/loop.js';
-
 /**
- * Computer hibernation: suspend a user's Orgo box when no bot turn is running and no
- * viewer WebSocket is connected for GROKBOT_IDLE_SUSPEND_MIN minutes (default 20).
- * The next computer tool call wakes it again through ensureComputer().
+ * Viewer tracking for the computer panel, and the decision logic of the old hibernation watcher
+ * (kept as a pure function; see startIdleWatcher for why it no longer runs).
  */
 
 const num = (v: string | undefined, d: number) => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d);
@@ -106,25 +100,12 @@ export function createIdleWatcher(deps: IdleDeps, opts: { idleMs: number; dryRun
 
 // ---------- production wiring ----------
 
+/**
+ * The computer is the primary agent's own machine and stays up for its other work (messages,
+ * scheduled jobs), so nothing here ever suspends it. Viewer counts are still tracked for the
+ * computer panel.
+ */
 export function startIdleWatcher() {
-  const watcher = createIdleWatcher(
-    {
-      now: dbNow,
-      computers: () => (db.prepare("SELECT user_id, status FROM computers WHERE orgo_id IS NOT NULL").all() as any[]).map((r) => ({ userId: r.user_id, status: r.status })),
-      anyTurnRunning: (userId) => (db.prepare('SELECT id FROM bots WHERE user_id=?').all(userId) as any[]).some((b) => isBotBusy(b.id) || getLive(b.id).isRunning),
-      viewers: viewerCount,
-      lastActivity: (userId) => {
-        const b = db.prepare('SELECT MAX(updated_at) t FROM bots WHERE user_id=?').get(userId) as any;
-        const c = db.prepare('SELECT updated_at t FROM computers WHERE user_id=?').get(userId) as any;
-        return Math.max(b?.t ?? 0, c?.t ?? 0);
-      },
-      suspend: (userId) => suspendComputer(userId, 'idle'),
-      log: (m) => console.log(m),
-    },
-    { idleMs: idleConfig.idleMin * 60_000, dryRun: idleConfig.dryRun },
-  );
-  const timer = setInterval(() => { watcher.sweep().catch((e) => console.warn('[idle] sweep failed', e)); }, idleConfig.sweepSec * 1000);
-  timer.unref?.();
-  console.log(`[idle] hibernation after ${idleConfig.idleMin} min without turns or viewers${idleConfig.dryRun ? ' (dry run)' : ''}`);
-  return { watcher, stop: () => clearInterval(timer) };
+  console.log('[idle] the shared computer is never suspended');
+  return { watcher: null, stop: () => {} };
 }

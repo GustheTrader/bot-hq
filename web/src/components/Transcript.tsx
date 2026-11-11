@@ -1,9 +1,10 @@
 import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Bot, LiveState, MessageBody, Row, ToolCallBody } from '@shared/types';
 import { BotAvatar, BotAvatarFor } from '../avatar/BotAvatar';
-import { clock, dividerLabel } from '../lib/time';
+import { isWaitingForYou } from '../lib/phrases';
+import { clock, dividerLabel, duration } from '../lib/time';
 import { useStore } from '../store';
-import { ActivityLine } from './ActivityLine';
+import { ThinkingBlock } from './ActivityLine';
 import { CardRow } from './cards/Cards';
 import { Icon } from './Icon';
 import { Markdown } from './Markdown';
@@ -11,7 +12,7 @@ import { Markdown } from './Markdown';
 type Item =
   | { kind: 'divider'; key: string; ts: number }
   | { kind: 'group'; key: string; side: 'left' | 'right'; from?: MessageBody['from']; rows: Row[] }
-  | { kind: 'steps'; key: string; rows: Row[] }
+  | { kind: 'steps'; key: string; rows: Row[]; /** Row timestamps just before and just after the run of steps. */ startTs: number | null; endTs: number | null }
   | { kind: 'row'; key: string; row: Row };
 
 const DIVIDER_GAP = 60 * 60 * 1000;
@@ -23,14 +24,16 @@ function buildItems(rows: Row[]): Item[] {
   let prevTs = 0;
   for (const row of rows) {
     if (!prevTs || row.createdAt - prevTs > DIVIDER_GAP) items.push({ kind: 'divider', key: `d${row.seq}`, ts: row.createdAt });
+    const before = prevTs;
     prevTs = row.createdAt;
     const last = items[items.length - 1];
     const b = row.body;
     if (b.type === 'tool-call') {
       if (last?.kind === 'steps') last.rows.push(row);
-      else items.push({ kind: 'steps', key: `s${row.seq}`, rows: [row] });
+      else items.push({ kind: 'steps', key: `s${row.seq}`, rows: [row], startTs: before || null, endTs: null });
       continue;
     }
+    if (last?.kind === 'steps' && last.endTs === null) last.endTs = row.createdAt;
     if (b.type === 'message') {
       if (!b.text && !b.streaming) continue;
       const side = b.role === 'user' && (!b.from || b.from.kind === 'voice') ? 'right' : 'left';
@@ -85,32 +88,92 @@ function SenderLabel({ from }: { from: NonNullable<MessageBody['from']> }) {
   );
 }
 
-function Steps({ rows, hideRunning }: { rows: Row[]; hideRunning: boolean }) {
+const MAX_WORK_MS = 12 * 60 * 60 * 1000;
+
+/** How long a finished run of steps took, from the row before it to the row after it. */
+function workedMs(item: Extract<Item, { kind: 'steps' }>): number | null {
+  const end = item.endTs ?? item.rows[item.rows.length - 1].createdAt;
+  if (!item.startTs) return null;
+  const ms = end - item.startTs;
+  return ms >= 1000 && ms < MAX_WORK_MS ? ms : null;
+}
+
+function argsText(args: unknown): string | null {
+  if (args === undefined || args === null) return null;
+  if (typeof args === 'string') return args.trim() ? args.slice(0, 2000) : null;
+  if (typeof args === 'object' && Object.keys(args as object).length === 0) return null;
+  try {
+    const text = JSON.stringify(args, null, 2);
+    return text.length > 2000 ? `${text.slice(0, 2000)}\n…` : text;
+  } catch { return null; }
+}
+
+const STEP_NOTE: Partial<Record<ToolCallBody['status'], string>> = {
+  error: 'Failed', denied: 'Not allowed', 'awaiting-approval': 'Waiting for your OK',
+};
+
+function StepRow({ call }: { call: ToolCallBody }) {
   const [open, setOpen] = useState(false);
-  const calls = rows.map((r) => r.body as ToolCallBody);
-  const visible = hideRunning ? calls.filter((c) => c.status !== 'running') : calls;
-  if (!visible.length) return null;
-  const n = visible.length;
+  const args = argsText(call.args);
+  const note = STEP_NOTE[call.status];
+  const body = (
+    <>
+      <span className="step__mark" aria-hidden>{call.status === 'running' ? <span className="step__spin" /> : <span className="step__dot" />}</span>
+      <span className="step__label">{call.label || call.name}</span>
+      {call.summary && <span className="step__summary">{call.summary}</span>}
+      {note && <span className="step__note">{note}</span>}
+    </>
+  );
   return (
-    <div className={`steps${open ? ' is-open' : ''}`}>
+    <li className={`step is-${call.status}`}>
+      {args ? (
+        <button type="button" className="step__row is-clickable" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? 'Hide details' : 'Show details'}>{body}</button>
+      ) : <div className="step__row">{body}</div>}
+      {open && args && <pre className="step__args">{args}</pre>}
+      {call.screenshot && <img className="step__shot" src={call.screenshot} alt="" />}
+    </li>
+  );
+}
+
+/**
+ * A run of tool calls, folded into one chip. While the turn runs it shows what the bot is doing right
+ * now and the step count; afterwards it reads "Worked for 2m 10s · 7 steps". Click to see every step.
+ */
+function Steps({ item, active, open: unfinished, extra }: {
+  item: Extract<Item, { kind: 'steps' }>;
+  /** The bot is working on this run of steps right now. */
+  active: boolean;
+  /** The turn this run belongs to has not ended (it may be paused, waiting for the person). */
+  open: boolean;
+  /** Steps the server has counted that have no row yet. */
+  extra: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const calls = item.rows.map((r) => r.body as ToolCallBody);
+  const n = calls.length + (unfinished ? extra : 0);
+  const count = `${n} ${n === 1 ? 'step' : 'steps'}`;
+  const current = [...calls].reverse().find((c) => c.status === 'running') ?? calls[calls.length - 1];
+  const worked = unfinished ? null : workedMs(item);
+  const flag = calls.some((c) => c.status === 'awaiting-approval') ? 'waiting' : calls.some((c) => c.status === 'error' || c.status === 'denied') ? 'problem' : null;
+  return (
+    <div className={`steps${open ? ' is-open' : ''}${active ? ' is-active' : ''}`}>
       <button type="button" className="steps__toggle" onClick={() => setOpen(!open)} aria-expanded={open}>
-        {n} {n === 1 ? 'step' : 'steps'}
-        <Icon name="chev_down" size={10} opacity={0.66} className="steps__chev" />
+        {active ? (
+          <>
+            <span className="step__spin" aria-hidden />
+            <span className="steps__now" key={current.callId}>{current.label || current.name}</span>
+            <span className="steps__sep" aria-hidden>·</span>
+          </>
+        ) : (
+          <>
+            {flag && <span className={`steps__flag is-${flag}`} title={flag === 'waiting' ? 'A step is waiting for your OK' : 'A step did not finish'} />}
+            {worked !== null && <><span className="steps__worked">Worked for {duration(worked)}</span><span className="steps__sep" aria-hidden>·</span></>}
+          </>
+        )}
+        <span className="steps__count">{count}</span>
+        <Icon name="chev_right" size={10} opacity={0.66} className="steps__chev" />
       </button>
-      {open && (
-        <ul className="steps__list">
-          {visible.map((c) => (
-            <li key={c.callId} className={`step is-${c.status}`}>
-              <span className="step__dot" />
-              <span className="step__label">{c.label}</span>
-              {c.summary && <span className="step__summary">{c.summary}</span>}
-              {c.status === 'error' && <span className="step__summary">Failed</span>}
-              {c.status === 'denied' && <span className="step__summary">Not allowed</span>}
-              {c.screenshot && <img className="step__shot" src={c.screenshot} alt="" />}
-            </li>
-          ))}
-        </ul>
-      )}
+      {open && <ul className="steps__list">{calls.map((c) => <StepRow key={c.callId} call={c} />)}</ul>}
     </div>
   );
 }
@@ -132,10 +195,27 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
   const items = useMemo(() => buildItems(rows), [rows]);
 
   const running = !!live?.isRunning;
-  const waiting = !running && (!!live?.awaiting || live?.activity?.kind === 'waiting_for_you');
+  const waiting = isWaitingForYou(live);
   const last = rows[rows.length - 1];
   const streamingNow = last?.body.type === 'message' && last.body.role === 'assistant' && !!last.body.streaming;
   const showActivity = (running && !streamingNow) || waiting;
+
+  // The chip that is still growing: the last thing in the transcript while the turn runs.
+  const lastItem = items[items.length - 1];
+  const openKey = (running || waiting) && lastItem?.kind === 'steps' ? lastItem.key : null;
+  const activeKey = running && !waiting ? openKey : null;
+  // `live.steps` counts the whole turn; anything beyond the rows we hold for this turn has no row yet.
+  const turnSteps = useMemo(() => {
+    let n = 0;
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const b = rows[i].body;
+      if (b.type === 'message' && b.role === 'user') break;
+      if (b.type === 'tool-call') n++;
+    }
+    return n;
+  }, [rows]);
+  const serverSteps = running ? live?.steps ?? 0 : 0;
+  const extraSteps = Math.max(0, serverSteps - turnSteps);
 
   // Keep pinned to the bottom while new content arrives, unless the user scrolled up.
   useLayoutEffect(() => {
@@ -171,7 +251,7 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
             case 'divider':
               return <div key={it.key} className="divider">{dividerLabel(it.ts)}</div>;
             case 'steps':
-              return <Steps key={it.key} rows={it.rows} hideRunning={running} />;
+              return <Steps key={it.key} item={it} active={it.key === activeKey} open={it.key === openKey} extra={extraSteps} />;
             case 'row':
               return <SystemRow key={it.key} row={it.row} />;
             case 'group':
@@ -185,7 +265,7 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
               );
           }
         })}
-        {showActivity && live && <ActivityLine bot={bot} live={live} rows={rows} />}
+        {showActivity && live && <ThinkingBlock bot={bot} live={live} rows={rows} steps={openKey ? 0 : serverSteps} />}
       </div>
     </div>
       {showJump && (

@@ -1,29 +1,23 @@
 import { useEffect, useState } from 'react';
-import type { Bot, ComputerState, Routine } from '@shared/types';
+import type { Routine } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
 import { api, openPopup } from '../lib/api';
 import { botVars } from '../lib/colors';
+import { computerStatusText } from '../lib/computer';
 import { displayName, useSelectedBot, useStore } from '../store';
 import { Icon } from './Icon';
 import { ToolkitLogo } from './ToolkitLogo';
 import { VoiceSettings } from './VoiceSettings';
+import { ComputerScreen, type ScreenMode } from './ComputerViewer';
+import { EngineSettings } from './EngineSettings';
 import { MembersCard } from './MembersCard';
 import { useConfigUI } from '../configStore';
 import { Glyph } from './config/glyphs';
 import { LibraryTab } from './config/LibraryTab';
 import { BotTasks } from './config/TasksView';
 
-export function computerStatusText(c: ComputerState | null): string {
-  switch (c?.status) {
-    case 'running': return 'Awake';
-    case 'starting': case 'resuming': return 'Waking up…';
-    case 'creating': return 'Setting up…';
-    case 'suspending': return 'Going to sleep…';
-    case 'error': return 'Unreachable';
-    case 'suspended': case 'stopped': case 'absent': case undefined: return 'Asleep';
-    default: return 'Asleep';
-  }
-}
+// Other files import this from here; it lives in lib/computer so the viewer can use it too.
+export { computerStatusText };
 
 function Toggle({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -52,76 +46,17 @@ function RoutineRow({ r }: { r: Routine }) {
   );
 }
 
-function ComputerCard({ bot }: { bot: Bot }) {
-  const computer = useStore((s) => s.computer);
-  const set = useStore((s) => s.set);
-  const [shot, setShot] = useState<string | null>(null);
-  const running = computer?.status === 'running';
-
-  // Refresh the thumbnail every ~4s while visible and awake. 204 = no screen yet.
-  useEffect(() => {
-    setShot(null);
-    if (!running) return;
-    let alive = true;
-    let url: string | null = null;
-    const load = async () => {
-      if (document.visibilityState !== 'visible') return;
-      try {
-        const res = await fetch(`/api/bots/${bot.id}/screenshot`, { credentials: 'include', cache: 'no-store' });
-        if (!alive) return;
-        if (res.status === 204) { setShot(null); return; }
-        if (res.status === 200) {
-          const blob = await res.blob();
-          if (!alive) return;
-          const next = URL.createObjectURL(blob);
-          setShot(next);
-          if (url) URL.revokeObjectURL(url);
-          url = next;
-        }
-      } catch { /* keep last frame */ }
-    };
-    load();
-    const t = setInterval(load, 4000);
-    return () => { alive = false; clearInterval(t); if (url) URL.revokeObjectURL(url); };
-  }, [bot.id, running]);
-
-  const busy = computer?.status === 'starting' || computer?.status === 'resuming' || computer?.status === 'creating';
-  return (
-    <div className="panel-card">
-      <div className="panel-row panel-row--computer" role="button" tabIndex={0} onClick={() => set({ viewerOpen: true })} onKeyDown={(e) => { if (e.key === 'Enter') set({ viewerOpen: true }); }}>
-        <span className="panel-row__text">
-          <span className="panel-row__title">Bot's computer</span>
-          <span className="panel-row__meta">{computerStatusText(computer)}{computer?.error && computer.status === 'error' ? ` · ${computer.error}` : ''}</span>
-        </span>
-        <span className={`computer-thumb${shot ? ' has-shot' : ''}`}>
-          {shot ? <img src={shot} alt="Bot's screen" /> : running || busy ? (
-            <span className="computer-thumb__awake"><span className={`status-dot ${busy ? 'is-attention' : 'is-working'}`} /></span>
-          ) : (
-            <>
-              <span className="computer-thumb__face"><i /><i /></span>
-              <span className="computer-thumb__z1">z</span>
-              <span className="computer-thumb__z2">z</span>
-            </>
-          )}
-        </span>
-      </div>
-      {!running && !busy && (
-        <button type="button" className="panel-row panel-row--action" onClick={() => api.ensureComputer().catch(() => {})}>
-          <Icon name="monitor" size={14} opacity={0.56} /> Wake computer
-        </button>
-      )}
-    </div>
-  );
-}
-
 export function DetailsPanel() {
   const bot = useSelectedBot();
   const routines = useStore((s) => (bot ? s.routines[bot.id] : undefined));
+  const computer = useStore((s) => s.computer);
+  const viewerOpen = useStore((s) => s.viewerOpen);
   const set = useStore((s) => s.set);
   const [tab, setTab] = useState<'activity' | 'tasks' | 'library'>('activity');
   const [hideSuggested, setHideSuggested] = useState(() => { try { return localStorage.getItem('grokbot.hideSuggested') === '1'; } catch { return false; } });
   if (!bot) return null;
 
+  const openComputer = (mode: ScreenMode) => set({ viewerOpen: true, viewerMode: mode, viewerHint: null });
   const addSlack = async () => {
     const popup = openPopup('about:blank');
     try { const { redirectUrl } = await api.connect('slack'); if (popup) popup.location.href = redirectUrl; } catch { popup?.close(); }
@@ -138,10 +73,27 @@ export function DetailsPanel() {
         </button>
       </div>
       <div className="details__scroll">
-        <div className="details__identity">
-          <BotAvatarFor bot={bot} size={64} />
-          <div className="details__name" title={displayName(bot)}>{displayName(bot)}</div>
-        </div>
+        {bot.kind === 'room' ? (
+          <div className="details__identity">
+            <BotAvatarFor bot={bot} size={64} />
+            <div className="details__name" title={displayName(bot)}>{displayName(bot)}</div>
+          </div>
+        ) : (
+          <div className="details__hero">
+            <ComputerScreen key={bot.id} bot={bot} variant="panel" paused={viewerOpen} onExpand={openComputer} />
+            <div className="details__who">
+              <BotAvatarFor bot={bot} size={36} />
+              <div className="details__who-text">
+                <div className="details__who-head">
+                  <span className="details__who-name" title={displayName(bot)}>{displayName(bot)}</span>
+                  {bot.model && <span className="details__model" title={bot.provider ? `${bot.provider} · ${bot.model}` : bot.model}>{bot.model}</span>}
+                </div>
+                <div className="details__who-sub">Computer {computerStatusText(computer).toLowerCase()}</div>
+              </div>
+              <button type="button" className="btn btn--sm btn--secondary details__open" onClick={() => openComputer('watch')}>Open</button>
+            </div>
+          </div>
+        )}
         <div className="details__tabs">
           <div className="segmented">
             <button type="button" className={tab === 'activity' ? 'is-active' : ''} onClick={() => setTab('activity')}>Activity</button>
@@ -186,8 +138,8 @@ export function DetailsPanel() {
             {bot.kind !== 'room' && (
               <>
                 <section>
-                  <div className="section-label">Computer</div>
-                  <ComputerCard bot={bot} />
+                  <div className="section-label">Engine</div>
+                  <EngineSettings bot={bot} />
                 </section>
                 <section>
                   <div className="section-label">Voice chat</div>

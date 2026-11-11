@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Home</title>
+<link rel="icon" href="/favicon.svg?v={{STAMP}}">
+<style>
+  :root {
+    --accent: {{ACCENT}};
+    --ink: {{INK}};
+    --wash: {{WASH}};
+    --soft: color-mix(in srgb, var(--ink) 62%, transparent);
+    --tile: rgba(255, 255, 255, 0.62);
+    --tile-edge: rgba(255, 255, 255, 0.9);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--wash);
+    color: var(--ink);
+    font-family: Inter, "Noto Sans", Ubuntu, "Liberation Sans", "DejaVu Sans", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden auto;
+    user-select: none;
+  }
+  .backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  .backdrop svg { display: block; width: 100%; height: 100%; }
+  main {
+    position: relative; z-index: 1;
+    min-height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 28px 24px 40px;
+    text-align: center;
+  }
+  .avatar { width: 104px; height: 104px; filter: drop-shadow(0 10px 18px color-mix(in srgb, var(--accent) 28%, transparent)); }
+  .avatar svg { width: 100%; height: 100%; overflow: visible; display: block; }
+  .clock {
+    margin-top: 14px;
+    font-size: clamp(64px, 11vh, 104px); line-height: 1; font-weight: 300; letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  .clock small { font-size: 0.26em; font-weight: 500; letter-spacing: 0.04em; margin-left: 0.3em; color: var(--soft); }
+  .date { margin-top: 8px; font-size: 15px; color: var(--soft); }
+  h1 { margin: 26px 0 0; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+  .role { margin: 6px 0 0; font-size: 15px; color: var(--soft); min-height: 1em; }
+  .apps {
+    margin-top: 34px;
+    display: flex; flex-wrap: wrap; gap: 14px 10px; justify-content: center;
+    width: 100%; max-width: calc(var(--cols, 6) * 102px);
+  }
+  .app {
+    appearance: none; border: 0; background: none; padding: 6px 2px; margin: 0; cursor: pointer; width: 92px; flex: none;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    font: inherit; color: inherit; border-radius: 16px;
+  }
+  .app .pad {
+    width: 64px; height: 64px; border-radius: 18px;
+    display: grid; place-items: center;
+    background: var(--tile); border: 1px solid var(--tile-edge);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--ink) 9%, transparent);
+    backdrop-filter: blur(14px);
+    transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+  }
+  .app img { width: 42px; height: 42px; display: block; }
+  .app span.name { font-size: 12.5px; line-height: 1.25; max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .app:hover .pad { transform: translateY(-2px); background: rgba(255, 255, 255, 0.86); box-shadow: 0 10px 22px color-mix(in srgb, var(--ink) 13%, transparent); }
+  .app:active .pad { transform: scale(0.95); }
+  .app:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .app.opening .pad { animation: pop 700ms ease; }
+  @keyframes pop { 0% { transform: scale(1); } 35% { transform: scale(0.9); } 70% { transform: scale(1.06); } 100% { transform: scale(1); } }
+  .hint { margin-top: 18px; font-size: 13px; color: var(--soft); min-height: 1.2em; }
+  @media (max-height: 640px) { .avatar { width: 76px; height: 76px; } h1 { margin-top: 16px; } .apps { margin-top: 20px; } }
+  @media (max-width: 680px) { .apps { --cols: 4 !important; } }
+</style>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true">{{BACKDROP_SVG}}</div>
+<main>
+  <div class="avatar" aria-hidden="true">{{AVATAR_SVG}}</div>
+  <div class="clock" id="clock" aria-live="off">&nbsp;</div>
+  <div class="date" id="date">&nbsp;</div>
+  <h1>{{GREETING}}</h1>
+  <p class="role">{{LABEL}}</p>
+  <section class="apps" id="apps" aria-label="Apps on this computer"></section>
+  <div class="hint" id="hint"></div>
+</main>
+<script>
+(function () {
+  var STAMP = "{{STAMP}}";
+  var framed = window.parent !== window;
+
+  function tell(msg) { if (framed) { try { window.parent.postMessage(msg, '*'); } catch (e) {} } }
+  tell({ title: "{{TITLE}}", background: "{{WASH}}" });
+
+  var clock = document.getElementById('clock');
+  var date = document.getElementById('date');
+  function tick() {
+    var now = new Date();
+    var parts = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).formatToParts(now);
+    var main = '', suffix = '';
+    parts.forEach(function (p) { if (p.type === 'dayPeriod') suffix = p.value; else main += p.value; });
+    clock.textContent = main.trim();
+    if (suffix) { var s = document.createElement('small'); s.textContent = suffix; clock.appendChild(s); }
+    date.textContent = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(now);
+  }
+  tick();
+  setInterval(tick, 1000);
+
+  var hint = document.getElementById('hint');
+  var hintTimer = 0;
+  function say(text) {
+    hint.textContent = text;
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(function () { hint.textContent = ''; }, 2600);
+  }
+
+  function openApp(app, button) {
+    button.classList.remove('opening');
+    void button.offsetWidth;
+    button.classList.add('opening');
+    if (app.kind === 'browser') {
+      if (framed) tell({ open: 'newtab' }); else window.open('/home', '_blank');
+      return;
+    }
+    fetch('/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-HQ': '1' },
+      body: JSON.stringify({ id: app.id })
+    }).then(function (r) { return r.json(); }).then(function (r) {
+      say(r && r.ok ? 'Opening ' + app.name : 'Could not open ' + app.name);
+    }).catch(function () { say('Could not open ' + app.name); });
+  }
+
+  function drawApps(list) {
+    var box = document.getElementById('apps');
+    box.textContent = '';
+    // Two even rows read better than a full row with one tile left over.
+    var cols = list.length <= 6 ? list.length : Math.min(6, Math.ceil(list.length / 2));
+    box.style.setProperty('--cols', String(Math.max(1, cols)));
+    list.forEach(function (app) {
+      var b = document.createElement('button');
+      b.className = 'app';
+      b.type = 'button';
+      b.title = app.name;
+      var pad = document.createElement('span');
+      pad.className = 'pad';
+      var img = document.createElement('img');
+      img.alt = '';
+      img.draggable = false;
+      img.src = '/icon?id=' + encodeURIComponent(app.id);
+      pad.appendChild(img);
+      var name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = app.name;
+      b.appendChild(pad);
+      b.appendChild(name);
+      b.addEventListener('click', function () { openApp(app, b); });
+      box.appendChild(b);
+    });
+  }
+
+  fetch('/apps').then(function (r) { return r.json(); }).then(function (r) { drawApps(r.apps || []); }).catch(function () {});
+
+  // When the look of this computer changes (new name, new colour), pick it up without a manual refresh.
+  setInterval(function () {
+    fetch('/stamp', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (r) {
+      if (r && typeof r.stamp === 'string' && r.stamp !== STAMP) location.reload();
+    }).catch(function () {});
+  }, 4000);
+})();
+</script>
+</body>
+</html>

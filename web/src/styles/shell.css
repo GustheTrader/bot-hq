@@ -1,4 +1,4 @@
-/* ---------- window grid: sidebar 350 · chat · details 320 (screen 01) ---------- */
+/* ---------- window grid: sidebar 350 · chat · details 360 (screen 01) ---------- */
 .app { display: flex; height: 100%; width: 100%; background: var(--color-bg-chrome); overflow: hidden; }
 
 .traffic-lights { position: absolute; left: 10px; top: 10px; display: flex; gap: 8px; }

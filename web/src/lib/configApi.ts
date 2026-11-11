@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, LibraryFile, Memory, Routine, Skill, Task, Toolkit } from '@shared/types';
+import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Routine, Skill, Task, Toolkit } from '@shared/types';
 import { ApiError } from './api';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -61,6 +61,16 @@ export const configApi = {
   wake: () => req<{ computer: ComputerState }>('POST', '/computer/ensure'),
   sleep: () => req<{ computer: ComputerState }>('POST', '/computer/suspend'),
   resetScreen: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/screen/reset`),
+  /** Tells the bot the person has stopped driving its screen. */
+  handback: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/handback`),
+
+  engine: (botId: string) => req<{ engine: EngineInfo }>('GET', `/bots/${botId}/engine`),
+  setEngine: (botId: string, p: { provider?: string | null; model?: string | null }) => req<{ engine: EngineInfo }>('PATCH', `/bots/${botId}/engine`, p),
+  /** Opens the provider's sign-in flow in a terminal on the bot's screen. */
+  engineLogin: (botId: string, provider?: string) => req<{ ok: true }>('POST', `/bots/${botId}/engine/login`, provider ? { provider } : {}),
+  restartEngine: (botId: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/restart`),
+  /** Stops the private screen the agent runs for itself, so its computer work shows on the screen in the app. */
+  stopOwnScreen: (botId: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/screen/stop`),
 
   policies: () => req<{ policies: { tool: string; mode: string }[] }>('GET', '/policies'),
   deletePolicy: (tool: string) => req<{ ok: true }>('DELETE', `/policies/${encodeURIComponent(tool)}`),

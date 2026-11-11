@@ -1,7 +1,7 @@
 {
   "name": "grokbot",
   "private": true,
-  "description": "Grokbot: internal reverse-engineering clone of xAI Grok Bot. Internal research use only; do not distribute.",
+  "description": "Bot HQ: a team of Hermes agents, each with its own screen on one Orgo computer, with Composio apps and xAI voice.",
   "workspaces": ["server", "web"],
   "scripts": {
     "dev": "npm run dev -w server & npm run dev -w web",

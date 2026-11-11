@@ -122,6 +122,8 @@ function ComputerSection() {
     finally { setBusy(null); }
   };
   const byId = new Map(bots.map((b) => [b.id, b]));
+  // The server says how many screens the computer can hold; 4 until it does.
+  const maxScreens = computer?.maxScreens ?? details?.computer.maxScreens ?? 4;
 
   return (
     <>
@@ -148,7 +150,7 @@ function ComputerSection() {
       </section>
 
       <section className="cfg-section">
-        <div className="cfg-section__label">Screens in use</div>
+        <div className="cfg-section__label">Screens in use{details && maxScreens ? ` · ${details.screens.length} of ${maxScreens}` : ''}</div>
         <div className="cfg-card">
           {!details ? <div className="cfg-empty cfg-empty--flat">Loading…</div> : details.screens.length === 0 ? (
             <div className="cfg-empty cfg-empty--flat">No Bot has used the computer yet.</div>
@@ -174,7 +176,7 @@ function ComputerSection() {
             );
           })}
         </div>
-        <div className="cfg-field__hint">Reset closes every window on that Bot’s screen, so it starts clean next time. Up to 4 Bots can have a screen at once.</div>
+        <div className="cfg-field__hint">Reset closes every window on that Bot’s screen, so it starts clean next time.{maxScreens ? ` Up to ${maxScreens} Bots can have a screen at once${details && details.screens.length >= maxScreens ? '; reset one to free it for another Bot' : ''}.` : ''}</div>
       </section>
     </>
   );

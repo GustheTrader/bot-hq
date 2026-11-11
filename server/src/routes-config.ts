@@ -4,14 +4,18 @@ import './db-config.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
 import { requireUser, type AuthVars } from './lib/auth.js';
-import { getBotRow, listRoutines, listTasks } from './store.js';
-import { computerState, ensureComputer } from './computer.js';
+import fs from 'node:fs';
+import { Readable } from 'node:stream';
+import { env } from './env.js';
+import { emitBot, getBotRow, listRoutines, listTasks } from './store.js';
+import { computerState, readyScreen, resetBotScreen } from './computer.js';
+import { box } from './box.js';
 import { orgo } from './orgo.js';
-import { runInBotQueue } from './agent/loop.js';
-import { consolidateBot, historySize, maybeCompact, memoryConfig } from './agent/memory.js';
+import { openTerminal } from './desk.js';
+import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, stopOwnScreen } from './engine.js';
+import { listMemories } from './engine-memory.js';
 import { idleConfig, viewerCount } from './idle.js';
-import { loadHistory } from './store.js';
-import type { LibraryFile, Memory, Skill } from './types.js';
+import type { LibraryFile, Skill } from './types.js';
 
 /**
  * Bot settings, skills, library, computer controls and memory maintenance.
@@ -26,7 +30,6 @@ const ownBot = (userId: string, id: string) => {
   return b && b.user_id === userId ? b : null;
 };
 
-const toMemory = (m: any): Memory => ({ id: m.id, botId: m.bot_id, text: m.text, createdAt: m.created_at, source: m.source === 'learned' ? 'learned' : 'chat' });
 const toSkill = (s: any): Skill => ({ id: s.id, botId: s.bot_id, name: s.name, description: s.description ?? '', body: s.body, createdAt: s.created_at, updatedAt: s.updated_at ?? s.created_at });
 const listSkills = (botId: string) => (db.prepare('SELECT * FROM skills WHERE bot_id=? ORDER BY created_at ASC').all(botId) as any[]).map(toSkill);
 
@@ -35,20 +38,13 @@ const listSkills = (botId: string) => (db.prepare('SELECT * FROM skills WHERE bo
 configApi.get('/bots/:id/settings', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const memories = (db.prepare('SELECT * FROM memories WHERE bot_id=? ORDER BY created_at DESC').all(b.id) as any[]).map(toMemory);
-  const job = db.prepare('SELECT last_consolidated_at, last_result FROM memory_jobs WHERE bot_id=?').get(b.id) as any;
-  const lastCompaction = db.prepare('SELECT method, items_before, items_after, chars_before, chars_after, created_at FROM compactions WHERE bot_id=? ORDER BY id DESC LIMIT 1').get(b.id) as any;
   return c.json({
-    memories,
+    memories: listMemories(b.id),
     skills: listSkills(b.id),
     routines: listRoutines(b.id),
     tasks: listTasks(b.id),
-    memory: {
-      lastConsolidatedAt: job?.last_consolidated_at ?? null,
-      historyChars: historySize(b.id, loadHistory(b.id)),
-      compactAtChars: memoryConfig.compactChars,
-      lastCompaction: lastCompaction ?? null,
-    },
+    // The agent keeps its own memory and trims its own context; there is nothing for the app to maintain.
+    memory: { lastConsolidatedAt: null, historyChars: 0, compactAtChars: 0, lastCompaction: null },
   });
 });
 
@@ -104,27 +100,100 @@ configApi.delete('/skills/:id', (c) => {
   return c.json({ ok: true });
 });
 
-// ---------- memory maintenance ----------
+// ---------- memory maintenance (now the agent's own job; kept so older clients get an answer) ----------
 
-/** Run consolidation now instead of waiting for the idle window. */
-configApi.post('/bots/:id/memories/consolidate', async (c) => {
+configApi.post('/bots/:id/memories/consolidate', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
+  return c.json({ added: [], skipped: 0, considered: 0 });
+});
+
+configApi.post('/bots/:id/compact', (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  return c.json({ itemsBefore: 0, itemsAfter: 0, compacted: false });
+});
+
+// ---------- the agent behind a bot: model, sign-in, restart ----------
+
+configApi.get('/bots/:id/engine', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  return c.json({ engine: await engineInfo(b.id) });
+});
+
+/** Which model this bot's turns ask for. Empty values go back to the agent's own default. */
+configApi.patch('/bots/:id/engine', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  const p = await c.req.json<{ provider?: string | null; model?: string | null }>().catch(() => ({} as { provider?: string | null; model?: string | null }));
+  const clean = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 120) : null);
+  if (p.provider !== undefined) db.prepare('UPDATE bots SET provider=?, updated_at=? WHERE id=?').run(clean(p.provider), now(), b.id);
+  if (p.model !== undefined) db.prepare('UPDATE bots SET model=?, updated_at=? WHERE id=?').run(clean(p.model), now(), b.id);
+  emitBot(b.id);
+  return c.json({ engine: await engineInfo(b.id) });
+});
+
+/**
+ * Sign in to a model provider (a Claude, ChatGPT or Grok subscription, or an API key). Hermes does
+ * the sign-in itself; we open its command in a terminal on the bot's screen, where the user
+ * finishes it through the live view.
+ */
+configApi.post('/bots/:id/engine/login', async (c) => {
+  const user = c.get('user');
+  const b = ownBot(user.id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  const home = engineHome(b.id);
+  if (!home) return c.json({ error: 'This bot has no agent.' }, 409);
+  // The agent's files are on the machine this server runs on; a terminal on another machine cannot reach them.
+  if (!box.local) return c.json({ error: 'Sign-in opens a terminal on the computer. It works once the app runs on that computer.' }, 409);
+  const { provider } = await c.req.json<{ provider?: string }>().catch(() => ({} as { provider?: string }));
+  if (provider !== undefined && !/^[a-z0-9][a-z0-9._-]{0,40}$/.test(provider)) return c.json({ error: 'bad provider' }, 400);
+  const hermes = `HERMES_HOME=${box.quote(home)} ${box.quote(env.hermesBin)}`;
+  // Claude subscriptions sign in with OAuth; without the flag Hermes asks for an API key.
+  const cmd = !provider ? `${hermes} model` : `${hermes} auth add ${provider}${provider === 'anthropic' ? ' --type oauth' : ''}`;
   try {
-    return c.json(await consolidateBot(b.id));
+    const s = await readyScreen(user.id, b.id);
+    await openTerminal(s.screenId, cmd, provider ? `Sign in: ${provider}` : 'Choose a model');
+    forgetEngineOptions(b.id);
+    return c.json({ ok: true });
   } catch (e: any) {
-    return c.json({ error: e?.message ?? String(e) }, 502);
+    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
   }
 });
 
-/** Compact the stored history now (inside the bot's queue). `force` compacts even under the threshold. */
-configApi.post('/bots/:id/compact', async (c) => {
+configApi.post('/bots/:id/engine/restart', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const force = c.req.query('force') === '1';
-  const before = loadHistory(b.id).length;
-  const after = await runInBotQueue(b.id, async () => (await maybeCompact(b.id, loadHistory(b.id), { force })).length);
-  return c.json({ itemsBefore: before, itemsAfter: after, compacted: after !== before });
+  // The primary agent serves more than this app (its messaging runs through the same process), so it is never restarted from here.
+  if (engineKind(b.id) !== 'managed') return c.json({ error: `${b.name} runs on the computer's own agent, which this app does not restart.` }, 409);
+  try {
+    await restartEngine(b.id);
+    forgetEngineOptions(b.id);
+    return c.json({ engine: await engineInfo(b.id) });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
+  }
+});
+
+/** Stop the private screen Hermes runs for this agent, so its computer work comes back to the screen shown here. */
+configApi.post('/bots/:id/engine/screen/stop', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  try {
+    await stopOwnScreen(b.id);
+    return c.json({ engine: await engineInfo(b.id) });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 409);
+  }
+});
+
+/** The user gives the screen back after taking control; the bot is told on its next turn. */
+configApi.post('/bots/:id/handback', (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  db.prepare('UPDATE bots SET handback_at=? WHERE id=?').run(now(), b.id);
+  return c.json({ ok: true });
 });
 
 // ---------- library: files under /root/grokbot/files/<botId> on the bot's computer ----------
@@ -154,17 +223,6 @@ export function parseLs(out: string): LibraryFile[] {
   return files.sort((a, b) => Number(b.isDir) - Number(a.isDir) || b.modifiedAt - a.modifiedAt);
 }
 
-/** The bot's computer id if it is awake (or `wake` is set), plus the bot's leased screen if it has one. */
-async function boxFor(userId: string, botId: string, wake: boolean): Promise<{ computerId: string; screenId?: string } | null> {
-  const comp = db.prepare('SELECT orgo_id, status FROM computers WHERE user_id=?').get(userId) as any;
-  let computerId: string | null = comp?.status === 'running' ? comp.orgo_id : null;
-  if (!computerId && wake) computerId = await ensureComputer(userId);
-  if (!computerId) return null;
-  // Use the bot's own screen when it has one; never lease (and evict) a screen just to list files.
-  const scr = db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(botId) as any;
-  return { computerId, screenId: scr?.screen_id };
-}
-
 configApi.get('/bots/:id/files', async (c) => {
   const user = c.get('user');
   const b = ownBot(user.id, c.req.param('id'));
@@ -172,10 +230,9 @@ configApi.get('/bots/:id/files', async (c) => {
   const rel = safeRel(c.req.query('path'));
   if (rel === null) return c.json({ error: 'bad path' }, 400);
   try {
-    const box = await boxFor(user.id, b.id, c.req.query('wake') === '1');
-    if (!box) return c.json({ status: 'asleep', path: rel, files: [] });
+    if (!box.local && computerState(user.id).status !== 'running') return c.json({ status: 'asleep', path: rel, files: [] });
     const dir = `${LIB_ROOT}/${b.id}${rel ? `/${rel}` : ''}`;
-    const r = await orgo.bash(box.computerId, box.screenId, `mkdir -p ${shq(`${LIB_ROOT}/${b.id}`)} && ls -la --time-style=+%s ${shq(dir)} 2>&1`, 30);
+    const r = await box.bash(`mkdir -p ${shq(`${LIB_ROOT}/${b.id}`)} && ls -la --time-style=+%s ${shq(dir)} 2>&1`, 30);
     if (r.exit_code !== 0) return c.json({ status: 'error', path: rel, files: [], error: (r.output ?? '').slice(0, 300) });
     return c.json({ status: 'ok', path: rel, files: parseLs(r.output ?? '') });
   } catch (e: any) {
@@ -190,16 +247,42 @@ configApi.post('/bots/:id/files/download', async (c) => {
   const { path } = await c.req.json<{ path: string }>().catch(() => ({ path: '' }));
   const rel = safeRel(path);
   if (!rel) return c.json({ error: 'bad path' }, 400);
+  // On the computer itself the file is on our own disk: serve it directly.
+  if (box.local) return c.json({ url: `/api/bots/${b.id}/files/raw?path=${encodeURIComponent(rel)}` });
   try {
-    const box = await boxFor(user.id, b.id, true);
-    if (!box) return c.json({ error: 'computer unavailable' }, 409);
-    const r: any = await orgo.exportFile(box.computerId, `${LIB_ROOT}/${b.id}/${rel}`);
+    if (!env.orgoComputerId) return c.json({ error: 'computer unavailable' }, 409);
+    const r: any = await orgo.exportFile(env.orgoComputerId, `${LIB_ROOT}/${b.id}/${rel}`);
     const url = r?.url ?? r?.file?.url ?? r?.download_url;
     if (!url) return c.json({ error: 'export returned no link' }, 502);
     return c.json({ url });
   } catch (e: any) {
     return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
   }
+});
+
+configApi.get('/bots/:id/files/raw', (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b || !box.local) return c.json({ error: 'not found' }, 404);
+  const rel = safeRel(c.req.query('path'));
+  if (!rel) return c.json({ error: 'bad path' }, 400);
+  const root = `${LIB_ROOT}/${b.id}`;
+  let file: string;
+  try {
+    // Follow links before checking, so a link inside the library cannot point outside it.
+    file = fs.realpathSync(`${root}/${rel}`);
+    if (!file.startsWith(fs.realpathSync(root) + '/') || !fs.statSync(file).isFile()) throw new Error('outside');
+  } catch {
+    return c.json({ error: 'not found' }, 404);
+  }
+  const name = rel.split('/').pop()!;
+  return new Response(Readable.toWeb(fs.createReadStream(file)) as ReadableStream, {
+    headers: {
+      'content-type': 'application/octet-stream',
+      'content-length': String(fs.statSync(file).size),
+      'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+      'x-content-type-options': 'nosniff',
+    },
+  });
 });
 
 // ---------- computer: screens, reset, hibernation ----------
@@ -214,25 +297,15 @@ configApi.get('/computer/details', (c) => {
   });
 });
 
-/** Give a bot a clean screen: close its windows (default screen) or destroy its extra screen so a fresh one is made next time. */
+/** Give a bot a clean screen: close what is open and bring its browser back to its home screen. Logins stay. */
 configApi.post('/bots/:id/screen/reset', async (c) => {
   const user = c.get('user');
   const b = ownBot(user.id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const lease = db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(b.id) as any;
-  if (!lease) return c.json({ ok: true, note: 'no screen yet' });
-  const comp = db.prepare("SELECT orgo_id FROM computers WHERE user_id=? AND status='running'").get(user.id) as any;
-  if (!comp?.orgo_id) return c.json({ error: 'Wake the computer first' }, 409);
-  const profile = `/root/grokbot/profiles/${b.id}`;
   try {
-    await orgo.bash(comp.orgo_id, undefined, `pkill -f ${shq(`user-data-dir=${profile}`)}; rm -f ${shq(profile)}/Singleton*; echo ok`, 30).catch(() => null);
-    if (lease.screen_id !== 'default') {
-      await orgo.deleteScreen(comp.orgo_id, lease.screen_id).catch((e) => console.warn('[computer] delete screen', e?.message));
-      db.prepare('DELETE FROM screens WHERE bot_id=?').run(b.id);
-    }
-    console.log(`[computer] reset screen ${lease.screen_id} for bot ${b.id}`);
+    await resetBotScreen(user.id, b.id);
     hub.emit(user.id, { type: 'computer', state: computerState(user.id) });
-    return c.json({ ok: true, screenId: lease.screen_id });
+    return c.json({ ok: true });
   } catch (e: any) {
     return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
   }

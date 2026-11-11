@@ -28,6 +28,9 @@ export interface Bot {
   voice: string;
   voiceSpeed: number;
   voiceLanguage: string;
+  /** Hermes engine: model id and provider for this bot; null = the engine's default. */
+  model: string | null;
+  provider: string | null;
   generation: number;
   unread: number;
   lastPreview: string | null;
@@ -153,6 +156,10 @@ export interface LiveState {
   activity: { kind: ActivityKind; detail?: string; since: number } | null;
   awaiting: { reason: string; since: number } | null;
   startedAt: number | null;
+  /** Short line from the model's live reasoning, shown next to "Thinking". */
+  caption?: string | null;
+  /** Tool calls made so far in the current turn. */
+  steps?: number;
 }
 
 export interface Routine {
@@ -172,7 +179,35 @@ export interface ComputerState {
   status: 'absent' | 'creating' | 'starting' | 'running' | 'suspending' | 'suspended' | 'resuming' | 'error' | 'stopped';
   orgoId: string | null;
   error: string | null;
-  screens: { botId: string; screenId: string }[];
+  /** One screen per bot on the shared computer. width/height are the screen's pixel size. */
+  screens: { botId: string; screenId: string; width?: number; height?: number }[];
+  /** How many bots can have their own screen at once. */
+  maxScreens?: number;
+}
+
+/** A model provider Hermes can use (subscription sign-in or API key). */
+export interface EngineProvider {
+  id: string;
+  name: string;
+  kind: 'subscription' | 'api_key';
+  connected: boolean;
+  /** Suggested model ids for this provider. */
+  models: string[];
+}
+
+/** The Hermes agent that runs one bot. */
+export interface EngineInfo {
+  botId: string;
+  /** Hermes profile name ('default' for the primary bot). */
+  profile: string;
+  status: 'ready' | 'starting' | 'stopped' | 'error';
+  error: string | null;
+  model: string | null;
+  provider: string | null;
+  version: string | null;
+  providers: EngineProvider[];
+  /** Hermes is running a private screen of its own for this agent, so its computer work is not on the screen the app shows. */
+  ownScreen: boolean;
 }
 
 export interface Toolkit {

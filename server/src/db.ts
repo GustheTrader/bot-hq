@@ -146,5 +146,14 @@ function addColumn(table: string, col: string, ddl: string) {
 addColumn('bots', 'voice', "TEXT NOT NULL DEFAULT 'luna'");
 addColumn('bots', 'voice_speed', 'REAL NOT NULL DEFAULT 1');
 addColumn('bots', 'voice_language', "TEXT NOT NULL DEFAULT 'auto'");
+// Hermes engine: per-bot model choice, which engine runs the bot ('primary' = the existing agent,
+// 'managed' = a gateway we start), and the managed gateway's port.
+addColumn('bots', 'model', 'TEXT');
+addColumn('bots', 'provider', 'TEXT');
+addColumn('bots', 'engine', 'TEXT');
+addColumn('bots', 'engine_port', 'INTEGER');
+addColumn('bots', 'handback_at', 'INTEGER');
+addColumn('screens', 'width', 'INTEGER');
+addColumn('screens', 'height', 'INTEGER');
 
 export const now = () => Date.now();

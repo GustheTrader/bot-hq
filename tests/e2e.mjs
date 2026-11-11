@@ -1,6 +1,8 @@
-// Grokbot end-to-end smoke test (real backend, real Grok 4.7, real Orgo computer).
+// End-to-end smoke test (real server, real Hermes engines, real Orgo computer).
 // Usage: node tests/e2e.mjs [baseUrl]   (default http://localhost:8787)
-// Creates a throwaway "QA" bot on the dev account, exercises the core flows, then deletes it.
+// Signs in with dev login (E2E_EMAIL, server needs DEV_LOGIN=1) or with an existing session
+// (E2E_SESSION=<grokbot_session cookie value>). Creates a throwaway "QA" bot, which gets its own
+// Hermes engine and screen, exercises the core flows, then deletes it.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,10 +24,15 @@ const step = async (name, fn) => {
   }
 };
 
-const login = await fetch(`${BASE}/api/auth/dev`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.E2E_EMAIL ?? 'dev@example.com', name: 'Dev' }) });
-const cookie = (login.headers.get('set-cookie') ?? '').match(/grokbot_session=([^;]+)/)?.[1];
-if (!cookie) throw new Error('dev login failed: ' + login.status);
+let cookie = process.env.E2E_SESSION;
+if (!cookie) {
+  const login = await fetch(`${BASE}/api/auth/dev`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: process.env.E2E_EMAIL ?? 'dev@example.com', name: 'Dev' }) });
+  cookie = (login.headers.get('set-cookie') ?? '').match(/grokbot_session=([^;]+)/)?.[1];
+  if (!cookie) throw new Error('dev login failed: ' + login.status);
+}
 const api = (p, init = {}) => fetch(`${BASE}${p}`, { ...init, headers: { 'content-type': 'application/json', cookie: `grokbot_session=${cookie}`, ...(init.headers ?? {}) } });
+// The main bot is whatever agent already runs on the computer; its name comes from the server.
+const MAIN = (await (await api('/api/bots')).json()).bots.find((b) => b.isPrimary)?.name ?? 'Doug';
 
 const browser = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox'] });
 const ctx = await browser.newContext({ viewport: { width: 1512, height: 864 } });
@@ -40,7 +47,7 @@ let botId = null;
 
 await step('app loads with sidebar', async () => {
   await page.goto(BASE);
-  await page.getByText('Quinn').first().waitFor({ timeout: 15000 });
+  await page.getByText(MAIN).first().waitFor({ timeout: 15000 });
   await shot('01-loaded');
 });
 
@@ -68,7 +75,7 @@ const waitReply = async (re, timeout) => {
   );
 };
 
-await step('chat reply streams (grok-4.7)', async () => {
+await step('chat reply streams', async () => {
   await send('What is 17 times 3? Reply with only the number immediately followed by -e2e (no spaces).');
   await waitReply(/\b51-e2e/, 90000);
   await shot('03-chat');
@@ -83,26 +90,30 @@ await step('bot uses its own computer (shell on its screen)', async () => {
 });
 
 await step('computer viewer: watch, take control, hand back', async () => {
-  const card = page.getByText("Bot's computer").first();
-  if (!(await card.isVisible())) await page.getByLabel('Show details').first().click();
-  await page.getByText("Bot's computer").first().click();
-  await page.locator('canvas').first().waitFor({ timeout: 30000 });
+  const open = page.locator('.details__open').first();
+  if (!(await open.isVisible())) await page.getByLabel('Show details').first().click();
+  await open.click();
+  const viewer = page.getByRole('dialog', { name: /computer$/ });
+  await viewer.locator('canvas').first().waitFor({ timeout: 30000 });
   await page.waitForTimeout(2500);
   await shot('05-viewer-watch');
-  await page.getByRole('button', { name: 'Take control' }).click();
-  await page.getByRole('button', { name: "I'm done" }).waitFor({ timeout: 15000 });
+  // The controls sit in a pill that shows while the pointer is over the screen.
+  await viewer.locator('canvas').first().hover();
+  await viewer.getByRole('button', { name: 'Take control' }).click();
+  await viewer.getByRole('button', { name: /Hand back to/ }).waitFor({ timeout: 15000 });
   await page.waitForTimeout(1500);
   await shot('06-viewer-control');
-  await page.getByRole('button', { name: "I'm done" }).click();
-  await page.getByRole('button', { name: 'Take control' }).waitFor({ timeout: 15000 });
+  await viewer.getByRole('button', { name: /Hand back to/ }).click();
+  await viewer.locator('canvas').first().hover();
+  await viewer.getByRole('button', { name: 'Take control' }).waitFor({ timeout: 15000 });
   await page.keyboard.press('Escape');
 });
 
-await step('search palette opens Quinn', async () => {
+await step('search palette opens the main bot', async () => {
   await page.keyboard.press('Control+k');
-  await page.getByPlaceholder(/Search Bots/).fill('Quinn');
+  await page.getByPlaceholder(/Search Bots/).fill(MAIN);
   await page.keyboard.press('Enter');
-  await page.getByPlaceholder(/Message Quinn/).first().waitFor({ timeout: 10000 });
+  await page.getByPlaceholder(new RegExp(`Message ${MAIN}`)).first().waitFor({ timeout: 10000 });
   await shot('07-search');
 });
 
@@ -160,7 +171,7 @@ await step('group chat: members reply via @mention', async () => {
 });
 
 await step('bot settings: general, skills, memories, routines', async () => {
-  await page.getByText('Quinn').first().click();
+  await page.getByText(MAIN).first().click();
   await page.getByLabel('Bot settings').click();
   const nav = page.getByLabel('Bot settings sections');
   await nav.waitFor({ timeout: 10000 });

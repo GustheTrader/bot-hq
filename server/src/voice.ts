@@ -12,6 +12,7 @@ import { appendRow, emitBot, getBotRow, getLive, listRoutines, listTasks, update
 import { enqueue } from './agent/loop.js';
 import { computerState } from './computer.js';
 import type { ActivityKind, EventBody, MessageBody, RowBody, VoiceCallRecord, VoiceOption } from './types.js';
+import { listMemories } from './engine-memory.js';
 
 export const voiceApi = new Hono<AuthVars>();
 
@@ -167,7 +168,8 @@ export const VOICE_TOOLS = [
 function voiceInstructions(userId: string, bot: any, language: string): string {
   const user = db.prepare('SELECT name, email FROM users WHERE id=?').get(userId) as any;
   const firstName = String(user?.name ?? '').split(/\s+/)[0] || 'the user';
-  const memories = (db.prepare('SELECT text FROM memories WHERE bot_id=? ORDER BY created_at DESC LIMIT 12').all(bot.id) as any[]).map((m) => `- ${clip(m.text, 200)}`).join('\n');
+  // What the agent remembers lives in its Hermes home (see engine-memory.ts); what it knows about the user comes first.
+  const memories = listMemories(bot.id).sort((a, b) => Number(b.source === 'chat') - Number(a.source === 'chat')).slice(0, 12).map((m) => `- ${clip(m.text, 200)}`).join('\n');
   const routines = listRoutines(bot.id).filter((r) => r.enabled).slice(0, 6).map((r) => `- ${r.name}: ${r.description}`).join('\n');
   const recent = recentMessages(bot.id, 14).map((m) => `[${ago(m.at)}] ${m.who}: ${clip(m.text.replace(/\s+/g, ' '), 400)}`).join('\n');
   const lang = language !== 'auto' ? langName(language) : null;

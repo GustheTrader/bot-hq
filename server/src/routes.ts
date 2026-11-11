@@ -1,13 +1,16 @@
+import crypto from 'node:crypto';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { db, now } from './db.js';
 import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
-import { createSession, destroySession, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
+import { createSession, destroySession, isOwnerKey, requireUser, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
-import { computerState, ensureComputer, refreshComputer, suspendComputer } from './computer.js';
+import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
+import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
+import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { orgo } from './orgo.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
@@ -27,13 +30,22 @@ function hashPick<T>(id: string, list: T[]): T {
   return list[h % list.length];
 }
 
+/** Thrown for things the user can fix; the message is shown to them. */
+class UserError extends Error {}
+
+const agentCount = () => (db.prepare("SELECT COUNT(*) n FROM bots WHERE COALESCE(kind,'agent')<>'room' AND COALESCE(hidden,0)=0").get() as any).n as number;
+
 function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; mode?: string; isPrimary?: boolean }) {
+  // Every bot needs a screen of its own on the one shared computer.
+  if (agentCount() >= env.maxBots) throw new UserError(`The team is full: the computer has room for ${env.maxBots} bots. Remove one to add another.`);
   const id = newId('bot');
   const shape = SHAPES.includes(b.avatarShape as AvatarShape) ? b.avatarShape : hashPick(id, SHAPES.slice(0, 13));
   const color = COLORS.includes(b.avatarColor as AvatarColor) ? b.avatarColor : hashPick(id, COLORS.filter((c) => c !== 'black'));
   db.prepare(
     'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,is_primary,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
   ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, now(), now());
+  // The first bot is the agent that already runs on the computer; the others get an engine of their own.
+  if (assignEngine(id) === 'managed') provisionEngine(id);
   hub.emit(userId, { type: 'roster' });
   return getBot(id)!;
 }
@@ -41,9 +53,10 @@ function createBot(userId: string, b: { name: string; label?: string; descriptio
 function findOrCreateUser(email: string, name?: string, preferId?: string) {
   const existing = db.prepare('SELECT * FROM users WHERE lower(email)=lower(?)').get(email) as any;
   if (existing) return { id: existing.id as string, isNew: false };
+  if (env.allowedEmails.length && !env.allowedEmails.includes(email.toLowerCase())) throw new UserError('This account is not allowed to sign in here.');
   const id = preferId ?? newId('usr');
   db.prepare('INSERT INTO users(id,email,name,created_at) VALUES (?,?,?,?)').run(id, email, name ?? email.split('@')[0], now());
-  createBot(id, { name: 'Quinn', label: 'Chief of Staff', description: 'Your main point of contact. Checks in proactively and coordinates work with your other Bots.', avatarShape: 'blob', avatarColor: 'black', isPrimary: true });
+  createBot(id, { name: env.primaryBotName, label: env.primaryBotLabel, description: 'Your main point of contact. Checks in proactively and coordinates work with your other Bots.', avatarShape: 'blob', avatarColor: 'black', isPrimary: true });
   return { id, isNew: true };
 }
 
@@ -86,9 +99,45 @@ api.post('/auth/dev', async (c) => {
   if (!env.devLogin) return c.json({ error: 'disabled' }, 403);
   const { email, name } = await c.req.json<{ email: string; name?: string }>();
   if (!email?.includes('@')) return c.json({ error: 'email required' }, 400);
-  const { id } = findOrCreateUser(email, name);
-  createSession(c, id);
-  return c.json({ ok: true });
+  try {
+    const { id } = findOrCreateUser(email, name);
+    createSession(c, id);
+    return c.json({ ok: true });
+  } catch (e: any) {
+    return c.json({ error: e instanceof UserError ? e.message : 'could not sign in' }, 403);
+  }
+});
+
+/** One-time sign-in links made by the owner endpoint. Kept in memory: a restart drops them. */
+const signInLinks = new Map<string, { userId: string; expires: number }>();
+
+// Sign-in for whoever runs the server, without Google: the key only exists on the machine (see isOwnerKey).
+// With `link`, it answers with a link that signs one browser in, once (scripts/sign-in-link.sh).
+api.post('/auth/owner', async (c) => {
+  if (!isOwnerKey((c.req.header('authorization') ?? '').replace(/^Bearer\s+/i, ''))) return c.json({ error: 'forbidden' }, 403);
+  const { email, name, link } = await c.req.json<{ email: string; name?: string; link?: boolean }>();
+  if (!email?.includes('@')) return c.json({ error: 'email required' }, 400);
+  try {
+    const { id } = findOrCreateUser(email, name);
+    if (link) {
+      const token = crypto.randomBytes(24).toString('base64url');
+      signInLinks.set(token, { userId: id, expires: Date.now() + 15 * 60_000 });
+      return c.json({ ok: true, url: `${env.appUrl}/api/auth/link/${token}` });
+    }
+    createSession(c, id);
+    return c.json({ ok: true });
+  } catch (e: any) {
+    return c.json({ error: e instanceof UserError ? e.message : 'could not sign in' }, 403);
+  }
+});
+
+api.get('/auth/link/:token', (c) => {
+  const token = c.req.param('token');
+  const l = signInLinks.get(token);
+  signInLinks.delete(token);
+  if (!l || l.expires < Date.now()) return c.text('This sign-in link was already used or has expired. Ask for a new one.', 410);
+  createSession(c, l.userId);
+  return c.redirect('/');
 });
 
 api.post('/auth/logout', (c) => { destroySession(c); return c.json({ ok: true }); });
@@ -132,7 +181,12 @@ api.get('/bots', (c) => c.json({ bots: listBots(c.get('user').id), live: allLive
 
 api.post('/bots', async (c) => {
   const body = await c.req.json();
-  return c.json({ bot: createBot(c.get('user').id, body) });
+  try {
+    return c.json({ bot: createBot(c.get('user').id, body) });
+  } catch (e: any) {
+    if (e instanceof UserError) return c.json({ error: e.message }, 409);
+    throw e;
+  }
 });
 
 api.patch('/bots/:id', async (c) => {
@@ -143,14 +197,31 @@ api.patch('/bots/:id', async (c) => {
   for (const [k, col] of Object.entries(cols)) {
     if (p[k] !== undefined) db.prepare(`UPDATE bots SET ${col}=?, updated_at=? WHERE id=?`).run(typeof p[k] === 'boolean' ? (p[k] ? 1 : 0) : p[k], now(), b.id);
   }
+  if (b.kind !== 'room') {
+    if (['name', 'label', 'description'].some((k) => p[k] !== undefined)) syncPersona(b.id);
+    // Its desktop carries its name and colour: dress the screen again, if it has one.
+    const looks = ['name', 'label', 'avatarShape', 'avatarColor'].some((k) => p[k] !== undefined);
+    if (looks && db.prepare('SELECT 1 FROM screens WHERE bot_id=?').get(b.id)) {
+      readyScreen(b.user_id, b.id, { redress: true }).catch((e) => console.warn('[computer] redress failed', e?.message ?? e));
+    }
+  }
   emitBot(b.id);
   return c.json({ bot: getBot(b.id) });
 });
 
-api.delete('/bots/:id', (c) => {
+api.delete('/bots/:id', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  for (const r of listRoutines(b.id)) unscheduleRoutine(r.id);
+  interrupt(b.id);
+  for (const r of listRoutines(b.id)) {
+    unscheduleRoutine(r.id);
+    await deleteEventTrigger(r.id).catch(() => {});
+  }
+  if (b.kind !== 'room') {
+    await removeEngine(b.id).catch((e) => console.warn('[engine] remove failed', e?.message ?? e));
+    await releaseScreen(b.id).catch((e) => console.warn('[computer] release failed', e?.message ?? e));
+    await forgetBotFiles(b.id).catch((e) => console.warn('[computer] cleanup failed', e?.message ?? e));
+  }
   db.prepare('DELETE FROM screens WHERE bot_id=?').run(b.id);
   db.prepare('DELETE FROM bots WHERE id=?').run(b.id);
   hub.emit(c.get('user').id, { type: 'roster' });
@@ -289,12 +360,13 @@ api.get('/tasks', (c) => {
 api.get('/bots/:id/memories', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const rows = db.prepare('SELECT * FROM memories WHERE bot_id=? ORDER BY created_at DESC').all(b.id) as any[];
-  return c.json({ memories: rows.map((m) => ({ id: m.id, botId: m.bot_id, text: m.text, createdAt: m.created_at })) });
+  return c.json({ memories: listMemories(b.id) });
 });
 
 api.delete('/memories/:id', (c) => {
-  db.prepare('DELETE FROM memories WHERE id=? AND bot_id IN (SELECT id FROM bots WHERE user_id=?)').run(c.req.param('id'), c.get('user').id);
+  const botId = memoryBot(c.req.param('id'));
+  if (!botId || !ownBot(c.get('user').id, botId)) return c.json({ error: 'not found' }, 404);
+  deleteMemory(c.req.param('id'));
   return c.json({ ok: true });
 });
 
@@ -317,11 +389,10 @@ api.get('/bots/:id/screenshot', async (c) => {
   const user = c.get('user');
   const b = ownBot(user.id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const comp = db.prepare("SELECT orgo_id FROM computers WHERE user_id=? AND status='running'").get(user.id) as any;
   const scr = db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(b.id) as any;
-  if (!comp?.orgo_id || !scr) return c.body(null, 204);
+  if (!env.orgoComputerId || computerState(user.id).status !== 'running' || !scr) return c.body(null, 204);
   try {
-    const s = await orgo.screenshot(comp.orgo_id, scr.screen_id);
+    const s = await orgo.screenshot(env.orgoComputerId, scr.screen_id);
     const b64 = s.image.replace(/^data:[^,]+,/, '');
     return c.body(Buffer.from(b64, 'base64'), 200, { 'Content-Type': s.mime_type ?? 'image/jpeg', 'Cache-Control': 'no-store' });
   } catch {

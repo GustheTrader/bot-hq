@@ -53,13 +53,6 @@ const q = (screen?: string) => (screen && screen !== 'default' ? `?screen=${enco
 export const orgo = {
   workspaces: () => call<any>('GET', '/workspaces'),
 
-  createComputer: (name: string, idempotencyKey: string) =>
-    call<OrgoComputer>(
-      'POST',
-      '/computers',
-      { workspace_id: env.orgoWorkspaceId, name, os: 'linux', ram: env.orgoRamGb, cpu: env.orgoCpu, resolution: env.orgoResolution },
-      { timeoutMs: 300_000, headers: { 'Idempotency-Key': idempotencyKey } },
-    ),
   getComputer: (id: string) => call<OrgoComputer>('GET', `/computers/${id}`),
   start: (id: string) => call<any>('POST', `/computers/${id}/start`, {}, { timeoutMs: 320_000 }),
   resume: (id: string) => call<any>('POST', `/computers/${id}/resume`, {}, { timeoutMs: 200_000 }),

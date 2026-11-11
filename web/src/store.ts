@@ -25,6 +25,10 @@ interface State {
   sidebarCollapsed: boolean;
   modal: ModalKind;
   viewerOpen: boolean;
+  /** How the large computer view opens, and the mode it is in while open. */
+  viewerMode: 'watch' | 'control';
+  /** One line shown under the large computer view while the person is driving (e.g. a sign-in to finish). */
+  viewerHint: string | null;
 
   checkAuth(): Promise<void>;
   loadBots(): Promise<void>;
@@ -60,6 +64,8 @@ export const useStore = create<State>((set, get) => ({
   sidebarCollapsed: lsGet(LS_SIDEBAR) === '1',
   modal: null,
   viewerOpen: false,
+  viewerMode: 'watch',
+  viewerHint: null,
 
   async checkAuth() {
     try {

@@ -346,7 +346,7 @@ ws.onopen = () => ws.send(JSON.stringify({ type: 'session.update', session: {
 
 ### A.8 How Grokbot uses xAI
 
-1. **Agent loop:** each bot turn runs the A.3 loop on `grok-4.7` through the `openai` package. grokbot-clone owns history in SQLite (`store:false`, encrypted reasoning kept as-is). `prompt_cache_key = bot_id:conversation_id`, `safety_identifier = sha256(user_id)`. Run compaction when context passes a budget we set (this project uses the token count of the previous call).
+1. **Agent loop:** each bot turn runs the A.3 loop on `grok-4.7` through the `openai` package. the app owns history in SQLite (`store:false`, encrypted reasoning kept as-is). `prompt_cache_key = bot_id:conversation_id`, `safety_identifier = sha256(user_id)`. Run compaction when context passes a budget we set (this project uses the token count of the previous call).
 2. **Effort policy:** `low` for computer-use step loops and routine tool calls, `medium` for chat, `high` for planning or "deep work" routines. Expose `xhigh` as an advanced bot setting.
 3. **Tools per turn:** our own functions (Orgo computer actions, shell, memory, `send_to_user`, `request_approval`, `send_to_bot`) plus the Composio tools from B.5. Add server-side `web_search` and `x_search` (cheap, citations included). Avoid xAI remote `mcp` for user apps, because xAI cannot apply our approvals (see B.5).
 4. **Computer use:** follow the A.5 pattern on the user's Orgo VM, one screen per bot.
