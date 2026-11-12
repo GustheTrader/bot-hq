@@ -17,6 +17,9 @@ function secret(name: string): string {
   throw new Error(`Missing env ${name} (or ${name}_FILE)`);
 }
 
+/** Where the bots' screens come from: an Orgo cloud computer, or this machine itself. */
+const computerProvider = process.env.COMPUTER_PROVIDER === 'local' ? 'local' : 'orgo';
+
 const hermesHome = process.env.HERMES_HOME_PRIMARY ?? path.join(os.homedir(), '.hermes');
 
 export const env = {
@@ -27,7 +30,8 @@ export const env = {
   xaiKey: req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
   composioKey: req('COMPOSIO_API_KEY'),
-  orgoKey: secret('ORGO_API_KEY'),
+  computerProvider,
+  orgoKey: computerProvider === 'orgo' ? secret('ORGO_API_KEY') : (process.env.ORGO_API_KEY ?? ''),
   sessionSecret: req('SESSION_SECRET'),
   devLogin: process.env.DEV_LOGIN === '1',
   dbPath: process.env.DB_PATH ?? new URL('../../data/grokbot.db', import.meta.url).pathname,
@@ -51,9 +55,12 @@ export const env = {
 
   // ---- the one shared computer ----
   /** The Orgo computer every bot works on (one screen each). Empty = legacy one-box-per-user mode is not supported. */
-  orgoComputerId: process.env.ORGO_COMPUTER_ID ?? '',
+  orgoComputerId: process.env.ORGO_COMPUTER_ID || (computerProvider === 'local' ? 'local' : ''),
   /** This server runs on that computer, so shell commands run locally instead of through Orgo's API. */
-  localBox: process.env.HQ_LOCAL === '1',
+  localBox: process.env.HQ_LOCAL === '1' || computerProvider === 'local',
+  /** COMPUTER_PROVIDER=local: where the screens keep their VNC password and logs, and their size. */
+  localScreensDir: process.env.LOCAL_SCREENS_DIR ?? '/root/grokbot/local-screens',
+  localScreenSize: /^\d+x\d+$/.test(process.env.LOCAL_SCREEN_SIZE ?? '') ? process.env.LOCAL_SCREEN_SIZE! : '1440x900',
   /**
    * DevTools URL of a Chrome that already runs on the default screen and belongs to the primary bot
    * (e.g. http://127.0.0.1:9333). When set, we never start or stop that screen's Chrome ourselves.

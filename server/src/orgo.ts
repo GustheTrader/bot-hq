@@ -1,4 +1,5 @@
 import { env } from './env.js';
+import { local } from './local.js';
 
 const BASE = 'https://www.orgo.ai/api';
 
@@ -50,7 +51,7 @@ export interface OrgoScreen { id: string; display: string; width: number; height
 
 const q = (screen?: string) => (screen && screen !== 'default' ? `?screen=${encodeURIComponent(screen)}` : '');
 
-export const orgo = {
+const orgoCloud = {
   workspaces: () => call<any>('GET', '/workspaces'),
 
   getComputer: (id: string) => call<OrgoComputer>('GET', `/computers/${id}`),
@@ -58,6 +59,9 @@ export const orgo = {
   resume: (id: string) => call<any>('POST', `/computers/${id}/resume`, {}, { timeoutMs: 200_000 }),
   suspend: (id: string) => call<any>('POST', `/computers/${id}/suspend`, {}),
   vncPassword: (id: string) => call<{ password: string; desktop_api_token: string }>('GET', `/computers/${id}/vnc-password`),
+  /** Orgo's websockify for one screen; vnc.ts does the RFB handshake with the password. */
+  vncUrl: (id: string, screen: string, password: string) =>
+    `wss://www.orgo.ai/desktops/${id}/ws/websockify?token=${encodeURIComponent(password)}${screen !== 'default' ? `&screen=${encodeURIComponent(screen)}` : ''}`,
 
   listScreens: (id: string) => call<{ screens: OrgoScreen[] } | OrgoScreen[]>('GET', `/computers/${id}/screens`).then((r) => (Array.isArray(r) ? r : r.screens ?? [])),
   createScreen: (id: string) => call<OrgoScreen>('POST', `/computers/${id}/screens`, {}),
@@ -81,3 +85,9 @@ export const orgo = {
   exportFile: (id: string, path: string) =>
     call<{ url?: string; file?: { id: string; url?: string; filename?: string }; [k: string]: unknown }>('POST', '/files/export', { desktopId: id, path }, { timeoutMs: 180_000 }),
 };
+
+/**
+ * The computer the bots use. COMPUTER_PROVIDER=orgo (default) talks to an Orgo cloud computer;
+ * COMPUTER_PROVIDER=local runs the screens on this machine (see local.ts), e.g. on a Zo server.
+ */
+export const orgo: typeof orgoCloud = env.computerProvider === 'local' ? local : orgoCloud;

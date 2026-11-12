@@ -8,7 +8,7 @@ import { readyScreen, screenFor } from './computer.js';
 import { viewerClosed, viewerOpened } from './idle.js';
 
 /**
- * VNC relay: browser <-> our server <-> Orgo websockify.
+ * VNC relay: browser <-> our server <-> the computer's websockify (Orgo's, or our own on a local computer).
  * The server performs the RFB handshake upstream with the computer's VNC password
  * (which is root-equivalent and never reaches the browser), then offers the browser
  * an unauthenticated RFB session. In "watch" mode, client input messages
@@ -161,7 +161,7 @@ async function relay(client: WebSocket, userId: string, botId: string, mode: 'wa
     // A screen nobody has used yet is bare; set it up while the person is already watching.
     readyScreen(userId, botId).catch(() => {});
     const { password } = await orgo.vncPassword(computerId);
-    const upUrl = `wss://www.orgo.ai/desktops/${computerId}/ws/websockify?token=${encodeURIComponent(password)}${screenId !== 'default' ? `&screen=${encodeURIComponent(screenId)}` : ''}`;
+    const upUrl = orgo.vncUrl(computerId, screenId, password);
     upstream = new WebSocket(upUrl, ['binary']);
     upstream.on('message', (data: Buffer) => {
       if (!piping) return fromUp.push(Buffer.from(data));
