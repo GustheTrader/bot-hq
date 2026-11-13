@@ -45,6 +45,7 @@ export const api = {
   setRoutine: (rid: string, enabled: boolean) => req<{ routine: Routine }>('PATCH', `/routines/${rid}`, { enabled }),
 
   computer: () => req<{ computer: ComputerState }>('GET', '/computer'),
+  screenUrl: (id: string) => req<{ url: string | null }>('GET', `/bots/${id}/screen-url`),
   ensureComputer: () => req<{ computer: ComputerState }>('POST', '/computer/ensure'),
 
   apps: (search = '', category = '') => req<AppsResponse>('GET', `/apps?search=${encodeURIComponent(search)}&category=${encodeURIComponent(category)}`),

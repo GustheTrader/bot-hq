@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { db } from './db.js';
-import { userFromCookieHeader } from './lib/auth.js';
+import { userFromCookieHeader, userIdFromScreenTicket } from './lib/auth.js';
 import { vncAuthResponse } from './lib/des.js';
 import { orgo } from './orgo.js';
 import { readyScreen, screenFor } from './computer.js';
@@ -125,7 +125,9 @@ export function attachVncRelay(server: Server) {
     const url = new URL(req.url ?? '/', 'http://x');
     const m = url.pathname.match(/^\/api\/bots\/([^/]+)\/screen$/);
     if (!m) return; // not ours
-    const user = userFromCookieHeader(req.headers.cookie);
+    // The session cookie, or a ticket when the web app lives on another host (see PUBLIC_WS_URL).
+    const userId = userFromCookieHeader(req.headers.cookie)?.id ?? userIdFromScreenTicket(url.searchParams.get('ticket'), m[1]);
+    const user = userId ? { id: userId } : null;
     const bot = user ? (db.prepare('SELECT * FROM bots WHERE id=? AND user_id=?').get(m[1], user.id) as any) : null;
     if (!user || !bot) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
