@@ -5,7 +5,7 @@
   "buildCommand": "npm run build -w web",
   "outputDirectory": "web/dist",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "https://modal.taila95594.ts.net/api/:path*" },
+    { "source": "/api/:path*", "destination": "https://bot-hq-herb.zocomputer.io/api/:path*" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
