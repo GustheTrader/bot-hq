@@ -70,9 +70,15 @@ function parseReply(output: string): Reply {
   return { kind: 'NONE', rest: '', raw: output };
 }
 
+/**
+ * The distribution's own Python when there is one: apt installs GTK's Python bindings for it, and on
+ * machines with a second Python earlier in PATH (Zo has one in /usr/local/bin) `python3` cannot load them.
+ */
+const PY = '"$( [ -x /usr/bin/python3 ] && echo /usr/bin/python3 || echo python3 )"';
+
 /** One call to hq-screen.py. A missing or failing script answers NOBASE so the caller can install it. */
 async function script(args: string[], screenId?: string, timeoutSec = 60): Promise<Reply> {
-  const cmd = `[ -f ${SCRIPT} ] && python3 ${SCRIPT} ${args.map(box.quote).join(' ')} 2>&1 || echo HQ_NOBASE`;
+  const cmd = `[ -f ${SCRIPT} ] && ${PY} ${SCRIPT} ${args.map(box.quote).join(' ')} 2>&1 || echo HQ_NOBASE`;
   const r = await box.bash(cmd, timeoutSec, screenId);
   return parseReply(r.output);
 }
@@ -125,7 +131,7 @@ async function setupBase(): Promise<void> {
     "os.unlink(root + '/bundle.json.gz')",
     "print('HQ_UNPACKED')",
   ].join('\n');
-  const r = await box.bash(`python3 -c ${box.quote(unpack)} 2>&1`, 60);
+  const r = await box.bash(`${PY} -c ${box.quote(unpack)} 2>&1`, 60);
   if (!r.output.includes('HQ_UNPACKED')) {
     throw new Error(`could not install the desktop scripts on the computer (python3 is needed): ${r.output.trim().slice(-300)}`);
   }
