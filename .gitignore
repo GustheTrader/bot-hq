@@ -16,4 +16,3 @@ docs/SPEC.md
 web/screenshots/
 tests/out/
 .vercel
-.env*
