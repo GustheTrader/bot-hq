@@ -20,7 +20,7 @@ export const PALETTES = [
 ] as const;
 export type Palette = (typeof PALETTES)[number]['id'];
 export type BotSettingsTab = 'general' | 'skills' | 'memories' | 'routines';
-export type AppSection = 'general' | 'computer' | 'permissions' | 'apps' | 'account';
+export type AppSection = 'general' | 'computer' | 'subscriptions' | 'permissions' | 'apps' | 'account';
 
 interface ConfigUI {
   botSettings: { botId: string; tab: BotSettingsTab } | null;

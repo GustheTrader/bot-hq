@@ -16,6 +16,7 @@ import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine,
 import { listMemories } from './engine-memory.js';
 import { cancelClaudeLogin, finishClaudeLogin, startClaudeLogin } from './engine-login.js';
 import { idleConfig, viewerCount } from './idle.js';
+import { listSubscriptions } from './subscriptions.js';
 import type { LibraryFile, Skill } from './types.js';
 
 /**
@@ -324,6 +325,13 @@ configApi.get('/bots/:id/files/raw', (c) => {
 });
 
 // ---------- computer: screens, reset, hibernation ----------
+
+/** Model subscriptions and keys on the bots' computer: plan, renewal and which harnesses are signed in. */
+configApi.get('/computer/subscriptions', async (c) => {
+  // The sign-in files live on the bots' computer; from anywhere else there is nothing to read.
+  if (!box.local) return c.json({ subscriptions: [], local: false });
+  return c.json({ subscriptions: await listSubscriptions(), local: true });
+});
 
 configApi.get('/computer/details', (c) => {
   const userId = c.get('user').id;

@@ -195,6 +195,19 @@ export interface EngineProvider {
   models: string[];
 }
 
+/** A model subscription or key on the bots' computer, as Settings shows it. Never carries a token. */
+export interface Subscription {
+  id: string;
+  name: string;
+  /** The plan name ('Plus', 'Pro', …), when the sign-in records one. */
+  plan: string | null;
+  /** When the plan runs out or renews (ISO date), when known. */
+  renews: string | null;
+  kind: 'subscription' | 'api_key';
+  /** The agent programs that can use it, and whether each is signed in (null: could not tell). */
+  harnesses: { name: string; signedIn: boolean | null }[];
+}
+
 /** The Hermes agent that runs one bot. */
 export interface EngineInfo {
   botId: string;

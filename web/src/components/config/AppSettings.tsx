@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { Toolkit } from '@shared/types';
+import type { Subscription, Toolkit } from '@shared/types';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { configApi, type ComputerDetails } from '../../lib/configApi';
 import { relativeShort } from '../../lib/time';
@@ -16,6 +16,7 @@ import { ConfirmButton } from './ui';
 const SECTIONS: { id: AppSection; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'computer', label: 'Computer' },
+  { id: 'subscriptions', label: 'Subscriptions' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'apps', label: 'Connected apps' },
   { id: 'account', label: 'Account' },
@@ -48,6 +49,7 @@ export function AppSettings() {
         <div className="app-settings__page">
           {section === 'general' && <GeneralSection />}
           {section === 'computer' && <ComputerSection />}
+          {section === 'subscriptions' && <SubscriptionsSection />}
           {section === 'permissions' && <PermissionsSection />}
           {section === 'apps' && <AppsSection />}
           {section === 'account' && <AccountSection />}
@@ -200,6 +202,56 @@ function ComputerSection() {
           })}
         </div>
         <div className="cfg-field__hint">Reset closes every window on that Bot’s screen, so it starts clean next time.{maxScreens ? ` Up to ${maxScreens} Bots can have a screen at once${details && details.screens.length >= maxScreens ? '; reset one to free it for another Bot' : ''}.` : ''}</div>
+      </section>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+/** "Codex and Hermes", "Codex, Hermes and Pi". */
+const listNames = (names: string[]) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+function SubscriptionsSection() {
+  const [data, setData] = useState<{ subscriptions: Subscription[]; local: boolean } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const load = useCallback(() => { setFailed(false); configApi.subscriptions().then(setData).catch(() => setFailed(true)); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <>
+      <PageHead title="Subscriptions" sub="The model plans and keys on your Bots’ computer, and which agent programs use each one." />
+      <section className="cfg-section">
+        <div className="cfg-card">
+          {failed ? (
+            <div className="cfg-empty cfg-empty--flat">Couldn’t read the subscriptions. <button type="button" className="link-btn link-btn--small" onClick={load}>Try again</button></div>
+          ) : !data ? <div className="cfg-empty cfg-empty--flat">Loading…</div> : !data.local ? (
+            <div className="cfg-empty cfg-empty--flat">Subscriptions show once the app runs on the Bots’ computer.</div>
+          ) : data.subscriptions.map((s) => {
+            const on = s.harnesses.filter((h) => h.signedIn === true).map((h) => h.name);
+            const off = s.harnesses.filter((h) => h.signedIn === false).map((h) => h.name);
+            const unknown = s.harnesses.filter((h) => h.signedIn === null).map((h) => h.name);
+            const plan = s.plan ?? (on.length === 0 ? null : s.kind === 'api_key' ? 'API key' : 'Signed in');
+            const detail = [
+              s.renews ? `Paid through ${shortDate(s.renews)}` : null,
+              on.length ? `Signed in on ${listNames(on)}` : null,
+              off.length ? `Not signed in on ${listNames(off)}` : null,
+              unknown.length ? `${listNames(unknown)} not answering` : null,
+            ].filter(Boolean).join(' · ');
+            return (
+              <div key={s.id} className="cfg-row">
+                <span className={`computer-status-dot is-${on.length ? 'on' : 'off'}`} aria-hidden />
+                <div className="cfg-row__text">
+                  <div className="cfg-row__title">{s.name}{plan ? ` · ${plan}` : ''}</div>
+                  <div className="cfg-row__sub">{detail || 'Not signed in'}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="cfg-field__hint">Hermes here means your main Bot’s agent; other Bots keep their own sign-ins. To sign in or switch accounts, use a Bot’s Engine panel. Plans are read from each program’s own sign-in on the computer; tokens never leave it.</div>
       </section>
     </>
   );
