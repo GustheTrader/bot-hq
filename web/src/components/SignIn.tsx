@@ -26,7 +26,7 @@ export function SignIn() {
         <div className="signin__hero">
           <BotAvatar shape="blob" color="black" size={84} />
         </div>
-        <h1 className="signin__title">Grokbot</h1>
+        <h1 className="signin__title">GnoesisBots</h1>
         <p className="signin__sub">AI teammates with their own computers. Hand them a task and they get it done.</p>
         <a className="btn btn--primary signin__google" href="/api/auth/google/start">
           <GoogleG /> Sign in with Google
