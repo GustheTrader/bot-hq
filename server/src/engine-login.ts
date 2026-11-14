@@ -16,8 +16,8 @@ const WAIT_FOR_CODE_MS = 10 * 60_000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** What Hermes said last, without the link (it carries the sign-in's one-time state). */
-const tail = (text: string) => text.replace(LINK, '').replace(/[│╭╮╰╯─]/g, '').split('\n').map((l) => l.trim()).filter(Boolean).slice(-3).join(' ').slice(-300);
+/** The last thing Hermes said (its reason, when it gives up), without its prompt or the link. */
+const tail = (text: string) => (text.replace(LINK, '').split(/\r?\n/).map((l) => l.replace(/^\s*Authorization code:\s*/, '').trim()).filter(Boolean).pop() ?? '').slice(-300);
 
 export function cancelClaudeLogin(botId: string): void {
   const p = pending.get(botId);
