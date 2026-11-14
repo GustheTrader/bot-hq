@@ -6,7 +6,10 @@ import { useStore } from './store';
 
 export type Theme = 'system' | 'light' | 'dark';
 
-/** Colour palettes (styles/palettes.css). Each has a light and a dark look; Graphite is the original. */
+/**
+ * Colour palettes (styles/palettes.css). Each has a light and a dark look; Graphite is the original.
+ * The colours here only paint the tiles in Settings and repeat values from that stylesheet: change both together.
+ */
 export const PALETTES = [
   { id: 'graphite', label: 'Graphite', light: { side: '#F5F5F5', pane: '#FFFFFF', ink: '#1C1C1C', bubble: '#1C1C1C' }, dark: { side: '#0E0E0E', pane: '#161616', accent: '#F5F5F5' } },
   { id: 'paper', label: 'Paper & Ink', light: { side: '#F1EADB', pane: '#FFFDF6', ink: '#221C35', bubble: '#C23A22' }, dark: { side: '#110F18', pane: '#1C1926', accent: '#EFE8D8' } },
