@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Routine, Skill, Task, Toolkit } from '@shared/types';
+import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Routine, Skill, Subscription, Task, Toolkit } from '@shared/types';
 import { ApiError } from './api';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -58,6 +58,7 @@ export const configApi = {
   downloadFile: (botId: string, path: string) => req<{ url: string }>('POST', `/bots/${botId}/files/download`, { path }),
 
   computerDetails: () => req<ComputerDetails>('GET', '/computer/details'),
+  subscriptions: () => req<{ subscriptions: Subscription[]; local: boolean }>('GET', '/computer/subscriptions'),
   wake: () => req<{ computer: ComputerState }>('POST', '/computer/ensure'),
   sleep: () => req<{ computer: ComputerState }>('POST', '/computer/suspend'),
   resetScreen: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/screen/reset`),
