@@ -24,11 +24,17 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const [phase, setPhase] = useState<'loading' | 'ok' | 'unavailable'>('loading');
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
-  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | 'claude' | null>(null);
+  /** Claude sign-in done here in the page: the link to open, and the code that page gives back. */
+  const [claudeUrl, setClaudeUrl] = useState<string | null>(null);
+  const [claudeCode, setClaudeCode] = useState('');
   const [note, setNote] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const dirty = useRef(false);
   const botId = bot.id;
+  /** The bot this panel shows right now; answers that come back for another bot are dropped. */
+  const shown = useRef(botId);
+  shown.current = botId;
 
   const apply = useCallback((e: EngineInfo, keepDraft = false) => {
     setEngine(e); setPhase('ok');
@@ -47,7 +53,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     return () => { alive = false; };
   }, [botId, apply]);
 
-  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setSigningIn(false); return load(); }, [load]);
+  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setSigningIn(false); setClaudeUrl(null); setClaudeCode(''); setBusy(null); return load(); }, [load]);
 
   // The agent takes a moment to come up after a change or a restart.
   const starting = engine?.status === 'starting';
@@ -117,6 +123,24 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     finally { setBusy(null); }
   };
 
+  const claudeStart = async () => {
+    if (busy) return;
+    setBusy('claude'); setNote(null);
+    try { const r = await configApi.claudeLoginStart(botId); if (shown.current !== botId) return; setClaudeCode(''); setClaudeUrl(r.url); }
+    catch (e) { if (shown.current === botId) setNote(`Couldn’t start the Claude sign-in: ${(e as Error).message || 'the engine did not answer'}`); }
+    finally { if (shown.current === botId) setBusy(null); }
+  };
+
+  const claudeFinish = async () => {
+    if (busy || !claudeCode.trim()) return;
+    setBusy('claude'); setNote(null);
+    try { const r = await configApi.claudeLoginFinish(botId, claudeCode.trim()); if (shown.current !== botId) return; setClaudeUrl(null); setClaudeCode(''); apply(r.engine, true); }
+    catch (e) { if (shown.current === botId) { setClaudeUrl(null); setClaudeCode(''); setNote(`Claude sign-in didn’t finish: ${(e as Error).message || 'the engine did not answer'}`); } }
+    finally { if (shown.current === botId) setBusy(null); }
+  };
+
+  const claudeCancel = () => { setClaudeUrl(null); setClaudeCode(''); void configApi.claudeLoginCancel(botId).catch(() => {}); };
+
   const restart = async () => {
     if (busy) return;
     setBusy('restart'); setNote(null);
@@ -171,6 +195,27 @@ export function EngineSettings({ bot }: { bot: Bot }) {
           <Icon name="monitor" size={14} opacity={0.56} />
           {busy === 'signin' ? 'Opening sign-in…' : signInTo ? `Sign in to ${signInTo.name}…` : 'Sign in to a subscription…'}
         </button>
+      )}
+      {selected?.id === 'anthropic' && !claudeUrl && (
+        <button type="button" className="panel-row panel-row--action engine__signin" onClick={claudeStart} disabled={busy === 'claude'}>
+          <Icon name="monitor" size={14} opacity={0.56} />
+          {busy === 'claude' ? 'Starting…' : 'Sign in with a Claude subscription here…'}
+        </button>
+      )}
+      {claudeUrl && (
+        <div className="engine__notice">
+          <span>1. <a href={claudeUrl} target="_blank" rel="noopener noreferrer">Open Claude and approve</a>. 2. Paste the code it shows here.</span>
+          <input
+            className="engine__model" aria-label="Code from Claude" value={claudeCode} spellCheck={false} autoComplete="off" placeholder="Code from Claude"
+            onChange={(e) => setClaudeCode(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') claudeFinish(); }}
+          />
+          <span>
+            <button type="button" className="btn btn--sm btn--bot" onClick={claudeFinish} disabled={!claudeCode.trim() || busy === 'claude'}>{busy === 'claude' ? 'Signing in…' : 'Finish sign-in'}</button>
+            {' '}
+            <button type="button" className="link-btn link-btn--small" onClick={claudeCancel} disabled={busy === 'claude'}>Cancel</button>
+          </span>
+        </div>
       )}
       {engine.ownScreen && (
         <div className="engine__notice">

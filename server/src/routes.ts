@@ -11,6 +11,7 @@ import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
+import { cancelClaudeLogin } from './engine-login.js';
 import { orgo } from './orgo.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
@@ -213,6 +214,7 @@ api.delete('/bots/:id', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   interrupt(b.id);
+  cancelClaudeLogin(b.id); // a sign-in left waiting must not outlive the bot's home
   for (const r of listRoutines(b.id)) {
     unscheduleRoutine(r.id);
     await deleteEventTrigger(r.id).catch(() => {});

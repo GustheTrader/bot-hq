@@ -14,6 +14,7 @@ import { orgo } from './orgo.js';
 import { openTerminal } from './desk.js';
 import { engineHome, engineInfo, engineKind, forgetEngineOptions, restartEngine, stopOwnScreen } from './engine.js';
 import { listMemories } from './engine-memory.js';
+import { cancelClaudeLogin, finishClaudeLogin, startClaudeLogin } from './engine-login.js';
 import { idleConfig, viewerCount } from './idle.js';
 import type { LibraryFile, Skill } from './types.js';
 
@@ -160,6 +161,43 @@ configApi.post('/bots/:id/engine/login', async (c) => {
   } catch (e: any) {
     return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
   }
+});
+
+/**
+ * Claude subscription sign-in from the web app itself: the first call returns the link to open, the
+ * second takes the code that page shows. For when the bot's screen is not at hand (see engine-login.ts).
+ */
+configApi.post('/bots/:id/engine/claude-login', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  const home = engineHome(b.id);
+  if (!home) return c.json({ error: 'This bot has no agent.' }, 409);
+  if (!box.local) return c.json({ error: 'Sign-in runs on the computer. It works once the app runs on that computer.' }, 409);
+  try {
+    return c.json({ url: await startClaudeLogin(b.id, home) });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502);
+  }
+});
+
+configApi.post('/bots/:id/engine/claude-login/finish', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  const { code } = (await c.req.json<{ code?: string } | null>().catch(() => null)) ?? {};
+  try {
+    await finishClaudeLogin(b.id, String(code ?? ''));
+    forgetEngineOptions(b.id);
+    return c.json({ engine: await engineInfo(b.id) });
+  } catch (e: any) {
+    return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 400);
+  }
+});
+
+configApi.delete('/bots/:id/engine/claude-login', (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  cancelClaudeLogin(b.id);
+  return c.json({ ok: true });
 });
 
 configApi.post('/bots/:id/engine/restart', async (c) => {
