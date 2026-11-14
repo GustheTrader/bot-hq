@@ -22,7 +22,9 @@ const PLAN_NAMES: Record<string, string> = { free: 'Free', go: 'Go', plus: 'Plus
 /** A known plan by name; anything else only if it is a short plain word, so nothing token-like is ever passed on. */
 function planName(p: unknown): string | null {
   if (typeof p !== 'string' || !p) return null;
-  const known = PLAN_NAMES[p.toLowerCase()];
+  const key = p.toLowerCase();
+  // Own keys only: 'constructor' or '__proto__' must not reach Object.prototype.
+  const known = Object.prototype.hasOwnProperty.call(PLAN_NAMES, key) ? PLAN_NAMES[key] : undefined;
   if (known) return known;
   return /^[a-z][a-z0-9_-]{0,23}$/i.test(p) ? p.charAt(0).toUpperCase() + p.slice(1).replace(/[_-]+/g, ' ') : null;
 }
