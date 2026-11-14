@@ -62,10 +62,11 @@ export async function startClaudeLogin(botId: string, home: string): Promise<str
   pending.set(botId, mine);
   const current = () => pending.get(botId) === mine;
   let exited = false;
-  void done.then(() => { exited = true; if (current()) { pending.delete(botId); clearTimeout(mine.timer); } });
+  let gaveUp = false; // Hermes ended by itself, as opposed to being stopped for a newer sign-in or a cancel
+  void done.then(() => { exited = true; if (current()) { gaveUp = true; pending.delete(botId); clearTimeout(mine.timer); } });
 
   for (let i = 0; i < 100 && !exited && current() && !LINK.test(text); i++) await sleep(200);
-  if (!current() && !exited) throw new Error('A newer sign-in replaced this one.');
+  if (!current() && !gaveUp) throw new Error('A newer sign-in replaced this one.');
   const link = text.match(LINK)?.[0];
   if (!link || exited) {
     if (current()) cancelClaudeLogin(botId);
