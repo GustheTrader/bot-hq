@@ -457,9 +457,11 @@ async function modelOptions(botId: string, e: { url: string; key: string }): Pro
   } catch { return null; }
 }
 
-/** Which providers the primary agent (Hermes) is signed in to, by provider id. Empty when it does not answer. */
-export async function primaryProviderAuth(): Promise<Record<string, boolean>> {
-  const data = await modelOptions('__primary_auth__', { url: env.hermesUrl, key: primaryKey() });
+/** Which providers the primary agent (Hermes) is signed in to, by provider id; null when it does not answer. */
+export async function primaryProviderAuth(): Promise<Record<string, boolean> | null> {
+  // Same cache entry as the primary bot's Engine panel.
+  const data = await modelOptions(primaryBotId() ?? '__primary__', { url: env.hermesUrl, key: primaryKey() });
+  if (!data) return null;
   const list: any[] = Array.isArray(data?.providers) ? data.providers : [];
   return Object.fromEntries(list.filter((p) => p?.slug).map((p) => [String(p.slug), !!p.authenticated]));
 }

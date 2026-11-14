@@ -230,13 +230,15 @@ function SubscriptionsSection() {
           ) : !data ? <div className="cfg-empty cfg-empty--flat">Loading…</div> : !data.local ? (
             <div className="cfg-empty cfg-empty--flat">Subscriptions show once the app runs on the Bots’ computer.</div>
           ) : data.subscriptions.map((s) => {
-            const on = s.harnesses.filter((h) => h.signedIn).map((h) => h.name);
-            const off = s.harnesses.filter((h) => !h.signedIn).map((h) => h.name);
-            const plan = s.plan ?? (on.length === 0 ? null : s.kind === 'api_key' ? 'API key' : 'Plan not shown');
+            const on = s.harnesses.filter((h) => h.signedIn === true).map((h) => h.name);
+            const off = s.harnesses.filter((h) => h.signedIn === false).map((h) => h.name);
+            const unknown = s.harnesses.filter((h) => h.signedIn === null).map((h) => h.name);
+            const plan = s.plan ?? (on.length === 0 ? null : s.kind === 'api_key' ? 'API key' : 'Signed in');
             const detail = [
               s.renews ? `Paid through ${shortDate(s.renews)}` : null,
               on.length ? `Signed in on ${listNames(on)}` : null,
               off.length ? `Not signed in on ${listNames(off)}` : null,
+              unknown.length ? `${listNames(unknown)} not answering` : null,
             ].filter(Boolean).join(' · ');
             return (
               <div key={s.id} className="cfg-row">
@@ -249,7 +251,7 @@ function SubscriptionsSection() {
             );
           })}
         </div>
-        <div className="cfg-field__hint">To sign in or switch accounts, use a Bot’s Engine panel. Plans are read from each program’s own sign-in on the computer; tokens never leave it.</div>
+        <div className="cfg-field__hint">Hermes here means your main Bot’s agent; other Bots keep their own sign-ins. To sign in or switch accounts, use a Bot’s Engine panel. Plans are read from each program’s own sign-in on the computer; tokens never leave it.</div>
       </section>
     </>
   );

@@ -10,7 +10,7 @@ import type { Subscription } from './types.js';
  */
 
 const home = os.homedir();
-const readJson = (file: string): any => { try { return JSON.parse(fs.readFileSync(path.join(home, file), 'utf8')); } catch { return null; } };
+const readJson = (file: string): any => { try { return JSON.parse(fs.readFileSync(path.isAbsolute(file) ? file : path.join(home, file), 'utf8')); } catch { return null; } };
 
 /** The claims of a JWT, without checking its signature (it is our own file; we only read the plan from it). */
 function claims(jwt: unknown): any {
@@ -18,11 +18,22 @@ function claims(jwt: unknown): any {
   try { return JSON.parse(Buffer.from(jwt.split('.')[1] ?? '', 'base64url').toString('utf8')); } catch { return null; }
 }
 
-const PLAN_NAMES: Record<string, string> = { free: 'Free', plus: 'Plus', pro: 'Pro', max: 'Max', team: 'Team', business: 'Business', enterprise: 'Enterprise', edu: 'Edu' };
-const planName = (p: unknown) => (typeof p === 'string' && p ? PLAN_NAMES[p.toLowerCase()] ?? p.charAt(0).toUpperCase() + p.slice(1) : null);
+const PLAN_NAMES: Record<string, string> = { free: 'Free', go: 'Go', plus: 'Plus', pro: 'Pro', max: 'Max', team: 'Team', business: 'Business', enterprise: 'Enterprise', edu: 'Edu' };
+/** A known plan by name; anything else only if it is a short plain word, so nothing token-like is ever passed on. */
+function planName(p: unknown): string | null {
+  if (typeof p !== 'string' || !p) return null;
+  const known = PLAN_NAMES[p.toLowerCase()];
+  if (known) return known;
+  return /^[a-z][a-z0-9_-]{0,23}$/i.test(p) ? p.charAt(0).toUpperCase() + p.slice(1).replace(/[_-]+/g, ' ') : null;
+}
+
+/** Pi's own folder: PI_CODING_AGENT_DIR when set, else ~/.pi/agent. */
+const piDir = () => process.env.PI_CODING_AGENT_DIR || path.join(home, '.pi', 'agent');
 
 export async function listSubscriptions(): Promise<Subscription[]> {
-  const hermes = await primaryProviderAuth();
+  const auth = await primaryProviderAuth();
+  // Hermes here is the main agent; null when it does not answer, so its rows read "could not tell", not "signed out".
+  const hermes = (id: string) => (auth ? !!auth[id] : null);
 
   // ChatGPT: the Codex CLI keeps an id_token whose claims carry the plan and when it runs out.
   const codex = readJson('.codex/auth.json');
@@ -34,7 +45,7 @@ export async function listSubscriptions(): Promise<Subscription[]> {
   const claudeCodeSignedIn = !!claude?.accessToken;
 
   // Pi keeps one entry per provider it has a key or login for.
-  const pi = readJson('.pi/agent/auth.json') ?? {};
+  const pi = readJson(path.join(piDir(), 'auth.json')) ?? {};
 
   return [
     {
@@ -45,7 +56,7 @@ export async function listSubscriptions(): Promise<Subscription[]> {
       kind: 'subscription',
       harnesses: [
         { name: 'Codex', signedIn: codexSignedIn },
-        { name: 'Hermes', signedIn: !!hermes['openai-codex'] },
+        { name: 'Hermes', signedIn: hermes('openai-codex') },
       ],
     },
     {
@@ -56,7 +67,7 @@ export async function listSubscriptions(): Promise<Subscription[]> {
       kind: 'subscription',
       harnesses: [
         { name: 'Claude Code', signedIn: claudeCodeSignedIn },
-        { name: 'Hermes', signedIn: !!hermes.anthropic },
+        { name: 'Hermes', signedIn: hermes('anthropic') },
       ],
     },
     {
@@ -64,8 +75,8 @@ export async function listSubscriptions(): Promise<Subscription[]> {
       name: 'Grok',
       plan: null,
       renews: null,
-      kind: hermes['xai-oauth'] || !hermes.xai ? 'subscription' : 'api_key',
-      harnesses: [{ name: 'Hermes', signedIn: !!(hermes['xai-oauth'] || hermes.xai) }],
+      kind: auth && !auth['xai-oauth'] && auth.xai ? 'api_key' : 'subscription',
+      harnesses: [{ name: 'Hermes', signedIn: auth ? !!(auth['xai-oauth'] || auth.xai) : null }],
     },
     {
       id: 'ollama-cloud',
@@ -74,7 +85,7 @@ export async function listSubscriptions(): Promise<Subscription[]> {
       renews: null,
       kind: 'api_key',
       harnesses: [
-        { name: 'Hermes', signedIn: !!hermes['ollama-cloud'] },
+        { name: 'Hermes', signedIn: hermes('ollama-cloud') },
         { name: 'Pi', signedIn: !!pi['ollama-cloud'] },
       ],
     },

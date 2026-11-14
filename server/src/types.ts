@@ -204,8 +204,8 @@ export interface Subscription {
   /** When the plan runs out or renews (ISO date), when known. */
   renews: string | null;
   kind: 'subscription' | 'api_key';
-  /** The agent programs that can use it, and whether each is signed in. */
-  harnesses: { name: string; signedIn: boolean }[];
+  /** The agent programs that can use it, and whether each is signed in (null: could not tell). */
+  harnesses: { name: string; signedIn: boolean | null }[];
 }
 
 /** The Hermes agent that runs one bot. */
