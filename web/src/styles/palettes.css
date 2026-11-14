@@ -1,0 +1,111 @@
+/*
+ * Colour palettes: a second setting beside light/dark (Settings, General, Colour).
+ * No data-palette on <html> = Graphite, the tokens in tokens.css untouched.
+ *
+ * A palette names nine colours for light and nine for dark; everything else is worked out from them
+ * below, so the many translucent tokens follow the palette's ink instead of neutral grey.
+ *   --ink      text and the base of every translucent tint
+ *   --chrome   window background      --sidebar  the bot list      --pane  chat and panels
+ *   --raised   menus, cards, inputs   --accent   primary buttons   --on-accent  text on them
+ *   --focus    focus rings            --bubble   your own messages (their text is always white)
+ */
+
+:root[data-palette] {
+  --color-bg-chrome: var(--chrome);
+  --color-bg-sidebar: var(--sidebar);
+  --color-bg-pane: var(--pane);
+  --color-bg-elevated: var(--raised);
+  --color-bg-elevated-hover: color-mix(in srgb, var(--ink) 6%, var(--raised));
+  --color-bg-active-solid: color-mix(in srgb, var(--ink) 9%, var(--pane));
+
+  --color-ink: var(--ink);
+  --color-text-primary: var(--ink);
+  --color-text-secondary: color-mix(in srgb, var(--ink) 68%, transparent);
+  --color-text-tertiary: color-mix(in srgb, var(--ink) 56%, transparent);
+  --color-text-quaternary: color-mix(in srgb, var(--ink) 40%, transparent);
+  --color-icon-secondary: color-mix(in srgb, var(--ink) 66%, transparent);
+
+  --color-border-primary: color-mix(in srgb, var(--ink) 24%, transparent);
+  --color-border-secondary: color-mix(in srgb, var(--ink) 12%, transparent);
+  --color-border-tertiary: color-mix(in srgb, var(--ink) 8%, transparent);
+  --color-border-focus: var(--focus);
+
+  --color-bg-active: color-mix(in srgb, var(--ink) 8%, transparent);
+  --color-bg-tertiary: color-mix(in srgb, var(--ink) 6%, transparent);
+  --color-bg-subtle: color-mix(in srgb, var(--ink) 3%, transparent);
+  --color-bg-hover: color-mix(in srgb, var(--ink) 6%, transparent);
+  --color-bg-secondary-hover: color-mix(in srgb, var(--ink) 10%, transparent);
+  --color-bg-secondary-active: color-mix(in srgb, var(--ink) 18%, transparent);
+
+  --color-primary: var(--accent);
+  --color-on-primary: var(--on-accent);
+  --color-bg-primary-hover: color-mix(in srgb, var(--accent) 86%, var(--ink));
+  --color-bg-primary-disabled: color-mix(in srgb, var(--ink) 15%, transparent);
+
+  --color-bubble-agent: color-mix(in srgb, var(--ink) 6%, transparent);
+  --color-bubble-user: var(--bubble);
+}
+
+/* Paper & Ink: cream stock, blue-black ink, and one red seal for what needs a click. */
+:root[data-palette='paper'] {
+  --ink: #221C35; --chrome: #FAF6EC; --sidebar: #F1EADB; --pane: #FFFDF6; --raised: #FFFEFA;
+  --accent: #221C35; --on-accent: #FAF6EC; --focus: #D8452B; --bubble: #C23A22;
+}
+:root[data-theme='dark'][data-palette='paper'] {
+  --ink: #EFE8D8; --chrome: #17141F; --sidebar: #110F18; --pane: #1C1926; --raised: #262233;
+  --accent: #EFE8D8; --on-accent: #17141F; --focus: #F0664B; --bubble: #B8371F;
+}
+
+/* Tidepool: sea glass and deep water. */
+:root[data-palette='tidepool'] {
+  --ink: #0F2A2E; --chrome: #F1F8F6; --sidebar: #E4EFEC; --pane: #FBFEFD; --raised: #FFFFFF;
+  --accent: #0E5A60; --on-accent: #F1F8F6; --focus: #0E8C8C; --bubble: #0E5A60;
+}
+:root[data-theme='dark'][data-palette='tidepool'] {
+  --ink: #DCEFEC; --chrome: #0B1719; --sidebar: #081113; --pane: #0F1E21; --raised: #17292D;
+  --accent: #7FD6CC; --on-accent: #08201F; --focus: #4FC4BA; --bubble: #136B70;
+}
+
+/* Ember: fired clay by day, coals at night. */
+:root[data-palette='ember'] {
+  --ink: #2B1A1F; --chrome: #FBF3EE; --sidebar: #F3E6DE; --pane: #FFFAF7; --raised: #FFFFFF;
+  --accent: #A93C22; --on-accent: #FFF6F0; --focus: #D2562F; --bubble: #A93C22;
+}
+:root[data-theme='dark'][data-palette='ember'] {
+  --ink: #F4E6DF; --chrome: #1A1113; --sidebar: #130C0E; --pane: #20161A; --raised: #2B1E22;
+  --accent: #FF9166; --on-accent: #2A0F06; --focus: #FF7A47; --bubble: #9C3A20;
+}
+
+/* Aurora: violet sky; in the dark its buttons turn the green of the lights. */
+:root[data-palette='aurora'] {
+  --ink: #1D1838; --chrome: #F5F4FC; --sidebar: #EAE8F7; --pane: #FDFCFF; --raised: #FFFFFF;
+  --accent: #4B3BC9; --on-accent: #F5F4FC; --focus: #4B3BC9; --bubble: #4B3BC9;
+}
+:root[data-theme='dark'][data-palette='aurora'] {
+  --ink: #E9E6FA; --chrome: #0F0D1B; --sidebar: #0A0914; --pane: #141126; --raised: #1E1A36;
+  --accent: #8EF0C0; --on-accent: #0B2418; --focus: #8EF0C0; --bubble: #4A3CB8;
+}
+
+/* Blueprint: drafting paper; in the dark, a yellow pencil on the blue sheet. */
+:root[data-palette='blueprint'] {
+  --ink: #0E2A5C; --chrome: #EEF4FF; --sidebar: #E0EAFB; --pane: #F9FBFF; --raised: #FFFFFF;
+  --accent: #1447C8; --on-accent: #F4F8FF; --focus: #1447C8; --bubble: #1447C8;
+}
+:root[data-theme='dark'][data-palette='blueprint'] {
+  --ink: #D6E4FF; --chrome: #081226; --sidebar: #060E1E; --pane: #0C1830; --raised: #132243;
+  --accent: #FFD25E; --on-accent: #1A1400; --focus: #FFD25E; --bubble: #1E4FCC;
+}
+
+/* ---------- the tiles in Settings ---------- */
+.palette-tiles { display: flex; gap: 12px; flex-wrap: wrap; }
+.palette-tile { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 6px; border-radius: 14px; }
+/* Each tile shows the palette's light look in one corner and its dark look in the other. */
+.palette-tile__art { position: relative; display: flex; width: 112px; height: 72px; border-radius: 10px; overflow: hidden; box-shadow: var(--color-border-secondary) 0 0 0 1px; transition: box-shadow 120ms; }
+.palette-tile:hover .palette-tile__art { box-shadow: var(--color-text-quaternary) 0 0 0 1px; }
+.palette-tile.is-active .palette-tile__art { box-shadow: var(--color-border-focus) 0 0 0 2px; }
+.palette-tile__side { width: 34%; background: linear-gradient(135deg, var(--l-side) 50%, var(--d-side) 50%); }
+.palette-tile__pane { flex: 1; display: flex; flex-direction: column; gap: 5px; padding: 10px 8px; background: linear-gradient(135deg, var(--l-pane) 50%, var(--d-pane) 50%); }
+.palette-tile__pane i { display: block; height: 8px; width: 70%; border-radius: 4px; background: var(--l-ink); opacity: 0.16; }
+.palette-tile__pane b { display: block; align-self: flex-end; height: 11px; width: 46%; border-radius: 6px; margin-top: auto; background: linear-gradient(135deg, var(--l-bubble) 50%, var(--d-accent) 50%); }
+.palette-tile__label { font-size: 13px; line-height: 18px; color: var(--color-text-secondary); }
+.palette-tile.is-active .palette-tile__label { color: var(--color-text-primary); font-weight: 500; }

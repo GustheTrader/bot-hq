@@ -4,7 +4,8 @@ import type { Toolkit } from '@shared/types';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { configApi, type ComputerDetails } from '../../lib/configApi';
 import { relativeShort } from '../../lib/time';
-import { useConfigUI, type AppSection, type Theme } from '../../configStore';
+import type { CSSProperties } from 'react';
+import { PALETTES, useConfigUI, type AppSection, type Palette, type Theme } from '../../configStore';
 import { useStore } from '../../store';
 import { computerStatusText } from '../DetailsPanel';
 import { Icon } from '../Icon';
@@ -80,9 +81,24 @@ function ThemeTile({ value, label, current, onPick }: { value: Theme; label: str
   );
 }
 
+function PaletteTile({ p, current, onPick }: { p: (typeof PALETTES)[number]; current: Palette; onPick: (id: Palette) => void }) {
+  const art = { '--l-side': p.light.side, '--l-pane': p.light.pane, '--l-ink': p.light.ink, '--l-bubble': p.light.bubble, '--d-side': p.dark.side, '--d-pane': p.dark.pane, '--d-accent': p.dark.accent } as CSSProperties;
+  return (
+    <button type="button" role="radio" aria-checked={current === p.id} className={`palette-tile${current === p.id ? ' is-active' : ''}`} onClick={() => onPick(p.id)}>
+      <span className="palette-tile__art" style={art} aria-hidden>
+        <span className="palette-tile__side" />
+        <span className="palette-tile__pane"><i /><i /><b /></span>
+      </span>
+      <span className="palette-tile__label">{p.label}</span>
+    </button>
+  );
+}
+
 function GeneralSection() {
   const theme = useConfigUI((s) => s.theme);
   const setTheme = useConfigUI((s) => s.setTheme);
+  const palette = useConfigUI((s) => s.palette);
+  const setPalette = useConfigUI((s) => s.setPalette);
   return (
     <>
       <PageHead title="General" />
@@ -94,6 +110,13 @@ function GeneralSection() {
           <ThemeTile value="dark" label="Dark" current={theme} onPick={setTheme} />
         </div>
         <div className="cfg-field__hint">System follows your device’s light or dark setting.</div>
+      </section>
+      <section className="cfg-section">
+        <div className="cfg-section__label">Colour</div>
+        <div className="palette-tiles" role="radiogroup" aria-label="Colour">
+          {PALETTES.map((p) => <PaletteTile key={p.id} p={p} current={palette} onPick={setPalette} />)}
+        </div>
+        <div className="cfg-field__hint">Each colour has a light and a dark look and follows the theme above. Bots keep their own colours.</div>
       </section>
     </>
   );
