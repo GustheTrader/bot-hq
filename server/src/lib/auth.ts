@@ -43,6 +43,33 @@ export const requireUser: MiddlewareHandler<AuthVars> = async (c, next) => {
   await next();
 };
 
+const TICKET_TTL_MS = 60_000;
+const ticketSig = (body: string) => crypto.createHmac('sha256', env.sessionSecret).update(`screen-ticket:${body}`).digest('base64url');
+
+/**
+ * A one-minute pass to open one bot's screen over a WebSocket on another host than the web app's, where
+ * the session cookie is not sent (see PUBLIC_WS_URL). It names the user and the bot and nothing else.
+ */
+export function screenTicket(userId: string, botId: string): string {
+  const body = Buffer.from(JSON.stringify({ u: userId, b: botId, e: now() + TICKET_TTL_MS })).toString('base64url');
+  return `${body}.${ticketSig(body)}`;
+}
+
+/** The user a screen ticket was made for, if it is genuine, unexpired and for this bot. */
+export function userIdFromScreenTicket(ticket: string | null | undefined, botId: string): string | null {
+  const [body, sig] = (ticket ?? '').split('.');
+  if (!body || !sig) return null;
+  const want = Buffer.from(ticketSig(body));
+  const got = Buffer.from(sig);
+  if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return null;
+  try {
+    const t = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { u?: string; b?: string; e?: number };
+    return t.b === botId && typeof t.u === 'string' && typeof t.e === 'number' && t.e > now() ? t.u : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Key for signing in from the machine the server runs on (POST /api/auth/owner). It is derived from
  * SESSION_SECRET, so only someone who can read the server's .env can make it:

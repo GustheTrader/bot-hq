@@ -96,8 +96,12 @@ export function ComputerScreen({ bot, variant, initialMode = 'watch', hint, paus
     (async () => {
       const { default: RFB } = await import('@novnc/novnc');
       if (disposed || !canvasRef.current) return;
+      // Usually this same host; a direct address when the app is served from a host that cannot pass WebSockets on.
+      const direct = await api.screenUrl(bot.id).then((r) => r.url, () => null);
+      if (disposed || !canvasRef.current) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const url = `${proto}://${location.host}/api/bots/${bot.id}/screen?mode=${mode}`;
+      const base = direct ?? `${proto}://${location.host}/api/bots/${bot.id}/screen`;
+      const url = `${base}${base.includes('?') ? '&' : '?'}mode=${mode}`;
       rfb = new RFB(canvasRef.current, url, { shared: true });
       rfb.viewOnly = mode === 'watch';
       rfb.scaleViewport = true;

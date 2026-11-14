@@ -27,6 +27,11 @@ export const env = {
   appUrl: process.env.APP_URL ?? 'http://localhost:5173',
   /** Public URL of this server, used for OAuth callbacks. */
   serverUrl: process.env.SERVER_URL ?? `http://localhost:${process.env.PORT ?? 8787}`,
+  /**
+   * Public wss:// address of this server, for when the web app is served from another host that cannot
+   * pass WebSockets on (e.g. Vercel). The screen viewer then connects here directly with a short-lived ticket.
+   */
+  publicWsUrl: (process.env.PUBLIC_WS_URL ?? '').replace(/\/+$/, ''),
   xaiKey: req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
   composioKey: req('COMPOSIO_API_KEY'),

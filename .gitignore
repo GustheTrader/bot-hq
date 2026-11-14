@@ -15,3 +15,4 @@ docs/INTERNAL-*.md
 docs/SPEC.md
 web/screenshots/
 tests/out/
+.vercel
