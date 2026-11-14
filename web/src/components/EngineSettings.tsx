@@ -32,6 +32,9 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const [signingIn, setSigningIn] = useState(false);
   const dirty = useRef(false);
   const botId = bot.id;
+  /** The bot this panel shows right now; answers that come back for another bot are dropped. */
+  const shown = useRef(botId);
+  shown.current = botId;
 
   const apply = useCallback((e: EngineInfo, keepDraft = false) => {
     setEngine(e); setPhase('ok');
@@ -50,7 +53,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     return () => { alive = false; };
   }, [botId, apply]);
 
-  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setSigningIn(false); setClaudeUrl(null); setClaudeCode(''); return load(); }, [load]);
+  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setSigningIn(false); setClaudeUrl(null); setClaudeCode(''); setBusy(null); return load(); }, [load]);
 
   // The agent takes a moment to come up after a change or a restart.
   const starting = engine?.status === 'starting';
@@ -123,17 +126,17 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const claudeStart = async () => {
     if (busy) return;
     setBusy('claude'); setNote(null);
-    try { const r = await configApi.claudeLoginStart(botId); setClaudeCode(''); setClaudeUrl(r.url); }
-    catch (e) { setNote(`Couldn’t start the Claude sign-in: ${(e as Error).message || 'the engine did not answer'}`); }
-    finally { setBusy(null); }
+    try { const r = await configApi.claudeLoginStart(botId); if (shown.current !== botId) return; setClaudeCode(''); setClaudeUrl(r.url); }
+    catch (e) { if (shown.current === botId) setNote(`Couldn’t start the Claude sign-in: ${(e as Error).message || 'the engine did not answer'}`); }
+    finally { if (shown.current === botId) setBusy(null); }
   };
 
   const claudeFinish = async () => {
     if (busy || !claudeCode.trim()) return;
     setBusy('claude'); setNote(null);
-    try { const r = await configApi.claudeLoginFinish(botId, claudeCode.trim()); setClaudeUrl(null); setClaudeCode(''); apply(r.engine, true); }
-    catch (e) { setClaudeUrl(null); setClaudeCode(''); setNote(`Claude sign-in didn’t finish: ${(e as Error).message || 'the engine did not answer'}`); }
-    finally { setBusy(null); }
+    try { const r = await configApi.claudeLoginFinish(botId, claudeCode.trim()); if (shown.current !== botId) return; setClaudeUrl(null); setClaudeCode(''); apply(r.engine, true); }
+    catch (e) { if (shown.current === botId) { setClaudeUrl(null); setClaudeCode(''); setNote(`Claude sign-in didn’t finish: ${(e as Error).message || 'the engine did not answer'}`); } }
+    finally { if (shown.current === botId) setBusy(null); }
   };
 
   const claudeCancel = () => { setClaudeUrl(null); setClaudeCode(''); void configApi.claudeLoginCancel(botId).catch(() => {}); };
@@ -210,7 +213,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
           <span>
             <button type="button" className="btn btn--sm btn--bot" onClick={claudeFinish} disabled={!claudeCode.trim() || busy === 'claude'}>{busy === 'claude' ? 'Signing in…' : 'Finish sign-in'}</button>
             {' '}
-            <button type="button" className="link-btn link-btn--small" onClick={claudeCancel}>Cancel</button>
+            <button type="button" className="link-btn link-btn--small" onClick={claudeCancel} disabled={busy === 'claude'}>Cancel</button>
           </span>
         </div>
       )}

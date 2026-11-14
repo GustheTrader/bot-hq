@@ -183,7 +183,7 @@ configApi.post('/bots/:id/engine/claude-login', async (c) => {
 configApi.post('/bots/:id/engine/claude-login/finish', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const { code } = await c.req.json<{ code?: string }>().catch(() => ({} as { code?: string }));
+  const { code } = (await c.req.json<{ code?: string } | null>().catch(() => null)) ?? {};
   try {
     await finishClaudeLogin(b.id, String(code ?? ''));
     forgetEngineOptions(b.id);

@@ -10,6 +10,7 @@ import { env } from './env.js';
 
 interface Pending { child: ChildProcess; out: () => string; done: Promise<number | null>; timer: NodeJS.Timeout }
 
+/** One sign-in per bot. An entry is here from the moment its command starts until it is finished or cancelled. */
 const pending = new Map<string, Pending>();
 const LINK = /https:\/\/claude\.ai\/oauth\/authorize\?[^\s]+/;
 const WAIT_FOR_CODE_MS = 10 * 60_000;
@@ -19,12 +20,17 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** The last thing Hermes said (its reason, when it gives up), without its prompt or the link. */
 const tail = (text: string) => (text.replace(LINK, '').split(/\r?\n/).map((l) => l.replace(/^\s*Authorization code:\s*/, '').trim()).filter(Boolean).pop() ?? '').slice(-300);
 
+const stop = (p: Pending) => {
+  clearTimeout(p.timer);
+  try { p.child.kill('SIGTERM'); } catch { /* already gone */ }
+};
+
+/** Stop this bot's sign-in, if one is under way. Also called when the bot is deleted. */
 export function cancelClaudeLogin(botId: string): void {
   const p = pending.get(botId);
   if (!p) return;
   pending.delete(botId);
-  clearTimeout(p.timer);
-  try { p.child.kill('SIGTERM'); } catch { /* already gone */ }
+  stop(p);
 }
 
 /** Start Hermes' Claude sign-in for the agent whose home is `home`. Returns the link to open. */
@@ -50,18 +56,21 @@ export async function startClaudeLogin(botId: string, home: string): Promise<str
     child.on('close', (code) => resolve(code));
     child.on('error', () => resolve(-1));
   });
+  // Registered before the first wait, so a second start (or a cancel) that arrives meanwhile finds
+  // this command and stops it; nothing is ever running that `pending` cannot reach.
+  const mine: Pending = { child, out: () => text, done, timer: setTimeout(() => cancelClaudeLogin(botId), WAIT_FOR_CODE_MS) };
+  pending.set(botId, mine);
+  const current = () => pending.get(botId) === mine;
   let exited = false;
-  void done.then(() => { exited = true; });
+  void done.then(() => { exited = true; if (current()) { pending.delete(botId); clearTimeout(mine.timer); } });
 
-  for (let i = 0; i < 100 && !exited && !LINK.test(text); i++) await sleep(200);
+  for (let i = 0; i < 100 && !exited && current() && !LINK.test(text); i++) await sleep(200);
+  if (!current() && !exited) throw new Error('A newer sign-in replaced this one.');
   const link = text.match(LINK)?.[0];
-  if (!link) {
-    try { child.kill('SIGTERM'); } catch { /* already gone */ }
+  if (!link || exited) {
+    if (current()) cancelClaudeLogin(botId);
     throw new Error(tail(text) || 'Hermes did not offer a sign-in link.');
   }
-  const timer = setTimeout(() => cancelClaudeLogin(botId), WAIT_FOR_CODE_MS);
-  pending.set(botId, { child, out: () => text, done, timer });
-  void done.then(() => { if (pending.get(botId)?.child === child) { clearTimeout(timer); pending.delete(botId); } });
   return link;
 }
 
@@ -74,7 +83,10 @@ export async function finishClaudeLogin(botId: string, code: string): Promise<vo
   pending.delete(botId);
   clearTimeout(p.timer);
   p.child.stdin?.end(`${clean}\n`);
-  const exit = await Promise.race([p.done, sleep(45_000).then(() => 'timeout' as const)]);
+  let giveUp: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => { giveUp = setTimeout(() => resolve('timeout'), 45_000); });
+  const exit = await Promise.race([p.done, timeout]);
+  clearTimeout(giveUp);
   if (exit === 'timeout') {
     try { p.child.kill('SIGTERM'); } catch { /* already gone */ }
     throw new Error('Hermes did not finish the sign-in in time.');
