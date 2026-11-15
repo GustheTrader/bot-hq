@@ -2,7 +2,10 @@
  * Task tests for the Wiki's models-and-harness cheat sheet. Runs a few operator tasks on each
  * harness and model, through the same paths a chat turn uses, and grades each result:
  *
- *   node --env-file=../.env dist/bench.js <out.json> [parallel]
+ *   node --env-file=../.env dist/bench.js <out.json> [parallel] [setup,setup,...]
+ *
+ * Naming setups re-runs just those into an existing results file. Keep parallel low for setups on
+ * the same subscription: the ChatGPT plan answers 429 when several of its setups run at once.
  *
  * Hermes setups run on a Hermes engine with the provider and model set per request (store: false,
  * no conversation). ACP harness setups run in a process of their own with the app's tools. Nothing
@@ -110,11 +113,14 @@ async function runOne(setup: Setup, task: Task): Promise<BenchResult> {
 }
 
 async function main() {
-  const [file, par] = process.argv.slice(2);
-  if (!file) throw new Error('usage: bench.js <out.json> [parallel]');
+  const [file, par, only] = process.argv.slice(2);
+  if (!file) throw new Error('usage: bench.js <out.json> [parallel] [setup,setup,...]');
   fs.mkdirSync(SCRATCH, { recursive: true });
-  const setups = SETUPS.filter((s) => s.harness === 'hermes' || harnessInstalled(HARNESSES.find((h) => h.id === s.harness)!));
-  const results: BenchResult[] = [];
+  const pick = only ? new Set(only.split(',')) : null;
+  const setups = SETUPS.filter((s) => (!pick || pick.has(s.id)) && (s.harness === 'hermes' || harnessInstalled(HARNESSES.find((h) => h.id === s.harness)!)));
+  // Re-running some setups into an existing file replaces only their results.
+  let results: BenchResult[] = [];
+  if (pick) { try { results = (JSON.parse(fs.readFileSync(file, 'utf8')).results as BenchResult[]).filter((r) => !pick.has(r.setup)); } catch { /* a new file */ } }
   const save = () => fs.writeFileSync(file, JSON.stringify({
     ranAt: new Date().toISOString(),
     setups: SETUPS.map(({ id, harness, provider, model, label }) => ({ id, harness, provider: provider ?? null, model: model ?? null, label })),
