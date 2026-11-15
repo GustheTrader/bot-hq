@@ -81,10 +81,27 @@ function harnessEnv(screenId: string | null): NodeJS.ProcessEnv {
   return { ...out, DISPLAY: displayFor(screenId), NO_COLOR: '1' };
 }
 
+/**
+ * pi-acp prints a startup block (version, skills, extensions) at the start of a session's first
+ * prompt, which would land in front of the bot's reply. Pi's project settings in the bot's folder
+ * turn it off, leaving the user's own Pi settings alone.
+ */
+function quietPi(cwd: string) {
+  const file = `${cwd}/.pi/settings.json`;
+  try {
+    let settings: Record<string, unknown> = {};
+    try { settings = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* none yet */ }
+    if (settings.quietStartup === true) return;
+    fs.mkdirSync(`${cwd}/.pi`, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ ...settings, quietStartup: true }, null, 2));
+  } catch { /* the banner shows; nothing else depends on it */ }
+}
+
 function startAgent(botId: string, harness: HarnessDef, screenId: string | null): Agent {
   const [cmd, ...args] = harness.command!;
   const cwd = `${LIB_ROOT}/${botId}`;
   fs.mkdirSync(cwd, { recursive: true });
+  if (harness.id === 'pi') quietPi(cwd);
   const child = spawn(cmd, args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -243,7 +260,9 @@ export async function* harnessTurn(opts: {
   let wake: (() => void) | null = null;
   let finished = false;
   let failure: Error | null = null;
-  const push = (e: HarnessEvent) => { queue.push(e); wake?.(); };
+  // Whether the turn produced anything: a harness that cannot reach its model may end it with nothing.
+  let said = false;
+  const push = (e: HarnessEvent) => { if (e.type !== 'response.reasoning_text.delta') said = true; queue.push(e); wake?.(); };
   const quiet = new Set<string>();
   // A call is shown once we know what it is (its input, or it has started or ended), merging fields
   // that later updates fill in, so a call to one of the app's tools keeps its name.
@@ -308,6 +327,7 @@ export async function* harnessTurn(opts: {
     }
     while (queue.length) yield queue.shift()!;
     if (failure && !opts.signal.aborted) throw failure;
+    if (!said && !opts.signal.aborted) throw new Error(`${def.name} ended the turn without replying. Its sign-in or model on the computer may need setting up.`);
   } finally {
     opts.signal.removeEventListener('abort', stop);
     if (a.onUpdate) a.onUpdate = null;
