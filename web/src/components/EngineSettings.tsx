@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Bot, EngineInfo, EngineProvider } from '@shared/types';
-import { configApi, type EngineCheck, type HarnessOption } from '../lib/configApi';
+import { configApi, type EngineCheck, type HarnessModels, type HarnessOption } from '../lib/configApi';
 import { useStore } from '../store';
 import { Icon } from './Icon';
 
@@ -40,6 +40,18 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const [check, setCheck] = useState<'running' | EngineCheck | null>(null);
   /** Typing a model id the provider does not list, instead of picking from its list. */
   const [customModel, setCustomModel] = useState(false);
+  /** The models the bot's harness offers (not Hermes, whose models come per provider). */
+  const harness = bot.harness ?? 'hermes';
+  const [harnessList, setHarnessList] = useState<{ harness: string; data: HarnessModels | null; error?: string } | null>(null);
+  useEffect(() => {
+    if (harness === 'hermes') return;
+    let alive = true;
+    setHarnessList(null);
+    configApi.harnessModels(harness)
+      .then((data) => { if (alive) setHarnessList({ harness, data }); })
+      .catch((e) => { if (alive) setHarnessList({ harness, data: null, error: (e as Error).message || 'the server did not answer' }); });
+    return () => { alive = false; };
+  }, [harness]);
   const [signingIn, setSigningIn] = useState(false);
   const dirty = useRef(false);
   const botId = bot.id;
@@ -171,14 +183,28 @@ export function EngineSettings({ bot }: { bot: Bot }) {
 
   const claudeCancel = () => { setClaudeUrl(null); setClaudeCode(''); void configApi.claudeLoginCancel(botId).catch(() => {}); };
 
-  const harness = bot.harness ?? 'hermes';
   const harnessDef = harnesses.find((h) => h.id === harness);
+  const harnessModel = bot.harnessModel ?? '';
+  const harnessModels = harnessList?.harness === harness ? harnessList.data?.models ?? [] : [];
+  const harnessDefault = harnessList?.harness === harness ? harnessList.data?.current ?? null : null;
+  // A saved model the harness no longer lists still shows, so the list never hides what is set.
+  const harnessChoices = harnessModel && !harnessModels.some((m) => m.value === harnessModel) ? [{ value: harnessModel, name: harnessModel }, ...harnessModels] : harnessModels;
+  const pickHarnessModel = async (value: string) => {
+    if (busy || value === harnessModel) return;
+    setBusy('harness'); setNote(null);
+    try {
+      const r = await configApi.setHarness(botId, harness, value || null);
+      useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === botId ? { ...b, harnessModel: r.model } : b)) }));
+      if (shown.current === botId) void runCheck();
+    } catch (e) { if (shown.current === botId) setNote(`Couldn’t change the model: ${(e as Error).message || 'the server did not answer'}`); }
+    finally { if (shown.current === botId) setBusy(null); }
+  };
   const pickHarness = async (id: string) => {
     if (busy || id === harness) return;
     setBusy('harness'); setNote(null);
     try {
       await configApi.setHarness(botId, id);
-      useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === botId ? { ...b, harness: id } : b)) }));
+      useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === botId ? { ...b, harness: id, harnessModel: null } : b)) }));
       if (shown.current === botId) void runCheck();
     } catch (e) { if (shown.current === botId) setNote(`Couldn’t switch: ${(e as Error).message || 'the server did not answer'}`); }
     finally { if (shown.current === botId) setBusy(null); }
@@ -216,10 +242,34 @@ export function EngineSettings({ bot }: { bot: Bot }) {
         </span>
       </div>
       {harness !== 'hermes' && (
-        <div className="engine__notice">
-          <span>{harnessDef?.name ?? harness} runs this Bot’s turns with its own sign-in ({harnessDef?.subscription ?? 'its own'}). It keeps the app’s tools, but not Hermes’ memory, and the provider settings below apply to Hermes only.</span>
-        </div>
+        <>
+          <div className="panel-row panel-row--setting">
+            <span>Model</span>
+            <span className="mini-select mini-select--native engine__select" title={harnessModel || 'Harness default'}>
+              <span>{!harnessList ? 'Loading…' : harnessModel || (harnessDefault ? `Default (${harnessDefault})` : 'Harness default')}</span>
+              <Icon name="chev_down" size={10} opacity={0.66} />
+              <select aria-label={`${harnessDef?.name ?? harness} model`} value={harnessModel} disabled={!harnessList || busy === 'harness'} onChange={(e) => pickHarnessModel(e.target.value)}>
+                <option value="">{harnessDefault ? `Default (${harnessDefault})` : 'Harness default'}</option>
+                {harnessChoices.map((m) => <option key={m.value} value={m.value}>{m.name === m.value ? m.value : `${m.name} · ${m.value}`}</option>)}
+              </select>
+            </span>
+          </div>
+          <div className="engine__conn">
+            <span>
+              {harnessList?.error ? `Couldn’t list its models: ${harnessList.error}`
+                : harnessList ? `${harnessModels.length} model${harnessModels.length === 1 ? '' : 's'} on ${harnessDef?.name ?? harness} (${harnessDef?.subscription ?? 'its own sign-in'})`
+                : 'Asking it for its models…'}
+            </span>
+          </div>
+          <div className="engine__actions">
+            <button type="button" className="link-btn link-btn--small" onClick={runCheck} disabled={check === 'running'}>{check === 'running' ? 'Testing…' : 'Test'}</button>
+          </div>
+          <div className="engine__notice">
+            <span>{harnessDef?.name ?? harness} runs this Bot’s turns with its own sign-in. It keeps the app’s tools, but not Hermes’ memory.</span>
+          </div>
+        </>
       )}
+      {harness === 'hermes' && (<>
       <div className="panel-row panel-row--setting">
         <span>Provider</span>
         <span className="mini-select mini-select--native engine__select">
@@ -277,6 +327,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
         {changed && <button type="button" className="link-btn link-btn--small" onClick={() => { dirty.current = false; setNote(null); setProvider(engine.provider ?? ''); setModel(engine.model ?? ''); }}>Undo</button>}
         {!changed && <button type="button" className="link-btn link-btn--small" onClick={runCheck} disabled={check === 'running'}>{check === 'running' ? 'Testing…' : 'Test'}</button>}
       </div>
+      </>)}
       {check && (
         <div className={`engine__check ${check === 'running' ? 'is-running' : check.ok ? 'is-ok' : 'is-bad'}`} role="status">
           {check === 'running' ? 'Sending a test message…' : check.ok
@@ -284,13 +335,13 @@ export function EngineSettings({ bot }: { bot: Bot }) {
             : `Failed${check.status ? ` · ${check.status}` : ''}${check.via ? ` · ${check.via}` : ''}: ${check.error ?? 'no reply'}`}
         </div>
       )}
-      {(signInTo || openSubscriptions.length > 0) && (
+      {harness === 'hermes' && (signInTo || openSubscriptions.length > 0) && (
         <button type="button" className="panel-row panel-row--action engine__signin" onClick={signIn} disabled={busy === 'signin'}>
           <Icon name="monitor" size={14} opacity={0.56} />
           {busy === 'signin' ? 'Opening sign-in…' : signInTo ? `Sign in to ${signInTo.name}…` : 'Sign in to a subscription…'}
         </button>
       )}
-      {selected?.id === 'anthropic' && !claudeUrl && (
+      {harness === 'hermes' && selected?.id === 'anthropic' && !claudeUrl && (
         <button type="button" className="panel-row panel-row--action engine__signin" onClick={claudeStart} disabled={busy === 'claude'}>
           <Icon name="monitor" size={14} opacity={0.56} />
           {busy === 'claude' ? 'Starting…' : 'Sign in with a Claude subscription here…'}

@@ -17,7 +17,7 @@ import { listMemories } from './engine-memory.js';
 import { cancelClaudeLogin, finishClaudeLogin, startClaudeLogin } from './engine-login.js';
 import { idleConfig, viewerCount } from './idle.js';
 import { listSubscriptions } from './subscriptions.js';
-import { HARNESSES, harnessInstalled, isHarnessId, stopHarness } from './harness.js';
+import { HARNESSES, harnessInstalled, harnessModels, isHarnessId, stopHarness } from './harness.js';
 import { interrupt } from './agent/loop.js';
 import { checkBot } from './engine-check.js';
 import type { LibraryFile, Skill } from './types.js';
@@ -134,15 +134,30 @@ configApi.get('/harnesses', requireUser, (c) => c.json({ harnesses: HARNESSES.ma
 configApi.patch('/bots/:id/harness', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  const { harness } = (await c.req.json<{ harness?: string } | null>().catch(() => null)) ?? {};
+  const p = (await c.req.json<{ harness?: string; model?: string | null } | null>().catch(() => null)) ?? {};
+  const harness = p.harness ?? b.harness ?? 'hermes';
   if (!isHarnessId(harness)) return c.json({ error: 'unknown harness' }, 400);
   const def = HARNESSES.find((h) => h.id === harness)!;
   if (!box.local || !harnessInstalled(def)) return c.json({ error: `${def.name} is not installed on the computer.` }, 409);
-  db.prepare('UPDATE bots SET harness=?, updated_at=? WHERE id=?').run(harness, now(), b.id);
-  interrupt(b.id); // a running turn ends as stopped, not as a crash of the old program
-  stopHarness(b.id); // the next turn starts the new program
+  const switching = harness !== (b.harness ?? 'hermes');
+  // A model belongs to its harness: switching starts from the new one's default unless a model comes with it.
+  const model = p.model !== undefined ? (typeof p.model === 'string' && p.model.trim() ? p.model.trim().slice(0, 160) : null) : switching ? null : b.harness_model ?? null;
+  db.prepare('UPDATE bots SET harness=?, harness_model=?, updated_at=? WHERE id=?').run(harness, model, now(), b.id);
+  if (switching) {
+    interrupt(b.id); // a running turn ends as stopped, not as a crash of the old program
+    stopHarness(b.id); // the next turn starts the new program
+  } // a new model alone is set on the session at the start of the next turn
   emitBot(b.id);
-  return c.json({ ok: true, harness });
+  return c.json({ ok: true, harness, model });
+});
+
+/** The models a harness offers with its sign-in on this computer (see harness.ts harnessModels). */
+configApi.get('/harnesses/:id/models', requireUser, async (c) => {
+  const id = c.req.param('id');
+  if (!isHarnessId(id) || id === 'hermes') return c.json({ error: 'unknown harness' }, 400);
+  if (!box.local) return c.json({ models: [], current: null });
+  try { return c.json(await harnessModels(id)); }
+  catch (e: any) { return c.json({ error: String(e?.message ?? e).slice(0, 300) }, 502); }
 });
 
 configApi.patch('/bots/:id/engine', async (c) => {

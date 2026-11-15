@@ -47,7 +47,7 @@ async function runCheck(botId: string): Promise<CheckResult> {
   const harness = isHarnessId(bot.harness) ? bot.harness : 'hermes';
   const via = harness === 'hermes'
     ? ['Hermes', bot.provider || 'default provider', bot.model || 'default model'].join(' · ')
-    : HARNESSES.find((h) => h.id === harness)!.name;
+    : [HARNESSES.find((h) => h.id === harness)!.name, bot.harness_model || 'default model'].join(' · ');
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), LIMIT_MS);
   let reply = '';
@@ -72,7 +72,7 @@ async function runCheck(botId: string): Promise<CheckResult> {
       events = sseEvents(res.body);
     } else {
       const screenId = (db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(botId) as any)?.screen_id ?? null;
-      events = harnessTurn({ botId, harness, screenId, conversation: `check-${Date.now()}`, input: PROMPT, instructions: '', effort: 'low', signal: ctrl.signal, check: true });
+      events = harnessTurn({ botId, harness, screenId, conversation: `check-${Date.now()}`, input: PROMPT, instructions: '', effort: 'low', model: bot.harness_model ?? null, signal: ctrl.signal, check: true });
     }
     for await (const ev of events) {
       const d = ev.data;
