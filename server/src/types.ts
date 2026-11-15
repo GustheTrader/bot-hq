@@ -33,6 +33,8 @@ export interface Bot {
   provider: string | null;
   /** The agent program that runs this bot's turns: Hermes (the default) or an ACP harness. */
   harness: string;
+  /** The model picked for a non-Hermes harness; null keeps that harness's own default. */
+  harnessModel: string | null;
   generation: number;
   unread: number;
   lastPreview: string | null;

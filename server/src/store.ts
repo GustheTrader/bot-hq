@@ -34,6 +34,7 @@ export function toBot(r: any): Bot {
     model: r.model ?? null,
     provider: r.provider ?? null,
     harness: r.harness ?? 'hermes',
+    harnessModel: r.harness_model ?? null,
     generation: r.generation,
     unread: r.unread,
     lastPreview: lastPreview ? lastPreview.slice(0, 140) : null,

@@ -38,7 +38,7 @@ export interface HarnessEvent { type: string; data: any }
 
 // ---------- one ACP agent process per bot ----------
 
-interface Session { id: string; conversation: string; info: any; effort: string | null }
+interface Session { id: string; conversation: string; info: any; defaultModel: string | null; applied: { model: string | null; effort: string | null } }
 interface Agent { child: ChildProcess; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; session: Session | null; onUpdate: ((u: any) => void) | null; dead: boolean }
 
 const agents = new Map<string, Agent>();
@@ -159,6 +159,42 @@ export function retireHarness(botId: string) {
 /** The process a settings check runs in, apart from the bot's own conversation. */
 const checkKey = (botId: string) => `${botId}~check`;
 
+export interface HarnessModels { models: { value: string; name: string }[]; current: string | null }
+const modelLists = new Map<HarnessId, { at: number; data: HarnessModels }>();
+const modelListing = new Map<HarnessId, Promise<HarnessModels>>();
+const MODEL_LIST_TTL = 10 * 60_000;
+
+/**
+ * The models a harness offers with its sign-in on this computer, as it lists them when a session
+ * starts. Read from a short-lived process of its own (no bot, no tools) and kept for ten minutes.
+ */
+export function harnessModels(harness: HarnessId): Promise<HarnessModels> {
+  const hit = modelLists.get(harness);
+  if (hit && Date.now() - hit.at < MODEL_LIST_TTL) return Promise.resolve(hit.data);
+  const going = modelListing.get(harness);
+  if (going) return going;
+  const p = (async () => {
+    const def = HARNESSES.find((h) => h.id === harness);
+    if (!def?.command) return { models: [], current: null };
+    if (!harnessInstalled(def)) throw new Error(`${def.name} is not installed on the computer`);
+    const key = `~models~${harness}`;
+    const timer = setTimeout(() => stopHarness(key), 60_000);
+    try {
+      const a = await agentFor(key, '_models', def, null);
+      const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/_models`, mcpServers: [] });
+      const c = choicesOf(r, MODEL_OPTION);
+      const data: HarnessModels = { models: c?.values ?? [], current: c?.option.currentValue ?? null };
+      modelLists.set(harness, { at: Date.now(), data });
+      return data;
+    } finally {
+      clearTimeout(timer);
+      stopHarness(key);
+    }
+  })().finally(() => modelListing.delete(harness));
+  modelListing.set(harness, p);
+  return p;
+}
+
 /** Stop the bot's harness process (harness changed, new chat). Its next turn starts a fresh one. */
 export function stopHarness(botId: string) {
   const a = agents.get(botId);
@@ -181,24 +217,54 @@ const QUIET_KINDS = new Set(['think', 'switch_mode']);
  *  - a full-access mode (Codex: agent-full-access). Its sandbox cannot start inside the computer's own
  *    sandbox, so every command would fail once before running unsandboxed; Hermes' tools run with
  *    the same access.
- *  - the bot's reasoning effort, when the harness has that option and the value.
+ *  - the bot's model and reasoning effort, when the harness has those options and the values.
  */
-async function setUpSession(a: Agent, sessionId: string, session: any, effort: string | undefined): Promise<string | null> {
+async function setUpSession(a: Agent, sessionId: string, session: any, want: Wanted): Promise<Applied> {
   const modes: any[] = Array.isArray(session?.modes?.availableModes) ? session.modes.availableModes : [];
   const full = modes.find((m) => /full[-_]?access/i.test(String(m?.id ?? '')));
   if (full && session?.modes?.currentModeId !== full.id) await call(a, 'session/set_mode', { sessionId, modeId: full.id }).catch(() => {});
-  return applyEffort(a, sessionId, session, effort, null);
+  return applySettings(a, sessionId, session, want, { model: null, effort: null });
 }
 
-/** Set the session's reasoning effort to the bot's, if the harness has that option and it differs from what is set. */
-async function applyEffort(a: Agent, sessionId: string, session: any, effort: string | undefined, current: string | null): Promise<string | null> {
+interface Wanted { model?: string | null; effort?: string }
+interface Applied { model: string | null; effort: string | null }
+
+/**
+ * Session settings by what they are, not their name: harnesses call effort reasoning_effort (Codex),
+ * effort (Claude Code) or thought_level (Pi), but all mark it with the thought_level category.
+ */
+const MODEL_OPTION = (o: any) => o?.category === 'model' || o?.id === 'model';
+const EFFORT_OPTION = (o: any) => o?.category === 'thought_level' || o?.id === 'reasoning_effort';
+
+/** A session's choices for a setting, as values and the names the harness gives them. */
+function choicesOf(session: any, which: (o: any) => boolean): { option: any; values: { value: string; name: string }[] } | null {
   const options: any[] = Array.isArray(session?.configOptions) ? session.configOptions : [];
-  const eff = options.find((o) => o?.id === 'reasoning_effort');
-  const values = (eff?.options ?? []).map((x: any) => x?.value ?? x?.id);
-  const now = current ?? eff?.currentValue ?? null;
-  if (!effort || !eff || !values.includes(effort) || now === effort) return now;
-  const ok = await call(a, 'session/set_config_option', { sessionId, configId: 'reasoning_effort', value: effort }).then(() => true, () => false);
-  return ok ? effort : now;
+  const option = options.find(which);
+  if (!option) return null;
+  const values = (Array.isArray(option.options) ? option.options : [])
+    .map((x: any) => ({ value: String(x?.value ?? x?.id ?? ''), name: String(x?.name ?? x?.value ?? x?.id ?? '') }))
+    .filter((x: { value: string }) => x.value);
+  return { option, values };
+}
+
+/** Set one session option to `want` if the harness offers that value and it differs from what is set. */
+async function applyOption(a: Agent, sessionId: string, session: any, which: (o: any) => boolean, want: string | null | undefined, current: string | null): Promise<string | null> {
+  const c = choicesOf(session, which);
+  const now = current ?? c?.option.currentValue ?? null;
+  if (!want || !c || !c.values.some((v) => v.value === want) || now === want) return now;
+  const ok = await call(a, 'session/set_config_option', { sessionId, configId: c.option.id, value: want }).then((res) => {
+    // The answer carries the session's options as they are now (a new model can bring other effort levels).
+    if (Array.isArray(res?.configOptions) && session) session.configOptions = res.configOptions;
+    return true;
+  }, () => false);
+  return ok ? want : now;
+}
+
+/** The bot's model, then its effort (a model change can reset the effort choices). */
+async function applySettings(a: Agent, sessionId: string, session: any, want: Wanted, now: Applied): Promise<Applied> {
+  const model = await applyOption(a, sessionId, session, MODEL_OPTION, want.model, now.model);
+  const effort = await applyOption(a, sessionId, session, EFFORT_OPTION, want.effort, now.effort);
+  return { model, effort };
 }
 
 /** ACP tool kinds as the names the app already labels (see agent/tools.ts activityFor). */
@@ -234,6 +300,8 @@ function outputText(u: any): string {
  */
 export async function* harnessTurn(opts: {
   botId: string; harness: HarnessId; screenId: string | null; conversation: string; input: string; instructions: string; effort?: string; signal: AbortSignal;
+  /** The model picked for this harness; null keeps the harness's own default. */
+  model?: string | null;
   /** A settings check: its own process, without the app's tools, stopped when the turn ends. */
   check?: boolean;
 }): AsyncGenerator<HarnessEvent> {
@@ -253,18 +321,21 @@ export async function* harnessTurn(opts: {
 }
 
 async function* runPrompt(a: Agent, def: HarnessDef, opts: {
-  botId: string; conversation: string; input: string; instructions: string; effort?: string; signal: AbortSignal; check?: boolean;
+  botId: string; conversation: string; input: string; instructions: string; effort?: string; model?: string | null; signal: AbortSignal; check?: boolean;
 }): AsyncGenerator<HarnessEvent> {
   let first = false;
   if (!a.session) {
     const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/${opts.botId}`, mcpServers: opts.check ? [] : hqTools(opts.botId) });
     const id = String(r?.sessionId ?? '');
     if (!id) throw new Error(`${def.name} did not start a session`);
-    a.session = { id, conversation: opts.conversation, info: r, effort: await setUpSession(a, id, r, opts.effort) };
+    // The harness's own default, kept so going back to "default" later sets it again.
+    const defaultModel = choicesOf(r, MODEL_OPTION)?.option.currentValue ?? null;
+    a.session = { id, conversation: opts.conversation, info: r, defaultModel, applied: { model: null, effort: null } };
+    a.session.applied = await setUpSession(a, id, r, { model: opts.model ?? defaultModel, effort: opts.effort });
     first = true;
   } else {
-    // The bot's effort may have changed since the session started.
-    a.session.effort = await applyEffort(a, a.session.id, a.session.info, opts.effort, a.session.effort);
+    // The bot's model or effort may have changed since the session started.
+    a.session.applied = await applySettings(a, a.session.id, a.session.info, { model: opts.model ?? a.session.defaultModel, effort: opts.effort }, a.session.applied);
   }
   const sessionId = a.session.id;
   const text = first && opts.instructions ? `${opts.instructions}\n\n---\n\n${opts.input}` : opts.input;

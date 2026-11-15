@@ -154,6 +154,7 @@ addColumn('bots', 'engine', 'TEXT');
 addColumn('bots', 'engine_port', 'INTEGER');
 addColumn('bots', 'handback_at', 'INTEGER');
 addColumn('bots', 'harness', "TEXT NOT NULL DEFAULT 'hermes'");
+addColumn('bots', 'harness_model', 'TEXT');
 addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');
 
