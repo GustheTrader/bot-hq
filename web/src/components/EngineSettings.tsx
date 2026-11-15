@@ -4,6 +4,8 @@ import { configApi, type EngineCheck, type HarnessOption } from '../lib/configAp
 import { useStore } from '../store';
 import { Icon } from './Icon';
 
+/** The model list's "type your own" entry; no real model id looks like this. */
+const CUSTOM = '__other_model_id__';
 const KIND: Record<EngineProvider['kind'], string> = { subscription: 'Subscription', api_key: 'API key' };
 const STATUS: Record<EngineInfo['status'], string> = { ready: 'ready', starting: 'starting', stopped: 'stopped', error: 'error' };
 
@@ -36,6 +38,8 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const [note, setNote] = useState<string | null>(null);
   /** The last settings check: running, or what it found. */
   const [check, setCheck] = useState<'running' | EngineCheck | null>(null);
+  /** Typing a model id the provider does not list, instead of picking from its list. */
+  const [customModel, setCustomModel] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const dirty = useRef(false);
   const botId = bot.id;
@@ -68,7 +72,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     catch (e) { if (shown.current === id) setCheck({ ok: false, status: 0, ms: 0, via: '', error: (e as Error).message || 'the server did not answer' }); }
   }, [botId]);
 
-  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setCheck(null); setSigningIn(false); setClaudeUrl(null); setClaudeCode(''); setBusy(null); return load(); }, [load]);
+  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setCheck(null); setCustomModel(false); setSigningIn(false); setClaudeUrl(null); setClaudeCode(''); setBusy(null); return load(); }, [load]);
 
   // The agent takes a moment to come up after a change or a restart.
   const starting = engine?.status === 'starting';
@@ -104,6 +108,9 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const providers = sortProviders(engine.providers ?? []);
   const selected = providers.find((p) => p.id === provider) ?? null;
   const suggestions = selected?.models ?? [];
+  // A saved model the provider no longer lists still shows, so the list never hides what is set.
+  const modelChoices = model.trim() && !suggestions.includes(model.trim()) ? [model.trim(), ...suggestions] : suggestions;
+  const typing = customModel || suggestions.length === 0;
   // Empty means the agent's own default, so going back to "Default" is a change like any other.
   const providerChanged = provider !== (engine.provider ?? '');
   const modelChanged = model.trim() !== (engine.model ?? '');
@@ -113,7 +120,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const listId = `engine-models-${botId}`;
 
   const pickProvider = (id: string) => {
-    dirty.current = true; setNote(null); setProvider(id);
+    dirty.current = true; setNote(null); setProvider(id); setCustomModel(false);
     const next = providers.find((p) => p.id === id);
     // A model from another provider will not work here: start from this provider's first suggestion,
     // or its own default when it suggests none.
@@ -232,14 +239,39 @@ export function EngineSettings({ bot }: { bot: Bot }) {
       )}
       <div className="panel-row panel-row--setting">
         <label htmlFor={`${listId}-input`}>Model</label>
-        <input
-          id={`${listId}-input`} className="engine__model" list={listId} value={model} spellCheck={false} autoComplete="off"
-          placeholder={suggestions[0] ?? 'Model id'}
-          onChange={(e) => { dirty.current = true; setNote(null); setModel(e.target.value); }}
-          onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
-        />
-        <datalist id={listId}>{suggestions.map((m) => <option key={m} value={m} />)}</datalist>
+        {typing ? (
+          <input
+            id={`${listId}-input`} className="engine__model" value={model} spellCheck={false} autoComplete="off"
+            placeholder={suggestions[0] ?? 'Model id'}
+            onChange={(e) => { dirty.current = true; setNote(null); setModel(e.target.value); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') save(); }}
+          />
+        ) : (
+          // Every model the provider offers, not only those matching what is typed.
+          <span className="mini-select mini-select--native engine__select" title={model || 'Provider default'}>
+            <span>{model.trim() || 'Provider default'}</span>
+            <Icon name="chev_down" size={10} opacity={0.66} />
+            <select
+              id={`${listId}-input`} value={model.trim()}
+              onChange={(e) => {
+                setNote(null);
+                if (e.target.value === CUSTOM) { setCustomModel(true); return; }
+                dirty.current = true; setModel(e.target.value);
+              }}
+            >
+              <option value="">Provider default</option>
+              {modelChoices.map((m) => <option key={m} value={m}>{m}</option>)}
+              <option value={CUSTOM}>Other model ID…</option>
+            </select>
+          </span>
+        )}
       </div>
+      {selected && suggestions.length > 0 && (
+        <div className="engine__conn">
+          <span>{suggestions.length} model{suggestions.length === 1 ? '' : 's'} on {selected.name}</span>
+          {customModel && <button type="button" className="link-btn link-btn--small" onClick={() => setCustomModel(false)}>Pick from the list</button>}
+        </div>
+      )}
       <div className="engine__actions">
         <button type="button" className="btn btn--sm btn--bot" onClick={save} disabled={!changed || busy === 'save'}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
         {changed && <button type="button" className="link-btn link-btn--small" onClick={() => { dirty.current = false; setNote(null); setProvider(engine.provider ?? ''); setModel(engine.model ?? ''); }}>Undo</button>}
