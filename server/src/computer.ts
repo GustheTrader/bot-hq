@@ -2,6 +2,7 @@ import { db, now } from './db.js';
 import { env } from './env.js';
 import { hub } from './lib/hub.js';
 import { orgo, OrgoError, type OrgoScreen } from './orgo.js';
+import { local } from './local.js';
 import { cdpPortFor, dressScreen, resetScreen, undressScreen, type DeskBot } from './desk.js';
 import { box } from './box.js';
 import type { ComputerState } from './types.js';
@@ -122,6 +123,14 @@ const managesChrome = (botId: string) => !(isPrimaryEngine(botId) && env.primary
 const verified = new Map<string, number>();
 const leasing = new Map<string, Promise<BotScreen>>();
 const dressing = new Map<string, Promise<void>>();
+let screenQueue = Promise.resolve();
+
+/** Checking reservations, provisioning a display and saving its lease must happen in order. */
+function inScreenOrder<T>(work: () => Promise<T>): Promise<T> {
+  const next = screenQueue.then(work);
+  screenQueue = next.then(() => undefined, () => undefined);
+  return next;
+}
 
 function saveSize(botId: string, s: OrgoScreen | undefined) {
   if (s?.width && s?.height) db.prepare('UPDATE screens SET width=?, height=? WHERE bot_id=?').run(s.width, s.height, botId);
@@ -131,15 +140,19 @@ function saveSize(botId: string, s: OrgoScreen | undefined) {
 export function screenFor(userId: string, botId: string): Promise<BotScreen> {
   const running = leasing.get(botId);
   if (running) return running;
-  const p = lease(userId, botId).finally(() => leasing.delete(botId));
+  const p = inScreenOrder(() => lease(userId, botId)).finally(() => leasing.delete(botId));
   leasing.set(botId, p);
   return p;
 }
 
 async function lease(userId: string, botId: string): Promise<BotScreen> {
   const id = await ensureComputer(userId);
-  const mine = db.prepare('SELECT screen_id, width, height FROM screens WHERE bot_id=?').get(botId) as any;
-  if (mine) {
+  const mine = db.prepare(`
+    SELECT screen_id, width, height,
+      rowid = (SELECT MIN(rowid) FROM screens WHERE screen_id = lease.screen_id) AS first_lease
+    FROM screens AS lease WHERE bot_id=?
+  `).get(botId) as { screen_id: string; width: number | null; height: number | null; first_lease: number } | undefined;
+  if (mine?.first_lease) {
     const fresh = Date.now() - (verified.get(botId) ?? 0) < 120_000;
     if (fresh || mine.screen_id === 'default') {
       db.prepare('UPDATE screens SET last_used_at=? WHERE bot_id=?').run(now(), botId);
@@ -151,11 +164,13 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
       saveSize(botId, s);
       db.prepare('UPDATE screens SET last_used_at=? WHERE bot_id=?').run(now(), botId);
       return { computerId: id, screenId: mine.screen_id, width: s?.width ?? mine.width ?? undefined, height: s?.height ?? mine.height ?? undefined };
-    } catch {
-      // The screen is gone (the computer restarted): lease again below.
-      db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
-      dressing.delete(botId);
-    }
+    } catch { /* The screen could not be recovered. Lease another below. */ }
+  }
+  if (mine) {
+    // If two bots used the same screen, the first lease keeps it.
+    db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
+    dressing.delete(botId);
+    verified.delete(botId);
   }
 
   const taken = new Set((db.prepare('SELECT screen_id FROM screens').all() as any[]).map((r) => r.screen_id as string));
@@ -168,7 +183,7 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
     screen = existing.find((s) => s.id !== 'default' && !s.default && !taken.has(s.id));
     if (!screen) {
       if (existing.length >= env.maxBots) throw new Error(`Every screen on the computer is in use (${env.maxBots} at most). Remove a bot to free one.`);
-      screen = await orgo.createScreen(id);
+      screen = env.computerProvider === 'local' ? await local.createScreen(id, taken) : await orgo.createScreen(id);
     }
   }
   db.prepare('INSERT OR REPLACE INTO screens(bot_id,user_id,screen_id,last_used_at,width,height) VALUES (?,?,?,?,?,?)').run(botId, userId, screen.id, now(), screen.width || null, screen.height || null);
@@ -230,16 +245,19 @@ export async function resetBotScreen(userId: string, botId: string): Promise<voi
 }
 
 /** The bot is gone: stop what we ran on its screen and free the screen for the next bot. */
-export async function releaseScreen(botId: string): Promise<void> {
-  const mine = db.prepare('SELECT screen_id, user_id FROM screens WHERE bot_id=?').get(botId) as any;
-  if (!mine) return;
-  db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
-  dressing.delete(botId);
-  verified.delete(botId);
-  if (mine.screen_id !== 'default') {
-    try { await undressScreen(botId, mine.screen_id); } catch (e: any) { console.warn(`[computer] undress failed: ${e?.message ?? e}`); }
-  }
-  hub.emit(mine.user_id, { type: 'computer', state: computerState(mine.user_id) });
+export function releaseScreen(botId: string): Promise<void> {
+  return inScreenOrder(async () => {
+    const mine = db.prepare('SELECT screen_id, user_id FROM screens WHERE bot_id=?').get(botId) as { screen_id: string; user_id: string } | undefined;
+    if (!mine) return;
+    db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
+    dressing.delete(botId);
+    verified.delete(botId);
+    const stillLeased = db.prepare('SELECT 1 FROM screens WHERE screen_id=? LIMIT 1').get(mine.screen_id);
+    if (mine.screen_id !== 'default' && !stillLeased) {
+      try { await undressScreen(botId, mine.screen_id); } catch (e: any) { console.warn(`[computer] undress failed: ${e?.message ?? e}`); }
+    }
+    hub.emit(mine.user_id, { type: 'computer', state: computerState(mine.user_id) });
+  });
 }
 
 /** A deleted bot leaves nothing behind on the computer: its browser profile and its Library folder go. */

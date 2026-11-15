@@ -119,9 +119,9 @@ export const local = {
   vncUrl: (_id: string, screenId: string, _password: string) => `ws://127.0.0.1:${wsPort(numFor(screenId))}`,
 
   listScreens: (_id: string) => listScreens(),
-  createScreen: async (_id: string) => {
+  createScreen: async (_id: string, reserved?: ReadonlySet<string>) => {
     for (let n = DEFAULT_DISPLAY + 1; n <= lastDisplay(); n++) {
-      if (await alive(n)) continue;
+      if (reserved?.has(idFor(n)) || await alive(n)) continue;
       await startDisplay(n);
       return screen(n);
     }
@@ -129,8 +129,10 @@ export const local = {
   },
   getScreen: async (_id: string, screenId: string) => {
     const n = numFor(screenId);
-    if (!(await alive(n))) throw notFound(`screen ${screenId}`);
-    await startDisplay(n); // the display is up; make sure its VNC pieces are too
+    if (!Number.isInteger(n) || n < DEFAULT_DISPLAY || (n > lastDisplay() && !(await alive(n)))) {
+      throw notFound(`screen ${screenId}`);
+    }
+    await startDisplay(n); // restore a reserved display after a restart if needed
     return screen(n);
   },
   deleteScreen: async (_id: string, screenId: string) => { await stopDisplay(numFor(screenId)); },
