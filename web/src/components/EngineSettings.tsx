@@ -17,6 +17,9 @@ function sortProviders(list: EngineProvider[]): EngineProvider[] {
  * a subscription, and the agent's status. Every call fails soft: if the engine endpoints are missing or
  * down, the section says so and the rest of the panel is unaffected.
  */
+/** Display names for when the harness list has not loaded yet. */
+const HARNESS_NAMES: Record<string, string> = { hermes: 'Hermes', codex: 'Codex', 'claude-code': 'Claude Code', pi: 'Pi', opencode: 'OpenCode' };
+
 export function EngineSettings({ bot }: { bot: Bot }) {
   const viewerOpen = useStore((s) => s.viewerOpen);
   const set = useStore((s) => s.set);
@@ -151,8 +154,8 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     try {
       await configApi.setHarness(botId, id);
       useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === botId ? { ...b, harness: id } : b)) }));
-    } catch (e) { setNote(`Couldn’t switch: ${(e as Error).message || 'the server did not answer'}`); }
-    finally { setBusy(null); }
+    } catch (e) { if (shown.current === botId) setNote(`Couldn’t switch: ${(e as Error).message || 'the server did not answer'}`); }
+    finally { if (shown.current === botId) setBusy(null); }
   };
 
   const restart = async () => {
@@ -176,10 +179,11 @@ export function EngineSettings({ bot }: { bot: Bot }) {
       <div className="panel-row panel-row--setting">
         <span>Harness</span>
         <span className="mini-select mini-select--native engine__select">
-          <span>{busy === 'harness' ? 'Switching…' : harnessDef?.name ?? 'Hermes'}</span>
+          <span>{busy === 'harness' ? 'Switching…' : harnessDef?.name ?? HARNESS_NAMES[harness] ?? harness}</span>
           <Icon name="chev_down" size={10} opacity={0.66} />
-          <select aria-label="Harness" value={harness} disabled={busy === 'harness'} onChange={(e) => pickHarness(e.target.value)}>
-            {(harnesses.length ? harnesses : [{ id: 'hermes', name: 'Hermes', subscription: '', installed: true }]).map((h) => (
+          {/* Until the list loads, only the current harness is offered and the picker stays shut. */}
+          <select aria-label="Harness" value={harness} disabled={busy === 'harness' || !harnesses.length} onChange={(e) => pickHarness(e.target.value)}>
+            {(harnesses.length ? harnesses : [{ id: harness, name: HARNESS_NAMES[harness] ?? harness, subscription: '', installed: true }]).map((h) => (
               <option key={h.id} value={h.id} disabled={!h.installed}>{h.name}{h.installed ? '' : ' · Not installed'}</option>
             ))}
           </select>

@@ -38,9 +38,12 @@ export interface HarnessEvent { type: string; data: any }
 
 // ---------- one ACP agent process per bot ----------
 
-interface Agent { child: ChildProcess; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; sessions: Map<string, string>; onUpdate: ((u: any) => void) | null; dead: boolean }
+interface Session { id: string; conversation: string; info: any; effort: string | null }
+interface Agent { child: ChildProcess; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; session: Session | null; onUpdate: ((u: any) => void) | null; dead: boolean }
 
 const agents = new Map<string, Agent>();
+/** Bots being deleted: no harness may start for them again. */
+const retired = new Set<string>();
 const LIB_ROOT = '/root/grokbot/files';
 
 function send(a: Agent, msg: object) { a.child.stdin?.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`); }
@@ -65,6 +68,19 @@ function answer(a: Agent, m: any) {
   send(a, { id: m.id, error: { code: -32601, message: `${m.method} is not offered by this client` } });
 }
 
+/**
+ * What the harness process gets to see of our environment: what a program needs to run, plus the
+ * variables that point harnesses at their own config. Never the server's secrets (session secret,
+ * app keys), which the agent could otherwise read from its shell.
+ */
+const PASS_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TERM', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'OPENCODE_CONFIG'];
+function harnessEnv(screenId: string | null): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const k of PASS_ENV) if (process.env[k] !== undefined) out[k] = process.env[k];
+  // Its windows and browser land on the bot's own screen.
+  return { ...out, DISPLAY: displayFor(screenId), NO_COLOR: '1' };
+}
+
 function startAgent(botId: string, harness: HarnessDef, screenId: string | null): Agent {
   const [cmd, ...args] = harness.command!;
   const cwd = `${LIB_ROOT}/${botId}`;
@@ -74,10 +90,9 @@ function startAgent(botId: string, harness: HarnessDef, screenId: string | null)
     stdio: ['pipe', 'pipe', 'pipe'],
     // Its own process group, so stopping it also stops what it started (Codex runs a helper process).
     detached: true,
-    // Its windows and browser land on the bot's own screen.
-    env: { ...process.env, DISPLAY: displayFor(screenId), NO_COLOR: '1' },
+    env: harnessEnv(screenId),
   });
-  const a: Agent = { child, harness: harness.id, nextId: 1, waiting: new Map(), sessions: new Map(), onUpdate: null, dead: false };
+  const a: Agent = { child, harness: harness.id, nextId: 1, waiting: new Map(), session: null, onUpdate: null, dead: false };
   let buf = '';
   child.stdout?.on('data', (d: Buffer) => {
     buf += d.toString('utf8');
@@ -106,6 +121,7 @@ function startAgent(botId: string, harness: HarnessDef, screenId: string | null)
 }
 
 async function agentFor(botId: string, harness: HarnessDef, screenId: string | null): Promise<Agent> {
+  if (retired.has(botId)) throw new Error('this Bot is being removed');
   const have = agents.get(botId);
   if (have && !have.dead && have.harness === harness.id) return have;
   if (have) stopHarness(botId);
@@ -115,7 +131,13 @@ async function agentFor(botId: string, harness: HarnessDef, screenId: string | n
   return a;
 }
 
-/** Stop the bot's harness process (harness changed, bot deleted). Its next turn starts a fresh one. */
+/** The bot is being deleted: stop its harness and never start one for it again. */
+export function retireHarness(botId: string) {
+  retired.add(botId);
+  stopHarness(botId);
+}
+
+/** Stop the bot's harness process (harness changed, new chat). Its next turn starts a fresh one. */
 export function stopHarness(botId: string) {
   const a = agents.get(botId);
   if (!a) return;
@@ -139,16 +161,22 @@ const QUIET_KINDS = new Set(['think', 'switch_mode']);
  *    the same access.
  *  - the bot's reasoning effort, when the harness has that option and the value.
  */
-async function setUpSession(a: Agent, sessionId: string, session: any, effort: string | undefined) {
+async function setUpSession(a: Agent, sessionId: string, session: any, effort: string | undefined): Promise<string | null> {
   const modes: any[] = Array.isArray(session?.modes?.availableModes) ? session.modes.availableModes : [];
   const full = modes.find((m) => /full[-_]?access/i.test(String(m?.id ?? '')));
   if (full && session?.modes?.currentModeId !== full.id) await call(a, 'session/set_mode', { sessionId, modeId: full.id }).catch(() => {});
+  return applyEffort(a, sessionId, session, effort, null);
+}
+
+/** Set the session's reasoning effort to the bot's, if the harness has that option and it differs from what is set. */
+async function applyEffort(a: Agent, sessionId: string, session: any, effort: string | undefined, current: string | null): Promise<string | null> {
   const options: any[] = Array.isArray(session?.configOptions) ? session.configOptions : [];
   const eff = options.find((o) => o?.id === 'reasoning_effort');
   const values = (eff?.options ?? []).map((x: any) => x?.value ?? x?.id);
-  if (effort && eff && values.includes(effort) && eff.currentValue !== effort) {
-    await call(a, 'session/set_config_option', { sessionId, configId: 'reasoning_effort', value: effort }).catch(() => {});
-  }
+  const now = current ?? eff?.currentValue ?? null;
+  if (!effort || !eff || !values.includes(effort) || now === effort) return now;
+  const ok = await call(a, 'session/set_config_option', { sessionId, configId: 'reasoning_effort', value: effort }).then(() => true, () => false);
+  return ok ? effort : now;
 }
 
 /** ACP tool kinds as the names the app already labels (see agent/tools.ts activityFor). */
@@ -188,18 +216,26 @@ export async function* harnessTurn(opts: {
   const def = HARNESSES.find((h) => h.id === opts.harness);
   if (!def?.command) throw new Error(`${opts.harness} is not an ACP harness`);
   if (!harnessInstalled(def)) throw new Error(`${def.name} is not installed on the computer`);
-  const a = await agentFor(opts.botId, def, opts.screenId);
-
-  let sessionId = a.sessions.get(opts.conversation);
-  let first = false;
-  if (!sessionId) {
-    const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/${opts.botId}`, mcpServers: hqTools(opts.botId) });
-    sessionId = String(r?.sessionId ?? '');
-    if (!sessionId) throw new Error(`${def.name} did not start a session`);
-    a.sessions.set(opts.conversation, sessionId);
-    first = true;
-    await setUpSession(a, sessionId, r, opts.effort);
+  let a = await agentFor(opts.botId, def, opts.screenId);
+  // One conversation per process: a New chat starts a fresh one, so old sessions never pile up.
+  if (a.session && a.session.conversation !== opts.conversation) {
+    stopHarness(opts.botId);
+    a = await agentFor(opts.botId, def, opts.screenId);
   }
+  if (opts.signal.aborted) throw new Error('interrupted');
+
+  let first = false;
+  if (!a.session) {
+    const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/${opts.botId}`, mcpServers: hqTools(opts.botId) });
+    const id = String(r?.sessionId ?? '');
+    if (!id) throw new Error(`${def.name} did not start a session`);
+    a.session = { id, conversation: opts.conversation, info: r, effort: await setUpSession(a, id, r, opts.effort) };
+    first = true;
+  } else {
+    // The bot's effort may have changed since the session started.
+    a.session.effort = await applyEffort(a, a.session.id, a.session.info, opts.effort, a.session.effort);
+  }
+  const sessionId = a.session.id;
   const text = first && opts.instructions ? `${opts.instructions}\n\n---\n\n${opts.input}` : opts.input;
 
   // Updates arrive while the prompt call is open; queue them for the generator.
@@ -209,6 +245,17 @@ export async function* harnessTurn(opts: {
   let failure: Error | null = null;
   const push = (e: HarnessEvent) => { queue.push(e); wake?.(); };
   const quiet = new Set<string>();
+  // A call is shown once we know what it is (its input, or it has started or ended), merging fields
+  // that later updates fill in, so a call to one of the app's tools keeps its name.
+  const calls = new Map<string, { u: any; shown: boolean }>();
+  const showCall = (id: string) => {
+    const c = calls.get(id);
+    if (!c || c.shown) return;
+    c.shown = true;
+    const u = c.u;
+    push({ type: 'response.output_item.added', data: { item: { type: 'function_call', call_id: id, name: toolName(u), arguments: JSON.stringify({ title: u.title ?? '', ...(u.rawInput && typeof u.rawInput === 'object' ? u.rawInput : {}) }) } } });
+  };
+  const known = (u: any) => (u.rawInput && typeof u.rawInput === 'object' && Object.keys(u.rawInput).length > 0) || u.status === 'in_progress' || u.status === 'completed' || u.status === 'failed';
   a.onUpdate = (u: any) => {
     if (!u || typeof u !== 'object') return;
     switch (u.sessionUpdate) {
@@ -221,13 +268,20 @@ export async function* harnessTurn(opts: {
       case 'tool_call': {
         const id = String(u.toolCallId ?? '');
         if (QUIET_KINDS.has(u.kind)) { quiet.add(id); break; }
-        const name = toolName(u);
-        push({ type: 'response.output_item.added', data: { item: { type: 'function_call', call_id: id, name, arguments: JSON.stringify({ title: u.title ?? '', ...(u.rawInput && typeof u.rawInput === 'object' ? u.rawInput : {}) }) } } });
+        calls.set(id, { u: { ...u }, shown: false });
+        if (known(u)) showCall(id);
         break;
       }
       case 'tool_call_update': {
         const id = String(u.toolCallId ?? '');
-        if (quiet.has(id) || (u.status !== 'completed' && u.status !== 'failed')) break;
+        if (quiet.has(id)) break;
+        const c = calls.get(id);
+        if (c) {
+          for (const [k, v] of Object.entries(u)) if (v !== undefined && v !== null && k !== 'sessionUpdate') c.u[k] = v;
+          if (known(c.u)) showCall(id);
+        } else if (QUIET_KINDS.has(u.kind)) { quiet.add(id); break; }
+        else { calls.set(id, { u: { ...u }, shown: false }); showCall(id); }
+        if (u.status !== 'completed' && u.status !== 'failed') break;
         const out = outputText(u);
         const exit = u.rawOutput?.exit_code;
         const output = u.status === 'failed' ? JSON.stringify({ error: out.trim().slice(0, 300) || 'failed' }) : typeof exit === 'number' ? JSON.stringify({ exit_code: exit, output: out.slice(0, 2000) }) : out.slice(0, 2000);
@@ -237,7 +291,9 @@ export async function* harnessTurn(opts: {
     }
   };
 
-  const stop = () => { if (sessionId) send(a, { method: 'session/cancel', params: { sessionId } }); };
+  const stop = () => send(a, { method: 'session/cancel', params: { sessionId } });
+  // A Stop pressed while the harness was starting must still keep the prompt from running.
+  if (opts.signal.aborted) { a.onUpdate = null; throw new Error('interrupted'); }
   opts.signal.addEventListener('abort', stop, { once: true });
   call(a, 'session/prompt', { sessionId, prompt: [{ type: 'text', text }] })
     .catch((e) => { failure = e instanceof Error ? e : new Error(String(e)); })

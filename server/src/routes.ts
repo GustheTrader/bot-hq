@@ -12,7 +12,7 @@ import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComp
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { cancelClaudeLogin } from './engine-login.js';
-import { stopHarness } from './harness.js';
+import { retireHarness } from './harness.js';
 import { orgo } from './orgo.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
@@ -216,7 +216,7 @@ api.delete('/bots/:id', async (c) => {
   if (!b) return c.json({ error: 'not found' }, 404);
   interrupt(b.id);
   cancelClaudeLogin(b.id); // a sign-in left waiting must not outlive the bot's home
-  stopHarness(b.id);
+  retireHarness(b.id); // and no queued turn may start one again while the bot is removed
   for (const r of listRoutines(b.id)) {
     unscheduleRoutine(r.id);
     await deleteEventTrigger(r.id).catch(() => {});
