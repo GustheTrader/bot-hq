@@ -19,6 +19,7 @@ import { idleConfig, viewerCount } from './idle.js';
 import { listSubscriptions } from './subscriptions.js';
 import { HARNESSES, harnessInstalled, isHarnessId, stopHarness } from './harness.js';
 import { interrupt } from './agent/loop.js';
+import { checkBot } from './engine-check.js';
 import type { LibraryFile, Skill } from './types.js';
 
 /**
@@ -149,10 +150,19 @@ configApi.patch('/bots/:id/engine', async (c) => {
   if (!b) return c.json({ error: 'not found' }, 404);
   const p = await c.req.json<{ provider?: string | null; model?: string | null }>().catch(() => ({} as { provider?: string | null; model?: string | null }));
   const clean = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 120) : null);
-  if (p.provider !== undefined) db.prepare('UPDATE bots SET provider=?, updated_at=? WHERE id=?').run(clean(p.provider), now(), b.id);
-  if (p.model !== undefined) db.prepare('UPDATE bots SET model=?, updated_at=? WHERE id=?').run(clean(p.model), now(), b.id);
+  const provider = p.provider !== undefined ? clean(p.provider) : b.provider ?? null;
+  // A model belongs to its provider: a new provider without a model of its own goes to that provider's default.
+  const model = p.model !== undefined ? clean(p.model) : provider !== (b.provider ?? null) ? null : b.model ?? null;
+  db.prepare('UPDATE bots SET provider=?, model=?, updated_at=? WHERE id=?').run(provider, model, now(), b.id);
   emitBot(b.id);
   return c.json({ engine: await engineInfo(b.id) });
+});
+
+/** Send one short real turn through the bot's harness, provider and model as saved now. */
+configApi.post('/bots/:id/engine/check', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  return c.json({ check: await checkBot(b.id) });
 });
 
 /**
