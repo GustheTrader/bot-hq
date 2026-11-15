@@ -72,6 +72,8 @@ function startAgent(botId: string, harness: HarnessDef, screenId: string | null)
   const child = spawn(cmd, args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
+    // Its own process group, so stopping it also stops what it started (Codex runs a helper process).
+    detached: true,
     // Its windows and browser land on the bot's own screen.
     env: { ...process.env, DISPLAY: displayFor(screenId), NO_COLOR: '1' },
   });
@@ -118,7 +120,7 @@ export function stopHarness(botId: string) {
   const a = agents.get(botId);
   if (!a) return;
   agents.delete(botId);
-  try { a.child.kill('SIGTERM'); } catch { /* already gone */ }
+  try { if (a.child.pid) process.kill(-a.child.pid, 'SIGTERM'); else a.child.kill('SIGTERM'); } catch { /* already gone */ }
 }
 
 /** The app's tools for this bot, as an MCP server the harness connects to. */
@@ -129,6 +131,25 @@ function hqTools(botId: string) {
 
 /** ACP tool kinds that are the agent thinking or checking itself, not a step worth a row. */
 const QUIET_KINDS = new Set(['think', 'switch_mode']);
+
+/**
+ * Settings a harness offers per session, applied when it has them:
+ *  - a full-access mode (Codex: agent-full-access). Its sandbox cannot start inside the computer's own
+ *    sandbox, so every command would fail once before running unsandboxed; Hermes' tools run with
+ *    the same access.
+ *  - the bot's reasoning effort, when the harness has that option and the value.
+ */
+async function setUpSession(a: Agent, sessionId: string, session: any, effort: string | undefined) {
+  const modes: any[] = Array.isArray(session?.modes?.availableModes) ? session.modes.availableModes : [];
+  const full = modes.find((m) => /full[-_]?access/i.test(String(m?.id ?? '')));
+  if (full && session?.modes?.currentModeId !== full.id) await call(a, 'session/set_mode', { sessionId, modeId: full.id }).catch(() => {});
+  const options: any[] = Array.isArray(session?.configOptions) ? session.configOptions : [];
+  const eff = options.find((o) => o?.id === 'reasoning_effort');
+  const values = (eff?.options ?? []).map((x: any) => x?.value ?? x?.id);
+  if (effort && eff && values.includes(effort) && eff.currentValue !== effort) {
+    await call(a, 'session/set_config_option', { sessionId, configId: 'reasoning_effort', value: effort }).catch(() => {});
+  }
+}
 
 /** ACP tool kinds as the names the app already labels (see agent/tools.ts activityFor). */
 const KIND_NAMES: Record<string, string> = { execute: 'terminal', edit: 'write_file', delete: 'write_file', move: 'write_file', read: 'read_file', search: 'search_files', fetch: 'web_extract' };
@@ -162,7 +183,7 @@ function outputText(u: any): string {
  * `instructions` go in front of the first prompt of each conversation, as ACP has no system prompt.
  */
 export async function* harnessTurn(opts: {
-  botId: string; harness: HarnessId; screenId: string | null; conversation: string; input: string; instructions: string; signal: AbortSignal;
+  botId: string; harness: HarnessId; screenId: string | null; conversation: string; input: string; instructions: string; effort?: string; signal: AbortSignal;
 }): AsyncGenerator<HarnessEvent> {
   const def = HARNESSES.find((h) => h.id === opts.harness);
   if (!def?.command) throw new Error(`${opts.harness} is not an ACP harness`);
@@ -177,6 +198,7 @@ export async function* harnessTurn(opts: {
     if (!sessionId) throw new Error(`${def.name} did not start a session`);
     a.sessions.set(opts.conversation, sessionId);
     first = true;
+    await setUpSession(a, sessionId, r, opts.effort);
   }
   const text = first && opts.instructions ? `${opts.instructions}\n\n---\n\n${opts.input}` : opts.input;
 

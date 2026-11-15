@@ -387,7 +387,7 @@ async function runTurn(botId: string, trigger: Trigger) {
     } else {
       // Another agent program (Codex, Claude Code, ...) over ACP; its updates arrive as the same events.
       const screenId = (db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(botId) as any)?.screen_id ?? null;
-      events = harnessTurn({ botId, harness, screenId, conversation, input, instructions: await instructionsFor(userId, botId), signal: ctrl.signal });
+      events = harnessTurn({ botId, harness, screenId, conversation, input, instructions: await instructionsFor(userId, botId), effort: bot.effort ?? 'medium', signal: ctrl.signal });
     }
 
     for await (const ev of events) {
