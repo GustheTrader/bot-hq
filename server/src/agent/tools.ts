@@ -11,6 +11,7 @@ import { setCheckins } from '../proactive.js';
 import { createRoom, postToRoom } from './rooms.js';
 import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
+import { dataGrep, dataList, dataRead, dataSearch, DataError, defaultConfig, warmCatalog } from '../dataplane/fs.js';
 
 export interface ToolCtx {
   userId: string;
@@ -88,6 +89,72 @@ async function xSearch(a: any): Promise<string> {
 
 /** Where each bot's Library lives on the shared computer. */
 export const LIBRARY_ROOT = '/root/grokbot/files';
+
+/** The data plane (docs/DATA-PLANE.md). Phase 0: read-only fs over allowlisted roots + the workspace catalog. */
+const dataCfg = defaultConfig(LIBRARY_ROOT);
+setTimeout(() => warmCatalog(dataCfg), 2000).unref();
+const dataTool = (fn: (a: any, ctx: ToolCtx) => unknown | Promise<unknown>, summary: (a: any) => string): Impl => async (a, ctx) => {
+  try {
+    return { output: JSON.stringify(await fn(a, ctx)), summary: summary(a) };
+  } catch (e: any) {
+    if (e instanceof DataError) return { output: JSON.stringify({ error: e.message }), summary: 'Data request refused' };
+    throw e;
+  }
+};
+const DATA_TOOLS: ToolDef[] = [
+  {
+    name: 'data_search',
+    description: "Find where something is in the user's files: notes, READMEs, decisions, code, your Library. Ranked hits over the whole workspace in under a second, each with a `uri` and a snippet. Use this FIRST for any \"what did we decide / where is / what do we know about\" question, then data_read the best uri and quote it. Ask in plain words, e.g. \"ORNN model bias Kalshi backtest\".",
+    parameters: obj({
+      query: { type: 'string', description: 'Plain-words question or keywords.' },
+      k: { type: 'number', description: 'How many results (default 8, max 25).' },
+      sources: { type: 'array', items: { type: 'string', enum: ['catalog', 'paths', 'library'] }, description: 'Limit engines. Default: all.' },
+    }, ['query']),
+    activity: 'working',
+    label: 'Searching files',
+    impl: dataTool((a, ctx) => dataSearch(dataCfg, ctx.botId, a), (a) => `Searched files for "${String(a.query).slice(0, 60)}"`),
+  },
+  {
+    name: 'data_read',
+    description: "Read a file by uri (fs://workspace/<path>, fs://library/<your id>/<file>, fs://cloud/..., fs://pub/...; an absolute path under those roots also works). Returns content plus uri, mtime, sha256 hash and line range. Long files are cut at max_tokens with `truncated: true` and `next_start`; call again with start=next_start to continue.",
+    parameters: obj({
+      uri: { type: 'string' },
+      start: { type: 'number', description: 'First line, 1-based.' },
+      end: { type: 'number', description: 'Last line, inclusive.' },
+      max_tokens: { type: 'number', description: 'Default 8000, max 32000.' },
+    }, ['uri']),
+    activity: 'working',
+    label: 'Reading files',
+    impl: dataTool((a) => dataRead(dataCfg, a), (a) => `Read ${String(a.uri).split('/').pop()}`),
+  },
+  {
+    name: 'data_list',
+    description: 'List a folder by uri, with sizes and modified times. Call with no uri to see the roots.',
+    parameters: obj({
+      uri: { type: 'string', description: 'e.g. fs://workspace/Projects/' },
+      depth: { type: 'number', description: '1-4, default 1.' },
+      max_entries: { type: 'number', description: 'Default 300.' },
+    }),
+    activity: 'working',
+    label: 'Reading files',
+    impl: dataTool((a) => dataList(dataCfg, a), (a) => `Listed ${a.uri ?? 'roots'}`),
+  },
+  {
+    name: 'data_grep',
+    description: 'Exact text or regex search inside one folder or file (ripgrep). Returns uri, line number and the line. Use it for literal strings, tickers, function names; narrow the uri to a project folder (whole-workspace grep is refused because it takes over a minute here).',
+    parameters: obj({
+      pattern: { type: 'string', description: 'Regex (or a literal with literal=true).' },
+      uri: { type: 'string', description: 'Folder or file, e.g. fs://workspace/Projects/ornn-sme/' },
+      glob: { type: 'string', description: 'File filter, e.g. *.md' },
+      literal: { type: 'boolean' },
+      case_sensitive: { type: 'boolean', description: 'Default: smart case.' },
+      max_hits: { type: 'number', description: 'Default 50, max 500.' },
+    }, ['pattern', 'uri']),
+    activity: 'working',
+    label: 'Searching files',
+    impl: dataTool((a) => dataGrep(dataCfg, a), (a) => `Grepped for "${String(a.pattern).slice(0, 40)}"`),
+  },
+];
 
 export const TOOLS: ToolDef[] = [
   {
@@ -323,6 +390,7 @@ export const TOOLS: ToolDef[] = [
       return { output: `Asked the user to connect ${info.name}. Stop here; you'll be told when it's connected.`, endTurn: true };
     },
   },
+  ...DATA_TOOLS,
 ];
 
 export const toolMap = new Map(TOOLS.map((t) => [t.name, t]));
