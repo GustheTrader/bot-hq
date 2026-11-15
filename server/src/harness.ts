@@ -304,20 +304,23 @@ export async function* harnessTurn(opts: {
   model?: string | null;
   /** A settings check: its own process, without the app's tools, stopped when the turn ends. */
   check?: boolean;
+  /** Run in a process of its own under this name (with the app's tools), stopped when the turn ends: the wiki's task tests. */
+  isolate?: string;
 }): AsyncGenerator<HarnessEvent> {
   const def = HARNESSES.find((h) => h.id === opts.harness);
   if (!def?.command) throw new Error(`${opts.harness} is not an ACP harness`);
   if (!harnessInstalled(def)) throw new Error(`${def.name} is not installed on the computer`);
-  const key = opts.check ? checkKey(opts.botId) : opts.botId;
-  if (opts.check) stopHarness(key); // every check starts clean, with the settings saved now
+  const apart = opts.check || !!opts.isolate;
+  const key = opts.check ? checkKey(opts.botId) : opts.isolate ? `${opts.botId}~${opts.isolate}` : opts.botId;
+  if (apart) stopHarness(key); // every check starts clean, with the settings saved now
   let a = await agentFor(key, opts.botId, def, opts.screenId);
   // One conversation per process: a New chat starts a fresh one, so old sessions never pile up.
   if (a.session && a.session.conversation !== opts.conversation) {
     stopHarness(key);
     a = await agentFor(key, opts.botId, def, opts.screenId);
   }
-  if (opts.signal.aborted) { if (opts.check) stopHarness(key); throw new Error('interrupted'); }
-  try { yield* runPrompt(a, def, opts); } finally { if (opts.check) stopHarness(key); }
+  if (opts.signal.aborted) { if (apart) stopHarness(key); throw new Error('interrupted'); }
+  try { yield* runPrompt(a, def, opts); } finally { if (apart) stopHarness(key); }
 }
 
 async function* runPrompt(a: Agent, def: HarnessDef, opts: {

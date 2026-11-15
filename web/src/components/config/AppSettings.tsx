@@ -12,11 +12,13 @@ import { Icon } from '../Icon';
 import { ToolkitLogo } from '../ToolkitLogo';
 import { Glyph } from './glyphs';
 import { ConfirmButton } from './ui';
+import { WikiSection } from './WikiSection';
 
 const SECTIONS: { id: AppSection; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'computer', label: 'Computer' },
   { id: 'subscriptions', label: 'Subscriptions' },
+  { id: 'wiki', label: 'Wiki' },
   { id: 'permissions', label: 'Permissions' },
   { id: 'apps', label: 'Connected apps' },
   { id: 'account', label: 'Account' },
@@ -50,6 +52,7 @@ export function AppSettings() {
           {section === 'general' && <GeneralSection />}
           {section === 'computer' && <ComputerSection />}
           {section === 'subscriptions' && <SubscriptionsSection />}
+          {section === 'wiki' && <WikiSection />}
           {section === 'permissions' && <PermissionsSection />}
           {section === 'apps' && <AppsSection />}
           {section === 'account' && <AccountSection />}
