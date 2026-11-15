@@ -31,6 +31,8 @@ export interface Bot {
   /** Hermes engine: model id and provider for this bot; null = the engine's default. */
   model: string | null;
   provider: string | null;
+  /** The agent program that runs this bot's turns: Hermes (the default) or an ACP harness. */
+  harness: string;
   generation: number;
   unread: number;
   lastPreview: string | null;

@@ -7,6 +7,7 @@ import { toolkitInfo } from '../composio.js';
 import { screenForWork } from '../computer.js';
 import { engineFor } from '../engine.js';
 import { instructionsFor } from './prompt.js';
+import { harnessTurn, isHarnessId } from '../harness.js';
 import { activityFor, appToolName, humanizeSlug, policyFor } from './tools.js';
 
 /**
@@ -352,7 +353,7 @@ async function runTurn(botId: string, trigger: Trigger) {
   try {
     // The screen first: the engine's browser and computer tools point at it.
     await screenForWork(userId, botId).catch((e) => console.warn(`[computer] screen not ready for ${botId}: ${e?.message ?? e}`));
-    const engine = await engineFor(botId);
+    const harness = isHarnessId(bot.harness) ? bot.harness : 'hermes';
     if (ctrl.signal.aborted) throw new Error('interrupted');
 
     let input = triggerText(trigger);
@@ -361,25 +362,35 @@ async function runTurn(botId: string, trigger: Trigger) {
       db.prepare('UPDATE bots SET handback_at=NULL WHERE id=?').run(botId);
     }
 
-    const res = await fetch(`${engine.url}/v1/responses`, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(engine.key ? { authorization: `Bearer ${engine.key}` } : {}) },
-      body: JSON.stringify({
-        model: bot.model || 'hermes-agent',
-        ...(bot.provider ? { provider: bot.provider } : {}),
-        input,
-        instructions: await instructionsFor(userId, botId),
-        // One engine-side thread per conversation; "New chat" bumps the generation and starts another.
-        conversation: `hq-${botId}-g${bot.generation}`,
-        stream: true,
-        store: true,
-        model_options: { reasoning_effort: bot.effort ?? 'medium' },
-      }),
-    });
-    if (!res.ok || !res.body) throw new Error(await failureText(res));
+    // One engine-side thread per conversation; "New chat" bumps the generation and starts another.
+    const conversation = `hq-${botId}-g${bot.generation}`;
+    let events: AsyncIterable<StreamEvent>;
+    if (harness === 'hermes') {
+      const engine = await engineFor(botId);
+      const res = await fetch(`${engine.url}/v1/responses`, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(engine.key ? { authorization: `Bearer ${engine.key}` } : {}) },
+        body: JSON.stringify({
+          model: bot.model || 'hermes-agent',
+          ...(bot.provider ? { provider: bot.provider } : {}),
+          input,
+          instructions: await instructionsFor(userId, botId),
+          conversation,
+          stream: true,
+          store: true,
+          model_options: { reasoning_effort: bot.effort ?? 'medium' },
+        }),
+      });
+      if (!res.ok || !res.body) throw new Error(await failureText(res));
+      events = sseEvents(res.body);
+    } else {
+      // Another agent program (Codex, Claude Code, ...) over ACP; its updates arrive as the same events.
+      const screenId = (db.prepare('SELECT screen_id FROM screens WHERE bot_id=?').get(botId) as any)?.screen_id ?? null;
+      events = harnessTurn({ botId, harness, screenId, conversation, input, instructions: await instructionsFor(userId, botId), effort: bot.effort ?? 'medium', signal: ctrl.signal });
+    }
 
-    for await (const ev of sseEvents(res.body)) {
+    for await (const ev of events) {
       const d = ev.data;
       switch (ev.type) {
         case 'response.output_text.delta': {

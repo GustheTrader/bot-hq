@@ -17,6 +17,8 @@ import { listMemories } from './engine-memory.js';
 import { cancelClaudeLogin, finishClaudeLogin, startClaudeLogin } from './engine-login.js';
 import { idleConfig, viewerCount } from './idle.js';
 import { listSubscriptions } from './subscriptions.js';
+import { HARNESSES, harnessInstalled, isHarnessId, stopHarness } from './harness.js';
+import { interrupt } from './agent/loop.js';
 import type { LibraryFile, Skill } from './types.js';
 
 /**
@@ -125,6 +127,23 @@ configApi.get('/bots/:id/engine', async (c) => {
 });
 
 /** Which model this bot's turns ask for. Empty values go back to the agent's own default. */
+/** The agent programs a bot can run on, and whether each is installed on the computer. */
+configApi.get('/harnesses', requireUser, (c) => c.json({ harnesses: HARNESSES.map((h) => ({ id: h.id, name: h.name, subscription: h.subscription, installed: box.local && harnessInstalled(h) })) }));
+
+configApi.patch('/bots/:id/harness', async (c) => {
+  const b = ownBot(c.get('user').id, c.req.param('id'));
+  if (!b) return c.json({ error: 'not found' }, 404);
+  const { harness } = (await c.req.json<{ harness?: string } | null>().catch(() => null)) ?? {};
+  if (!isHarnessId(harness)) return c.json({ error: 'unknown harness' }, 400);
+  const def = HARNESSES.find((h) => h.id === harness)!;
+  if (!box.local || !harnessInstalled(def)) return c.json({ error: `${def.name} is not installed on the computer.` }, 409);
+  db.prepare('UPDATE bots SET harness=?, updated_at=? WHERE id=?').run(harness, now(), b.id);
+  interrupt(b.id); // a running turn ends as stopped, not as a crash of the old program
+  stopHarness(b.id); // the next turn starts the new program
+  emitBot(b.id);
+  return c.json({ ok: true, harness });
+});
+
 configApi.patch('/bots/:id/engine', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
