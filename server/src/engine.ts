@@ -471,14 +471,16 @@ function toProviders(data: any): EngineProvider[] {
   const out = list
     .filter((p) => p?.slug && (p.authenticated || WELL_KNOWN.includes(p.slug)))
     .map((p): EngineProvider => {
-      const featured = Array.isArray(p.featured_models) && p.featured_models.length ? p.featured_models : Array.isArray(p.models) ? p.models : [];
+      // Every model the provider offers, its featured ones first, so the panel can list them all.
+      const all = [...(Array.isArray(p.featured_models) ? p.featured_models : []), ...(Array.isArray(p.models) ? p.models : [])];
+      const models = [...new Set(all.filter((m: unknown): m is string => typeof m === 'string' && m.length > 0))].slice(0, 500);
       return {
         id: String(p.slug),
         name: p.slug === 'anthropic' ? 'Claude (Anthropic)' : String(p.name ?? p.slug),
         // Hermes lists Anthropic as an API-key provider, yet it can also sign in to a Claude subscription. Offer that until a key is in place.
         kind: String(p.auth_type ?? '').includes('oauth') || (p.slug === 'anthropic' && !p.authenticated) ? 'subscription' : 'api_key',
         connected: !!p.authenticated,
-        models: featured.filter((m: unknown) => typeof m === 'string').slice(0, 12),
+        models,
       };
     });
   const rank = (p: EngineProvider) => (p.connected ? 0 : 1) * 100 + (WELL_KNOWN.indexOf(p.id) < 0 ? 50 : WELL_KNOWN.indexOf(p.id));
