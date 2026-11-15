@@ -26,6 +26,9 @@ export interface BotSettingsBundle {
 
 export interface LibraryListing { status: 'ok' | 'asleep' | 'error'; path: string; files: LibraryFile[]; error?: string }
 
+/** An agent program a bot can run on (Hermes, or an ACP harness such as Codex). */
+export interface HarnessOption { id: string; name: string; subscription: string; installed: boolean }
+
 export interface ComputerDetails {
   computer: ComputerState;
   screens: { botId: string; screenId: string; lastUsedAt: number }[];
@@ -72,6 +75,8 @@ export const configApi = {
   claudeLoginStart: (botId: string) => req<{ url: string }>('POST', `/bots/${botId}/engine/claude-login`),
   claudeLoginFinish: (botId: string, code: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/claude-login/finish`, { code }),
   claudeLoginCancel: (botId: string) => req<{ ok: true }>('DELETE', `/bots/${botId}/engine/claude-login`),
+  harnesses: () => req<{ harnesses: HarnessOption[] }>('GET', '/harnesses'),
+  setHarness: (botId: string, harness: string) => req<{ ok: true; harness: string }>('PATCH', `/bots/${botId}/harness`, { harness }),
   restartEngine: (botId: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/restart`),
   /** Stops the private screen the agent runs for itself, so its computer work shows on the screen in the app. */
   stopOwnScreen: (botId: string) => req<{ engine: EngineInfo }>('POST', `/bots/${botId}/engine/screen/stop`),

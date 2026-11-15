@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Bot, EngineInfo, EngineProvider } from '@shared/types';
-import { configApi } from '../lib/configApi';
+import { configApi, type HarnessOption } from '../lib/configApi';
 import { useStore } from '../store';
 import { Icon } from './Icon';
 
@@ -24,10 +24,12 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const [phase, setPhase] = useState<'loading' | 'ok' | 'unavailable'>('loading');
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
-  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | 'claude' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | 'claude' | 'harness' | null>(null);
   /** Claude sign-in done here in the page: the link to open, and the code that page gives back. */
   const [claudeUrl, setClaudeUrl] = useState<string | null>(null);
   const [claudeCode, setClaudeCode] = useState('');
+  const [harnesses, setHarnesses] = useState<HarnessOption[]>([]);
+  useEffect(() => { configApi.harnesses().then((r) => setHarnesses(r.harnesses)).catch(() => {}); }, []);
   const [note, setNote] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const dirty = useRef(false);
@@ -141,6 +143,18 @@ export function EngineSettings({ bot }: { bot: Bot }) {
 
   const claudeCancel = () => { setClaudeUrl(null); setClaudeCode(''); void configApi.claudeLoginCancel(botId).catch(() => {}); };
 
+  const harness = bot.harness ?? 'hermes';
+  const harnessDef = harnesses.find((h) => h.id === harness);
+  const pickHarness = async (id: string) => {
+    if (busy || id === harness) return;
+    setBusy('harness'); setNote(null);
+    try {
+      await configApi.setHarness(botId, id);
+      useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === botId ? { ...b, harness: id } : b)) }));
+    } catch (e) { setNote(`Couldn’t switch: ${(e as Error).message || 'the server did not answer'}`); }
+    finally { setBusy(null); }
+  };
+
   const restart = async () => {
     if (busy) return;
     setBusy('restart'); setNote(null);
@@ -159,6 +173,23 @@ export function EngineSettings({ bot }: { bot: Bot }) {
 
   return (
     <div className="panel-card engine">
+      <div className="panel-row panel-row--setting">
+        <span>Harness</span>
+        <span className="mini-select mini-select--native engine__select">
+          <span>{busy === 'harness' ? 'Switching…' : harnessDef?.name ?? 'Hermes'}</span>
+          <Icon name="chev_down" size={10} opacity={0.66} />
+          <select aria-label="Harness" value={harness} disabled={busy === 'harness'} onChange={(e) => pickHarness(e.target.value)}>
+            {(harnesses.length ? harnesses : [{ id: 'hermes', name: 'Hermes', subscription: '', installed: true }]).map((h) => (
+              <option key={h.id} value={h.id} disabled={!h.installed}>{h.name}{h.installed ? '' : ' · Not installed'}</option>
+            ))}
+          </select>
+        </span>
+      </div>
+      {harness !== 'hermes' && (
+        <div className="engine__notice">
+          <span>{harnessDef?.name ?? harness} runs this Bot’s turns with its own sign-in ({harnessDef?.subscription ?? 'its own'}). It keeps the app’s tools, but not Hermes’ memory, and the provider settings below apply to Hermes only.</span>
+        </div>
+      )}
       <div className="panel-row panel-row--setting">
         <span>Provider</span>
         <span className="mini-select mini-select--native engine__select">
