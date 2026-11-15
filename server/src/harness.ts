@@ -337,6 +337,10 @@ async function* runPrompt(a: Agent, def: HarnessDef, opts: {
     // The bot's model or effort may have changed since the session started.
     a.session.applied = await applySettings(a, a.session.id, a.session.info, { model: opts.model ?? a.session.defaultModel, effort: opts.effort }, a.session.applied);
   }
+  // A model the harness did not take must not pass for the one that was picked.
+  if (opts.model && a.session.applied.model !== opts.model) {
+    throw new Error(`${def.name} does not offer the model “${opts.model}”. Pick another model in the Engine panel.`);
+  }
   const sessionId = a.session.id;
   const text = first && opts.instructions ? `${opts.instructions}\n\n---\n\n${opts.input}` : opts.input;
 
