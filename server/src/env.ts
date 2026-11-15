@@ -20,6 +20,7 @@ function secret(name: string): string {
 /** Where the bots' screens come from: an Orgo cloud computer, or this machine itself. */
 const computerProvider = process.env.COMPUTER_PROVIDER === 'local' ? 'local' : 'orgo';
 
+const configuredMaxBots = Number(process.env.MAX_BOTS ?? 4);
 const hermesHome = process.env.HERMES_HOME_PRIMARY ?? path.join(os.homedir(), '.hermes');
 
 export const env = {
@@ -71,8 +72,8 @@ export const env = {
    * (e.g. http://127.0.0.1:9333). When set, we never start or stop that screen's Chrome ourselves.
    */
   primaryCdpUrl: process.env.PRIMARY_CDP_URL ?? '',
-  /** Bots that can each have a screen (Orgo allows four screens on one Linux computer). */
-  maxBots: Number(process.env.MAX_BOTS ?? 4),
+  /** Bot and screen capacity. Orgo limits a Linux computer to four screens. */
+  maxBots: computerProvider === 'local' ? configuredMaxBots : Math.min(configuredMaxBots, 4),
   /** Comma-separated emails allowed to sign in; empty = anyone who can reach the app. */
   allowedEmails: (process.env.ALLOWED_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 };

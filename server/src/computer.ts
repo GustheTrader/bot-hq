@@ -13,9 +13,6 @@ import type { ComputerState } from './types.js';
  * suspended or deleted from here: it is somebody's working machine.
  */
 
-/** Orgo allows this many screens on one Linux computer, the default one included. */
-export const MAX_SCREENS = 4;
-
 export interface BotScreen { computerId: string; screenId: string; width?: number; height?: number }
 
 function computerId(): string {
@@ -45,7 +42,7 @@ export function computerState(userId: string): ComputerState {
     screenId: s.screen_id as string,
     ...(s.width && s.height ? { width: s.width as number, height: s.height as number } : {}),
   }));
-  return { status: r.status, orgoId: env.orgoComputerId || r.orgo_id, error: r.error, screens, maxScreens: Math.min(env.maxBots, MAX_SCREENS) };
+  return { status: r.status, orgoId: env.orgoComputerId || r.orgo_id, error: r.error, screens, maxScreens: env.maxBots };
 }
 
 function mapStatus(s: string): ComputerState['status'] {
@@ -170,7 +167,7 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
   } else {
     screen = existing.find((s) => s.id !== 'default' && !s.default && !taken.has(s.id));
     if (!screen) {
-      if (existing.length >= MAX_SCREENS) throw new Error(`Every screen on the computer is in use (${MAX_SCREENS} at most). Remove a bot to free one.`);
+      if (existing.length >= env.maxBots) throw new Error(`Every screen on the computer is in use (${env.maxBots} at most). Remove a bot to free one.`);
       screen = await orgo.createScreen(id);
     }
   }
