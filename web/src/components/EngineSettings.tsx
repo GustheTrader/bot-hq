@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Bot, EngineInfo, EngineProvider } from '@shared/types';
 import { configApi, type EngineCheck, type HarnessModels, type HarnessOption } from '../lib/configApi';
 import { useStore } from '../store';
+import { useConfigUI } from '../configStore';
 import { Icon } from './Icon';
 
 /** The model list's "type your own" entry; no real model id looks like this. */
@@ -240,6 +241,9 @@ export function EngineSettings({ bot }: { bot: Bot }) {
             ))}
           </select>
         </span>
+      </div>
+      <div className="engine__wiki">
+        <button type="button" className="link-btn link-btn--small" onClick={() => useConfigUI.getState().openAppSettings('wiki')}>Which harness and model for a job? See the Wiki</button>
       </div>
       {harness !== 'hermes' && (
         <>

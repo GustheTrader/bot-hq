@@ -214,3 +214,35 @@
 
 /* knob contrasts with the "on" track (matters for black bots in dark mode) */
 .toggle.is-on .toggle__knob { background: var(--bot-on-action, #FFFFFF); }
+
+/* ---------- Settings → Wiki ---------- */
+.computer-status-dot.is-warn { background: var(--color-warn); }
+.wiki-picks { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.wiki-pick { padding: 10px 12px; }
+.wiki-pick__task { font-size: 13px; font-weight: 600; color: var(--color-ink); margin-bottom: 6px; }
+.wiki-pick ol { margin: 0; padding-left: 18px; display: grid; gap: 3px; font-size: 12px; line-height: 16px; color: var(--color-text-secondary); }
+.wiki-pick li span:first-child { margin-right: 6px; }
+.wiki-time { font-family: var(--font-mono-stack); font-size: 11px; color: var(--color-text-tertiary); white-space: nowrap; }
+.wiki-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.wiki-filter { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.wiki-chip { border: 1px solid var(--color-border-tertiary); background: transparent; border-radius: 999px; padding: 2px 9px; font-size: 11px; line-height: 16px; color: var(--color-text-secondary); cursor: pointer; }
+.wiki-chip:hover { background: var(--color-bg-hover); }
+.wiki-chip.is-on { background: var(--color-ink); border-color: var(--color-ink); color: var(--color-bg-pane); }
+.wiki-table-wrap { padding: 0; overflow-x: auto; }
+.wiki-table { width: 100%; border-collapse: collapse; font-size: 12px; line-height: 16px; }
+.wiki-table th, .wiki-table td { padding: 7px 10px; text-align: left; border-bottom: 0.5px solid var(--color-border-tertiary); white-space: nowrap; }
+.wiki-table thead th { font-weight: 500; color: var(--color-text-tertiary); font-size: 11px; }
+.wiki-table tbody th { font-weight: 500; color: var(--color-ink); }
+.wiki-table tbody tr:last-child > * { border-bottom: 0; }
+.wiki-table td.is-ok { color: var(--color-success); font-family: var(--font-mono-stack); font-size: 11px; }
+.wiki-table td.is-bad { color: var(--color-danger); font-weight: 600; }
+.wiki-table td.is-none { color: var(--color-text-quaternary); }
+.wiki-score { font-weight: 600; color: var(--color-ink); }
+.wiki-dl { display: grid; grid-template-columns: 72px 1fr; gap: 3px 10px; margin: 6px 0 2px; font-size: 12px; line-height: 17px; }
+.wiki-dl dt { color: var(--color-text-tertiary); }
+.wiki-dl dd { margin: 0; color: var(--color-text-secondary); }
+.wiki-harness { align-items: flex-start; }
+.wiki-tips { margin: 0; padding: 10px 14px 10px 30px; display: grid; gap: 6px; font-size: 13px; line-height: 18px; color: var(--color-text-secondary); }
+.wiki-code { padding: 10px 12px; overflow-x: auto; }
+.wiki-code .cfg-code { white-space: nowrap; font-size: 12px; color: var(--color-ink); }
+.engine__wiki { padding: 0 8px 6px; font-size: 12px; line-height: 16px; }
