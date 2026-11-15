@@ -1,0 +1,20 @@
+{"id": "a01", "kind": "answerable", "question": "ORNN model bias Kalshi backtest", "expect_uri": "fs://workspace/Projects/ornn-sme/README.md", "expect_string": "xfail(strict=True)"}
+{"id": "a02", "kind": "answerable", "question": "Bot HQ MCP endpoint the primary engine connects to", "expect_uri": "fs://workspace/Projects/bot-hq/README.md", "expect_string": "mcp/primary"}
+{"id": "a03", "kind": "answerable", "question": "how long does the dsh-envopt catalog rebuild take", "expect_uri": "fs://workspace/Projects/dsh-envopt/BUILD.md", "expect_string": "25 s"}
+{"id": "a04", "kind": "answerable", "question": "Hindsight memory server port and host", "expect_uri": "fs://workspace/Documents/Hindsight-memory.md", "expect_string": "127.0.0.1:8888"}
+{"id": "a05", "kind": "answerable", "question": "gnoesis minimum independent evidence rule for promotion", "expect_uri": "fs://workspace/Projects/gnoesis/PRD.md", "expect_string": "min_independent_evidence"}
+{"id": "a06", "kind": "answerable", "question": "Sierra Nevada outdoor builders production URL", "expect_uri": "fs://workspace/Documents/SierraNevadaOutdoorBuilders.md", "expect_string": "sierra-reno-landing.vercel.app"}
+{"id": "a07", "kind": "answerable", "question": "gridiron picks ingest endpoint header token", "expect_uri": "fs://workspace/Projects/gridiron-picks/README.md", "expect_string": "x-picks-key"}
+{"id": "a08", "kind": "answerable", "question": "handyhub blog posts compiled at build time into a vite module", "expect_uri": "fs://workspace/Projects/handyhub-signin/README.md", "expect_string": "build/blog-posts.ts"}
+{"id": "a09", "kind": "answerable", "question": "quant-lake market_ranges row level security policy", "expect_uri": "fs://workspace/Projects/quant-lake/notes/stack-decisions-2026-11-10.md", "expect_string": "market_ranges"}
+{"id": "a10", "kind": "answerable", "question": "RaceWise price bands walk-forward discrimination log loss", "expect_uri": "fs://workspace/Projects/racewiseai/docs/PRICE-BANDS.md", "expect_string": "resulted races"}
+{"id": "u01", "kind": "unanswerable", "question": "what is our beekeeping hive inspection schedule"}
+{"id": "u02", "kind": "unanswerable", "question": "which Kyoto datacenter burned the most GPU hours in Q2"}
+{"id": "u03", "kind": "unanswerable", "question": "sourdough starter hydration schedule for the bakery"}
+{"id": "u04", "kind": "unanswerable", "question": "yacht charter booking catalog id"}
+{"id": "u05", "kind": "unanswerable", "question": "where is the drone fleet inventory spreadsheet"}
+{"id": "u06", "kind": "unanswerable", "question": "soybean futures dividend for Q2"}
+{"id": "u07", "kind": "unanswerable", "question": "vineyard irrigation permit renewal date"}
+{"id": "u08", "kind": "unanswerable", "question": "aquarium maintenance contract terms"}
+{"id": "u09", "kind": "unanswerable", "question": "pergola lumber order for the orchard deck"}
+{"id": "u10", "kind": "unanswerable", "question": "trampoline insurance rider premium"}

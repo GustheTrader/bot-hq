@@ -1,0 +1,4 @@
+#!/bin/sh
+# Pi, started by pi-acp for a Bot HQ bot: the bot's home is machine-written, so trust its
+# .pi/mcp.json (which carries the app's hq server) without an interactive prompt.
+exec /usr/bin/pi --approve "$@"

@@ -161,9 +161,19 @@ Roots: `fs://workspace`, `fs://cloud`, `fs://pub`, `fs://library` (override with
 
 **Acceptance (managed Hermes, bot Sam): pass.** One turn, 17.1 s: `data_search` → `data_read` → answer citing `fs://workspace/Projects/ornn-sme/README.md` with a verbatim line (verified at README.md:226).
 
-**Open items**
+**Loose ends closed (2026-11-15, same day)**
 
-1. **Primary engine (Thoth) does not see the tools yet.** The Hermes gateway caches the MCP tool list at startup; `/reload-mcp` exists but is not reachable through `/v1/responses`, and the app is barred from restarting the primary gateway. Fix: send `/reload-mcp` to Hermes from a messaging channel or the TUI, or restart the gateway once.
-2. **ACP harnesses untested** — no bot currently runs codex / claude-code / pi / opencode. They read the same `/mcp/<bot>` list per turn, so they should work without a restart, but that is unverified.
-3. **Catalog freshness.** The catalog was 4 days stale (built before `ornn-sme` existed) and had to be rebuilt (`bench/build_catalog.py`, 83 s). Search only finds what the catalog has; a nightly rebuild is needed before this is dependable.
-4. The 20-question eval set (§9) is not built yet; phase 0 was validated on one question.
+1. **Thoth sees the tools.** `/reload-mcp` is a slash command in the gateway's session, not a `/v1/responses` call, so it was not reachable from the app or a shell. Fixed by restarting the `hermes-gateway` supervisord program (session-per-bot state lives on disk; the TUI reconnects). Verified after the restart: `data_search` + `data_read` over `/mcp/primary`.
+2. **All four ACP harnesses pass.** One live turn each against Thoth, same question, all four cited `Projects/ornn-sme/README.md` with the verbatim line: codex `mcp.hq.data_search`, pi `mcp__hq__data_search`, claude-code `mcp__hq__data_search`, opencode `hq_data_search`. Two harness-specific seams were needed: **pi** ignores ACP `mcpServers` and reads its own `.pi/mcp.json`, and refuses an untrusted project — so the server writes that file per bot (`piHqConfig`) and sets `PI_ACP_PI_COMMAND` to `scripts/pi-trusted`, which adds `--approve`. **claude-code** blocks the turn on the first `session/request_permission`; `harness.ts:answer()` already selects `allow_once`, which is why the app worked while the probe (which never answered) timed out at 600 s.
+3. **Nightly catalog rebuild.** New process service `data-catalog-nightly` runs `bench/catalog-nightly.sh` (03:15 PT, staging file + atomic rename, log `/dev/shm/data-catalog-nightly.log`). The rebuild went 66 s, not 25 s — the tree grew from 107k to ~120k files (notes 20.5k → 22.5k docs, catalog 318 MB). `data_search` now returns a `warning` when the catalog is older than 36 h.
+4. **20-question eval built** (`server/scripts/eval-data-plane.mjs`, questions in `experiments/eval/data-plane-questions.jsonl`, 10 answerable / 10 not). Results below.
+
+| metric | value | reading |
+|---|---|---|
+| quote accuracy (expected string in a top-3 file) | **1.00** | a bot that reads its top 3 always finds the line |
+| top-3 file accuracy | 0.80 | 2 misses, both still quote-correct via another file |
+| top-1 accuracy | 0.50 | the ranking is coarse; `data_read` is doing the work |
+| abstain accuracy | 0.90 | all 10 answerable got a hit; 2/10 unanswerable did not abstain |
+| latency | 422 ms p50 / 2.9 s p95 | mean 877 tokens to answer |
+
+The confidence signal is term coverage, not RRF score: on this set the answerable and unanswerable halves overlap on score (0.019–0.039 vs 0.016–0.032) but an unanswerable question misses its own query words. That is what `confidence: none` keys off. Known misses: `a02` (Bot HQ MCP endpoint — `ARCHITECTURE.md` ranked 4th) and `a08` (handyhub blog — the project `README.md` lost to `content/blog/README.md`). Both are ranking problems, not retrieval failures.

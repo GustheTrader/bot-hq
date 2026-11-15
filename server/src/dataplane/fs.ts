@@ -232,7 +232,7 @@ function catalogDocs(db: Database.Database, toks: string[], k: number, workspace
     "SELECT d.path AS path, d.title AS title, snippet(docs_fts, 2, '«', '»', '…', 24) AS snip, bm25(docs_fts, 2.0, 1.5, 1.0) AS score " +
     'FROM docs_fts JOIN docs d ON d.path = docs_fts.path WHERE docs_fts MATCH ? ORDER BY score LIMIT ?',
   ).all(fts, k * 6) as any[];
-  return rows.map((r) => ({ key: path.join(workspace, r.path), uri: `fs://workspace/${r.path}`, title: r.title, snippet: r.snip, abs: path.join(workspace, r.path), engine: 'catalog' }));
+  return rows.filter((r) => !isNoise(r.path)).map((r) => ({ key: path.join(workspace, r.path), uri: `fs://workspace/${r.path}`, title: r.title, snippet: r.snip, abs: path.join(workspace, r.path), engine: 'catalog' }));
 }
 
 function catalogPaths(db: Database.Database, toks: string[], k: number, workspace: string): Ranked[] {
@@ -241,7 +241,7 @@ function catalogPaths(db: Database.Database, toks: string[], k: number, workspac
   const rows = db.prepare('SELECT path, bm25(file_fts) AS score FROM file_fts WHERE file_fts MATCH ? ORDER BY score LIMIT ?')
     .all(useful.map((t) => `"${t}"`).join(' OR '), k * 6) as any[];
   return rows
-    .filter((r) => /\.(md|txt|py|ts|tsx|rs|ya?ml|toml|json|sql|ipynb|csv)$/i.test(r.path))
+    .filter((r) => !isNoise(r.path) && /\.(md|txt|py|ts|tsx|rs|ya?ml|toml|json|sql|ipynb|csv)$/i.test(r.path))
     .map((r) => ({ key: path.join(workspace, r.path), uri: `fs://workspace/${r.path}`, abs: path.join(workspace, r.path), engine: 'paths' }));
 }
 
@@ -292,6 +292,23 @@ const nearDup = (a: string, b: string) => {
   return j >= 4;
 };
 
+/** Vendored copies, engine homes and build output: indexed, but never the answer to "where is X". */
+const NOISE = /(^|\/)(node_modules|dist|build|target|\.venv|venv|site-packages|vendor|\.git|cache|data\/engines|__pycache__)(\/|$)/;
+const isNoise = (p: string) => NOISE.test(p);
+
+/**
+ * Curated paths are the workspace's own index: the root AGENTS.md, Documents/*.md, a project's
+ * README/AGENTS, its docs/, a skill's SKILL.md. A hit there is worth more than the same words in
+ * a vendored copy, which is what the 20-question eval showed (top-3 0.5 before this prior).
+ */
+const sizeOf = (abs: string) => { try { return fs.statSync(abs).size; } catch { return 0; } };
+
+const CANON = [
+  /^AGENTS\.md$/, /^SOUL\.md$/, /^Documents\/[^/]+\.md$/, /^Projects\/[^/]+\/(README|AGENTS)\.md$/,
+  /^Projects\/[^/]+\/docs\/[^/]+\.md$/, /^Skills\/[^/]+\/SKILL\.md$/, /^Projects\/[^/]+\/[A-Z][A-Z0-9_-]+\.md$/,
+];
+const canonWeight = (p: string) => (CANON.some((r) => r.test(p)) ? 1.35 : 1);
+
 export function dataSearch(cfg: DataConfig, botId: string, a: { query: string; k?: number; sources?: string[] }) {
   const q = String(a.query ?? '').trim();
   if (!q) throw new DataError('Give a query');
@@ -312,15 +329,29 @@ export function dataSearch(cfg: DataConfig, botId: string, a: { query: string; k
     } catch { /* catalog mid-rebuild: fall back to the Library */ }
   }
   if (want.has('library')) lists.push(libraryHits(cfg, botId, toks, k));
-  const merged = rrf(lists, k * 3);
+  const merged = rrf(lists, k * 3)
+    .map((m) => ({ ...m, score: m.score * canonWeight(m.r.uri.replace(/^fs:\/\/[a-z0-9_-]+\//i, '')) }))
+    .sort((x, y) => y.score - x.score);
   const kept: typeof merged = [];
-  for (const m of merged) {
-    if (kept.some((x) => nearDup(x.r.uri, m.r.uri))) continue;
-    if (isSecretPath(m.r.uri)) continue;
+  const seen = new Set<string>();
+  const perDir = new Map<string, number>();
+  const dirOf = (uri: string) => uri.slice(0, uri.lastIndexOf('/'));
+  const take = (m: (typeof merged)[number], cap: number) => {
+    if (kept.length >= k) return;
+    if (kept.some((x) => nearDup(x.r.uri, m.r.uri))) return;
+    if (isSecretPath(m.r.uri)) return;
+    const sig = `${path.basename(m.r.uri)}:${sizeOf(m.r.abs)}`;
+    if (seen.has(sig)) return;
+    const d = dirOf(m.r.uri);
+    if ((perDir.get(d) ?? 0) >= cap) return;
+    seen.add(sig);
+    perDir.set(d, (perDir.get(d) ?? 0) + 1);
     kept.push(m);
-    if (kept.length >= k) break;
-  }
-  const catalogMtime = db && cached ? cached.mtime : 0;
+  };
+  // Two passes: at most 2 hits per directory first, so one blog folder cannot fill the list,
+  // then fill any remaining slots without the cap.
+  for (const m of merged) take(m, 2);
+  for (const m of merged) take(m, Infinity);  const catalogMtime = db && cached ? cached.mtime : 0;
   const results = kept.map((m) => {
     let mtime: string | null = null; let bytes: number | null = null; let stale = 0; let missing = false;
     try {
@@ -328,15 +359,26 @@ export function dataSearch(cfg: DataConfig, botId: string, a: { query: string; k
       mtime = iso(st.mtimeMs); bytes = st.size;
       if (m.r.engine !== 'library' && st.mtimeMs > catalogMtime) stale = Math.round((st.mtimeMs - catalogMtime) / 1000);
     } catch { missing = true; }
+    const snippet = (m.r.snippet ?? '').replace(/\s+/g, ' ').slice(0, 300);
+    const hay = `${m.r.uri} ${snippet}`.toLowerCase();
     return {
       uri: m.r.uri, source: 'fs', title: m.r.title ?? path.basename(m.r.uri), score: Number(m.score.toFixed(5)),
-      engines: [...m.engines], snippet: (m.r.snippet ?? '').replace(/\s+/g, ' ').slice(0, 300), bytes, mtime,
+      engines: [...m.engines], snippet, bytes, mtime,
+      coverage: Number((toks.filter((t) => hay.includes(t)).length / toks.length).toFixed(2)),
       stale_seconds: stale, ...(missing ? { missing: true } : {}),
     };
   });
+  // RRF score is not a confidence signal: on the 20-question eval the answerable and unanswerable halves
+  // overlap (0.019-0.039 vs 0.016-0.032). Term coverage is: an unanswerable question misses its own words.
+  const bestCoverage = results.reduce((m, r) => Math.max(m, r.coverage), 0);
+  const confidence = bestCoverage >= 0.75 ? 'strong' : bestCoverage >= 0.5 ? 'weak' : 'none';
   return {
-    query: q, tokens: toks, took_ms: Date.now() - t0, catalog_age_seconds: catalogAge,
+    query: q, tokens: toks, took_ms: Date.now() - t0, catalog_age_seconds: catalogAge, confidence,
+    ...(confidence === 'none' ? { hint: 'Nothing here contains most of your terms. Say you do not know rather than guessing from a weak hit.' } : {}),
     ...(db ? {} : { warning: `Catalog ${cfg.catalog} is missing; only the Library was searched.` }),
+    ...(catalogAge !== null && catalogAge > 36 * 3600
+      ? { warning: `Catalog is ${Math.round(catalogAge / 3600)} h old (nightly rebuild is data-catalog-nightly); files newer than that are ranked from paths only.` }
+      : {}),
     note: 'Ranked by RRF over the workspace catalog, file paths and your Library. data_read the uri to quote it. stale_seconds > 0 means the file changed after the catalog was built.',
     results,
   };

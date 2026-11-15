@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { env } from './env.js';
 import { displayFor } from './box.js';
@@ -74,9 +75,12 @@ function answer(a: Agent, m: any) {
  * app keys), which the agent could otherwise read from its shell.
  */
 const PASS_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TERM', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'OPENCODE_CONFIG'];
-function harnessEnv(screenId: string | null): NodeJS.ProcessEnv {
+function harnessEnv(screenId: string | null, harness?: HarnessId): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const k of PASS_ENV) if (process.env[k] !== undefined) out[k] = process.env[k];
+  // pi-acp starts `pi` itself; the wrapper adds --approve so the bot's own .pi/mcp.json (which
+  // carries the app's hq server) is read without an interactive trust prompt.
+  if (harness === 'pi') out.PI_ACP_PI_COMMAND = fileURLToPath(new URL('../scripts/pi-trusted', import.meta.url));
   // Its windows and browser land on the bot's own screen.
   return { ...out, DISPLAY: displayFor(screenId), NO_COLOR: '1' };
 }
@@ -97,18 +101,43 @@ function quietPi(cwd: string) {
   } catch { /* the banner shows; nothing else depends on it */ }
 }
 
+/**
+ * Pi's own MCP config for this bot. pi-acp accepts `mcpServers` in session/new but never connects
+ * them (it advertises `mcpCapabilities: { http: false, sse: false }`), so Pi is given the app's
+ * tools the way Pi reads them: `.pi/mcp.json` in the bot's folder, trusted by the wrapper above.
+ */
+function piHqConfig(cwd: string, botId: string) {
+  const slug = engineKind(botId) === 'primary' ? 'primary' : botId;
+  const file = `${cwd}/.pi/mcp.json`;
+  const want = {
+    mcpServers: {
+      hq: {
+        url: `${env.mcpBaseUrl}/mcp/${slug}`,
+        headers: { Authorization: `Bearer ${mcpToken(slug)}` },
+      },
+    },
+  };
+  try {
+    fs.mkdirSync(`${cwd}/.pi`, { recursive: true });
+    const now = JSON.stringify(want, null, 2);
+    let have = '';
+    try { have = fs.readFileSync(file, 'utf8'); } catch { /* none yet */ }
+    if (have !== now) fs.writeFileSync(file, now);
+  } catch { /* Pi runs without the app's tools; the turn still works */ }
+}
+
 /** `key` names the process in `agents`: the bot's id, or a separate one for a settings check. */
 function startAgent(key: string, botId: string, harness: HarnessDef, screenId: string | null): Agent {
   const [cmd, ...args] = harness.command!;
   const cwd = `${LIB_ROOT}/${botId}`;
   fs.mkdirSync(cwd, { recursive: true });
-  if (harness.id === 'pi') quietPi(cwd);
+  if (harness.id === 'pi') { quietPi(cwd); piHqConfig(cwd, botId); }
   const child = spawn(cmd, args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
     // Its own process group, so stopping it also stops what it started (Codex runs a helper process).
     detached: true,
-    env: harnessEnv(screenId),
+    env: harnessEnv(screenId, harness.id),
   });
   const a: Agent = { child, harness: harness.id, nextId: 1, waiting: new Map(), session: null, onUpdate: null, dead: false };
   let buf = '';
@@ -203,10 +232,20 @@ export function stopHarness(botId: string) {
   try { if (a.child.pid) process.kill(-a.child.pid, 'SIGTERM'); else a.child.kill('SIGTERM'); } catch { /* already gone */ }
 }
 
-/** The app's tools for this bot, as an MCP server the harness connects to. */
-function hqTools(botId: string) {
+/**
+ * The app's tools for this bot, as an MCP server the harness connects to.
+ *
+ * pi-acp's session/new schema wants `{ type, id, url, headers, env }` on every entry and rejects a
+ * stdio one, so Pi gets the same http server with the fields its schema requires.
+ */
+function hqTools(botId: string, harness?: HarnessId) {
   const slug = engineKind(botId) === 'primary' ? 'primary' : botId;
-  return [{ type: 'http', name: 'hq', url: `${env.mcpBaseUrl}/mcp/${slug}`, headers: [{ name: 'Authorization', value: `Bearer ${mcpToken(slug)}` }] }];
+  const url = `${env.mcpBaseUrl}/mcp/${slug}`;
+  const auth = `Bearer ${mcpToken(slug)}`;
+  // pi-acp accepts an entry here but never connects it (mcpCapabilities http:false), so Pi is given
+  // the app's tools through its own .pi/mcp.json instead (piHqConfig) and handed nothing here.
+  if (harness === 'pi') return [];
+  return [{ type: 'http', name: 'hq', url, headers: [{ name: 'Authorization', value: auth }] }];
 }
 
 /** ACP tool kinds that are the agent thinking or checking itself, not a step worth a row. */
@@ -328,7 +367,7 @@ async function* runPrompt(a: Agent, def: HarnessDef, opts: {
 }): AsyncGenerator<HarnessEvent> {
   let first = false;
   if (!a.session) {
-    const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/${opts.botId}`, mcpServers: opts.check ? [] : hqTools(opts.botId) });
+    const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/${opts.botId}`, mcpServers: opts.check ? [] : hqTools(opts.botId, def.id) });
     const id = String(r?.sessionId ?? '');
     if (!id) throw new Error(`${def.name} did not start a session`);
     // The harness's own default, kept so going back to "default" later sets it again.
