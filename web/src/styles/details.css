@@ -89,6 +89,9 @@
 .engine__actions { display: flex; align-items: center; gap: 6px; padding: 6px 4px 6px 8px; }
 .engine__actions .btn { height: 28px; padding: 4px 14px; }
 .engine__actions .btn:disabled { opacity: 0.45; cursor: default; }
+.engine__check { padding: 0 8px 8px; font-size: 12px; line-height: 16px; letter-spacing: 0.12px; overflow-wrap: anywhere; color: var(--color-text-tertiary); }
+.engine__check.is-ok { color: var(--color-success); }
+.engine__check.is-bad { color: var(--color-danger); }
 .engine__signin { border-top: 0.5px solid var(--color-border-tertiary); border-radius: 0 0 8px 8px; margin-top: 2px; }
 .engine__signin:disabled { opacity: 0.6; cursor: default; }
 .engine__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; padding: 4px 4px 4px 8px; border-top: 0.5px solid var(--color-border-tertiary); font-size: 12px; line-height: 16px; letter-spacing: 0.12px; color: var(--color-text-tertiary); }

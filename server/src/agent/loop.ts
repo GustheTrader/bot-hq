@@ -230,9 +230,9 @@ function describeArgs(args: any): string {
 
 // ---------- the engine's event stream ----------
 
-interface StreamEvent { type: string; data: any }
+export interface StreamEvent { type: string; data: any }
 
-async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamEvent> {
+export async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<StreamEvent> {
   const dec = new TextDecoder();
   let buf = '';
   for await (const chunk of body as any as AsyncIterable<Uint8Array>) {
@@ -258,7 +258,7 @@ async function* sseEvents(body: ReadableStream<Uint8Array>): AsyncGenerator<Stre
   }
 }
 
-async function failureText(res: Response): Promise<string> {
+export async function failureText(res: Response): Promise<string> {
   const raw = await res.text().catch(() => '');
   try {
     const j = JSON.parse(raw);

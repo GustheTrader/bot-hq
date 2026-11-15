@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Bot, EngineInfo, EngineProvider } from '@shared/types';
-import { configApi, type HarnessOption } from '../lib/configApi';
+import { configApi, type EngineCheck, type HarnessOption } from '../lib/configApi';
 import { useStore } from '../store';
 import { Icon } from './Icon';
 
@@ -34,6 +34,8 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const [harnesses, setHarnesses] = useState<HarnessOption[]>([]);
   useEffect(() => { configApi.harnesses().then((r) => setHarnesses(r.harnesses)).catch(() => {}); }, []);
   const [note, setNote] = useState<string | null>(null);
+  /** The last settings check: running, or what it found. */
+  const [check, setCheck] = useState<'running' | EngineCheck | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const dirty = useRef(false);
   const botId = bot.id;
@@ -58,7 +60,15 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     return () => { alive = false; };
   }, [botId, apply]);
 
-  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setSigningIn(false); setClaudeUrl(null); setClaudeCode(''); setBusy(null); return load(); }, [load]);
+  /** One short real turn through what is saved now; the result stays under the settings. */
+  const runCheck = useCallback(async () => {
+    const id = botId;
+    setCheck('running');
+    try { const r = await configApi.checkEngine(id); if (shown.current === id) setCheck(r.check); }
+    catch (e) { if (shown.current === id) setCheck({ ok: false, status: 0, ms: 0, via: '', error: (e as Error).message || 'the server did not answer' }); }
+  }, [botId]);
+
+  useEffect(() => { dirty.current = false; setEngine(null); setNote(null); setCheck(null); setSigningIn(false); setClaudeUrl(null); setClaudeCode(''); setBusy(null); return load(); }, [load]);
 
   // The agent takes a moment to come up after a change or a restart.
   const starting = engine?.status === 'starting';
@@ -94,9 +104,10 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const providers = sortProviders(engine.providers ?? []);
   const selected = providers.find((p) => p.id === provider) ?? null;
   const suggestions = selected?.models ?? [];
-  const wantProvider = provider && provider !== (engine.provider ?? '') ? provider : undefined;
-  const wantModel = model.trim() && model.trim() !== (engine.model ?? '') ? model.trim() : undefined;
-  const changed = !!wantProvider || !!wantModel;
+  // Empty means the agent's own default, so going back to "Default" is a change like any other.
+  const providerChanged = provider !== (engine.provider ?? '');
+  const modelChanged = model.trim() !== (engine.model ?? '');
+  const changed = providerChanged || modelChanged;
   const openSubscriptions = providers.filter((p) => p.kind === 'subscription' && !p.connected);
   const signInTo = selected && selected.kind === 'subscription' && !selected.connected ? selected : null;
   const listId = `engine-models-${botId}`;
@@ -104,16 +115,23 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const pickProvider = (id: string) => {
     dirty.current = true; setNote(null); setProvider(id);
     const next = providers.find((p) => p.id === id);
-    // A model from another provider will not work here, so start from this provider's first suggestion.
-    if (next?.models.length && !next.models.includes(model.trim())) setModel(next.models[0]);
+    // A model from another provider will not work here: start from this provider's first suggestion,
+    // or its own default when it suggests none.
+    if (!next?.models.includes(model.trim())) setModel(next?.models[0] ?? '');
   };
 
   const save = async () => {
     if (!changed || busy) return;
     setBusy('save'); setNote(null);
-    try { const r = await configApi.setEngine(botId, { ...(wantProvider ? { provider: wantProvider } : {}), ...(wantModel ? { model: wantModel } : {}) }); dirty.current = false; apply(r.engine); }
-    catch (e) { setNote(`Couldn’t save: ${(e as Error).message || 'the engine did not answer'}`); }
-    finally { setBusy(null); }
+    // Provider and model go together, so the saved pair always matches.
+    try {
+      const r = await configApi.setEngine(botId, { provider: provider || null, model: model.trim() || null });
+      if (shown.current !== botId) return;
+      dirty.current = false; apply(r.engine);
+      void runCheck();
+    }
+    catch (e) { if (shown.current === botId) setNote(`Couldn’t save: ${(e as Error).message || 'the engine did not answer'}`); }
+    finally { if (shown.current === botId) setBusy(null); }
   };
 
   const signIn = async () => {
@@ -154,6 +172,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     try {
       await configApi.setHarness(botId, id);
       useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === botId ? { ...b, harness: id } : b)) }));
+      if (shown.current === botId) void runCheck();
     } catch (e) { if (shown.current === botId) setNote(`Couldn’t switch: ${(e as Error).message || 'the server did not answer'}`); }
     finally { if (shown.current === botId) setBusy(null); }
   };
@@ -224,7 +243,15 @@ export function EngineSettings({ bot }: { bot: Bot }) {
       <div className="engine__actions">
         <button type="button" className="btn btn--sm btn--bot" onClick={save} disabled={!changed || busy === 'save'}>{busy === 'save' ? 'Saving…' : 'Save'}</button>
         {changed && <button type="button" className="link-btn link-btn--small" onClick={() => { dirty.current = false; setNote(null); setProvider(engine.provider ?? ''); setModel(engine.model ?? ''); }}>Undo</button>}
+        {!changed && <button type="button" className="link-btn link-btn--small" onClick={runCheck} disabled={check === 'running'}>{check === 'running' ? 'Testing…' : 'Test'}</button>}
       </div>
+      {check && (
+        <div className={`engine__check ${check === 'running' ? 'is-running' : check.ok ? 'is-ok' : 'is-bad'}`} role="status">
+          {check === 'running' ? 'Sending a test message…' : check.ok
+            ? `Works · ${check.status} · replied in ${(check.ms / 1000).toFixed(1)}s · ${check.via}`
+            : `Failed${check.status ? ` · ${check.status}` : ''}${check.via ? ` · ${check.via}` : ''}: ${check.error ?? 'no reply'}`}
+        </div>
+      )}
       {(signInTo || openSubscriptions.length > 0) && (
         <button type="button" className="panel-row panel-row--action engine__signin" onClick={signIn} disabled={busy === 'signin'}>
           <Icon name="monitor" size={14} opacity={0.56} />

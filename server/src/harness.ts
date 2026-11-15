@@ -97,7 +97,8 @@ function quietPi(cwd: string) {
   } catch { /* the banner shows; nothing else depends on it */ }
 }
 
-function startAgent(botId: string, harness: HarnessDef, screenId: string | null): Agent {
+/** `key` names the process in `agents`: the bot's id, or a separate one for a settings check. */
+function startAgent(key: string, botId: string, harness: HarnessDef, screenId: string | null): Agent {
   const [cmd, ...args] = harness.command!;
   const cwd = `${LIB_ROOT}/${botId}`;
   fs.mkdirSync(cwd, { recursive: true });
@@ -130,20 +131,20 @@ function startAgent(botId: string, harness: HarnessDef, screenId: string | null)
     a.dead = true;
     for (const w of a.waiting.values()) w({ error: { message: 'the harness stopped' } });
     a.waiting.clear();
-    if (agents.get(botId) === a) agents.delete(botId);
+    if (agents.get(key) === a) agents.delete(key);
   };
   child.on('exit', gone);
   child.on('error', gone);
   return a;
 }
 
-async function agentFor(botId: string, harness: HarnessDef, screenId: string | null): Promise<Agent> {
+async function agentFor(key: string, botId: string, harness: HarnessDef, screenId: string | null): Promise<Agent> {
   if (retired.has(botId)) throw new Error('this Bot is being removed');
-  const have = agents.get(botId);
+  const have = agents.get(key);
   if (have && !have.dead && have.harness === harness.id) return have;
-  if (have) stopHarness(botId);
-  const a = startAgent(botId, harness, screenId);
-  agents.set(botId, a);
+  if (have) stopHarness(key);
+  const a = startAgent(key, botId, harness, screenId);
+  agents.set(key, a);
   await call(a, 'initialize', { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
   return a;
 }
@@ -152,7 +153,11 @@ async function agentFor(botId: string, harness: HarnessDef, screenId: string | n
 export function retireHarness(botId: string) {
   retired.add(botId);
   stopHarness(botId);
+  stopHarness(checkKey(botId));
 }
+
+/** The process a settings check runs in, apart from the bot's own conversation. */
+const checkKey = (botId: string) => `${botId}~check`;
 
 /** Stop the bot's harness process (harness changed, new chat). Its next turn starts a fresh one. */
 export function stopHarness(botId: string) {
@@ -229,21 +234,30 @@ function outputText(u: any): string {
  */
 export async function* harnessTurn(opts: {
   botId: string; harness: HarnessId; screenId: string | null; conversation: string; input: string; instructions: string; effort?: string; signal: AbortSignal;
+  /** A settings check: its own process, without the app's tools, stopped when the turn ends. */
+  check?: boolean;
 }): AsyncGenerator<HarnessEvent> {
   const def = HARNESSES.find((h) => h.id === opts.harness);
   if (!def?.command) throw new Error(`${opts.harness} is not an ACP harness`);
   if (!harnessInstalled(def)) throw new Error(`${def.name} is not installed on the computer`);
-  let a = await agentFor(opts.botId, def, opts.screenId);
+  const key = opts.check ? checkKey(opts.botId) : opts.botId;
+  if (opts.check) stopHarness(key); // every check starts clean, with the settings saved now
+  let a = await agentFor(key, opts.botId, def, opts.screenId);
   // One conversation per process: a New chat starts a fresh one, so old sessions never pile up.
   if (a.session && a.session.conversation !== opts.conversation) {
-    stopHarness(opts.botId);
-    a = await agentFor(opts.botId, def, opts.screenId);
+    stopHarness(key);
+    a = await agentFor(key, opts.botId, def, opts.screenId);
   }
-  if (opts.signal.aborted) throw new Error('interrupted');
+  if (opts.signal.aborted) { if (opts.check) stopHarness(key); throw new Error('interrupted'); }
+  try { yield* runPrompt(a, def, opts); } finally { if (opts.check) stopHarness(key); }
+}
 
+async function* runPrompt(a: Agent, def: HarnessDef, opts: {
+  botId: string; conversation: string; input: string; instructions: string; effort?: string; signal: AbortSignal; check?: boolean;
+}): AsyncGenerator<HarnessEvent> {
   let first = false;
   if (!a.session) {
-    const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/${opts.botId}`, mcpServers: hqTools(opts.botId) });
+    const r = await call(a, 'session/new', { cwd: `${LIB_ROOT}/${opts.botId}`, mcpServers: opts.check ? [] : hqTools(opts.botId) });
     const id = String(r?.sessionId ?? '');
     if (!id) throw new Error(`${def.name} did not start a session`);
     a.session = { id, conversation: opts.conversation, info: r, effort: await setUpSession(a, id, r, opts.effort) };
