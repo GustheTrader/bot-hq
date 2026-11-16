@@ -1,4 +1,4 @@
-import { CodeXml } from 'lucide-react';
+import { CodeXml, Users } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
@@ -93,6 +93,10 @@ export function Sidebar() {
           <span className="sidebar-island__label">Code</span>
         </button>
         <TasksIsland />
+        <button type="button" className={`sidebar-island${view === 'teams' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('teams')} title="Teams" aria-pressed={view === 'teams'}>
+          <span className="sidebar-island__icon"><Users size={18} aria-hidden /></span>
+          <span className="sidebar-island__label">Teams</span>
+        </button>
         {primary && (
           <div className="pinned">
             <button type="button" className={`pinned__tile${selectedBotId === primary.id ? ' is-selected' : ''}`} onClick={() => selectBot(primary.id)} title={displayName(primary)}>

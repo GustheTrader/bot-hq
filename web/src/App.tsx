@@ -13,6 +13,7 @@ import { CreateGroupModal } from './components/modals/CreateGroupModal';
 import { SearchModal } from './components/modals/SearchModal';
 import { ConfigLayer } from './components/config/ConfigLayer';
 import { TasksView } from './components/config/TasksView';
+import { TeamsView } from './components/TeamsView';
 import { useConfigUI } from './configStore';
 
 function Shell() {
@@ -58,7 +59,7 @@ function Shell() {
   return (
     <div className={`app${collapsed ? ' is-sidebar-collapsed' : ''}${detailsOpen && hasBot && view === 'chat' ? ' has-details' : ''}`}>
       <Sidebar />
-      {view === 'code' ? <CodeView /> : view === 'tasks' ? <TasksView /> : <ChatView />}
+      {view === 'code' ? <CodeView /> : view === 'tasks' ? <TasksView /> : view === 'teams' ? <TeamsView /> : <ChatView />}
       {detailsOpen && hasBot && view === 'chat' && <DetailsPanel />}
       {modal === 'create' && <CreateBotModal />}
       {modal === 'group' && <CreateGroupModal />}

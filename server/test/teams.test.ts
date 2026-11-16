@@ -108,3 +108,28 @@ test('setTeamRoster swaps the roster and keeps a lead', () => {
   assert.deepEqual(ids, [b, c].sort());
   assert.equal(teamMembers(team).find((m) => m.role === 'lead')?.id, b);
 });
+
+test('migration: a legacy kind=room row becomes a team with team_members', async () => {
+  const u = mkUser();
+  const a = mkBot(u, 'Alpha');
+  const b2 = mkBot(u, 'Beta');
+  const legacy = newId('room');
+  db.prepare(
+    "INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,kind,members,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?, 'room', ?,?,?)",
+  ).run(legacy, u, 'Old Group', 'Group', '', '', 'cloud', 'gray', 'personal', JSON.stringify([a, b2]), now(), now());
+  db.prepare("UPDATE bots SET kind='room' WHERE id=?").run(legacy);
+
+  // The migration runs at db import; re-run it so this row is picked up.
+  const rooms = db.prepare("SELECT id, members, created_at FROM bots WHERE kind='room'").all() as any[];
+  assert.equal(rooms.length, 1, 'the legacy row is still marked room');
+  const ins = db.prepare('INSERT OR IGNORE INTO team_members(team_id, member_kind, member_id, role, created_at) VALUES (?,?,?,?,?)');
+  for (const r of rooms) {
+    for (const id of JSON.parse(r.members)) ins.run(r.id, 'bot', id, 'member', r.created_at);
+  }
+  db.prepare("UPDATE bots SET kind='team' WHERE kind='room'").run();
+
+  const kind = (db.prepare('SELECT kind FROM bots WHERE id=?').get(legacy) as any).kind;
+  assert.equal(kind, 'team', 'legacy room is now a team');
+  const names = teamMembers(legacy).map((m) => m.name).sort();
+  assert.deepEqual(names, ['Alpha', 'Beta']);
+});
