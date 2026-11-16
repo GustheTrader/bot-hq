@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AvatarColor, AvatarShape, Bot, Memory, Routine, Skill } from '@shared/types';
-import { BotAvatar, BotAvatarFor, PICKER_SHAPES } from '../../avatar/BotAvatar';
+import { BotAvatar, BotAvatarFor, PICKER_SHAPES, PortraitPresets } from '../../avatar/BotAvatar';
 import { COLOR_ORDER, botVars, palette } from '../../lib/colors';
 import { configApi, type BotSettingsBundle } from '../../lib/configApi';
 import { useConfigUI, useVersion, type BotSettingsTab } from '../../configStore';
@@ -86,13 +86,34 @@ export function BotSettingsModal() {
 
 // ---------------------------------------------------------------------------
 
-type Draft = Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'effort' | 'mode'>;
-const draftOf = (b: Bot): Draft => ({ name: b.name, label: b.label, description: b.description, instructions: b.instructions, avatarShape: b.avatarShape, avatarColor: b.avatarColor, effort: b.effort, mode: b.mode });
+type Draft = Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode'>;
+const draftOf = (b: Bot): Draft => ({ name: b.name, label: b.label, description: b.description, instructions: b.instructions, avatarShape: b.avatarShape, avatarColor: b.avatarColor, avatarImage: b.avatarImage ?? null, effort: b.effort, mode: b.mode });
+
+async function importPortrait(file: File) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) {
+    throw new Error('Choose a JPG, PNG or WebP up to 8 MB.');
+  }
+  const image = await createImageBitmap(file);
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 384;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Image processing is unavailable.');
+    const edge = Math.min(image.width, image.height);
+    ctx.fillStyle = '#11141d';
+    ctx.fillRect(0, 0, 384, 384);
+    ctx.drawImage(image, (image.width - edge) / 2, (image.height - edge) / 2, edge, edge, 0, 0, 384, 384);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  } finally {
+    image.close();
+  }
+}
 
 function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
   const [draft, setDraft] = useState<Draft>(() => draftOf(bot));
   const [picker, setPicker] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [note, setNote] = useState<{ text: string; tone: 'ok' | 'error' } | null>(null);
   useEffect(() => { setDraft(draftOf(bot)); }, [bot.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -102,6 +123,13 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
   const nameOk = draft.name.trim().length > 0;
   const put = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
   const flash = (text: string, tone: 'ok' | 'error' = 'ok') => { setNote({ text, tone }); setTimeout(() => setNote(null), 2400); };
+
+  const selectFile = async (file: File) => {
+    setImporting(true);
+    try { put('avatarImage', await importPortrait(file)); }
+    catch (error) { flash(error instanceof Error ? error.message : 'Could not read this image.', 'error'); }
+    finally { setImporting(false); }
+  };
 
   const save = async () => {
     if (!dirty || !nameOk) return;
@@ -123,7 +151,7 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
     <div className="cfg-page">
       <section className="cfg-section">
         <div className="cfg-look">
-          <BotAvatar shape={draft.avatarShape} color={draft.avatarColor} size={72} />
+          <BotAvatarFor bot={{ ...bot, ...draft }} size={80} />
           <div className="cfg-look__text">
             <div className="cfg-look__name">{draft.name || 'New Bot'}</div>
             <button type="button" className="cfg-btn cfg-btn--secondary" onClick={() => setPicker(!picker)} aria-expanded={picker}>
@@ -131,7 +159,19 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
             </button>
           </div>
         </div>
-        {picker && <LookPicker shape={draft.avatarShape} color={draft.avatarColor} onShape={(s) => put('avatarShape', s)} onColor={(c) => put('avatarColor', c)} />}
+        {picker && (bot.kind === 'room'
+          ? <LookPicker shape={draft.avatarShape} color={draft.avatarColor} onShape={(s) => put('avatarShape', s)} onColor={(c) => put('avatarColor', c)} />
+          : <div className="portrait-picker">
+              <PortraitPresets value={draft.avatarImage} disabled={importing || saving} onSelect={(value) => put('avatarImage', value)} />
+              <label htmlFor="cfg-avatar">Import bot image</label>
+              <input id="cfg-avatar" type="file" accept="image/jpeg,image/png,image/webp" disabled={importing || saving} onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (file) void selectFile(file);
+              }} />
+              {draft.avatarImage && <button type="button" className="cfg-btn cfg-btn--secondary" disabled={importing || saving} onClick={() => put('avatarImage', null)}>Use default portrait</button>}
+              <LookPicker shape={draft.avatarShape} color={draft.avatarColor} onColor={(color) => put('avatarColor', color)} />
+            </div>)}
       </section>
 
       <section className="cfg-section cfg-grid">
@@ -161,7 +201,7 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
       <div className={`cfg-savebar${dirty ? ' is-dirty' : ''}`}>
         <span className={`cfg-savebar__note${note?.tone === 'error' ? ' is-error' : ''}`} role="status">{note?.text ?? (dirty ? 'Unsaved changes' : '')}</span>
         <button type="button" className="cfg-btn cfg-btn--secondary" disabled={!dirty || saving} onClick={() => setDraft(draftOf(bot))}>Discard</button>
-        <button type="button" className="cfg-btn cfg-btn--primary" disabled={!dirty || saving || !nameOk} onClick={save}>{saving ? 'Saving…' : 'Save changes'}</button>
+        <button type="button" className="cfg-btn cfg-btn--primary" disabled={!dirty || importing || saving || !nameOk} onClick={save}>{saving ? 'Saving…' : 'Save changes'}</button>
       </div>
 
       <section className="cfg-section">
@@ -220,10 +260,10 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
 
 const SHAPE_ROWS = [PICKER_SHAPES.slice(0, 7), PICKER_SHAPES.slice(7)];
 
-function LookPicker({ shape, color, onShape, onColor }: { shape: AvatarShape; color: AvatarColor; onShape: (s: AvatarShape) => void; onColor: (c: AvatarColor) => void }) {
+function LookPicker({ shape, color, onShape, onColor }: { shape: AvatarShape; color: AvatarColor; onShape?: (s: AvatarShape) => void; onColor: (c: AvatarColor) => void }) {
   return (
     <div className="cfg-picker">
-      <div className="shape-grid" role="radiogroup" aria-label="Character shape">
+      {onShape && <div className="shape-grid" role="radiogroup" aria-label="Character shape">
         {SHAPE_ROWS.map((row, i) => (
           <div key={i} className="shape-grid__row">
             {row.map((s) => (
@@ -233,8 +273,8 @@ function LookPicker({ shape, color, onShape, onColor }: { shape: AvatarShape; co
             ))}
           </div>
         ))}
-      </div>
-      <div className="swatches" role="radiogroup" aria-label="Character color">
+      </div>}
+      <div className="swatches" role="radiogroup" aria-label="Accent color">
         <div className="swatches__row">
           {COLOR_ORDER.map((c) => (
             <button key={c} type="button" role="radio" aria-checked={color === c} aria-label={c} className="swatch-cell" onClick={() => onColor(c)}>

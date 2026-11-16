@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BotAvatar } from '../avatar/BotAvatar';
+import { BotAvatarFor } from '../avatar/BotAvatar';
 import { api } from '../lib/api';
 import { useStore } from '../store';
 import { TrafficLights } from './Sidebar';
@@ -24,7 +24,7 @@ export function SignIn() {
       <div className="signin__chrome"><TrafficLights /></div>
       <div className="signin__card">
         <div className="signin__hero">
-          <BotAvatar shape="blob" color="black" size={84} />
+          <BotAvatarFor bot={{ avatarShape: 'blob', avatarColor: 'black', name: 'GnoesisBots', isPrimary: true }} size={84} />
         </div>
         <h1 className="signin__title">GnoesisBots</h1>
         <p className="signin__sub">AI teammates with their own computers. Hand them a task and they get it done.</p>

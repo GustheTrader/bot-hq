@@ -17,6 +17,7 @@ export interface Bot {
   description: string;
   instructions: string;
   avatarShape: AvatarShape;
+  avatarImage?: string | null;
   avatarColor: AvatarColor;
   mode: 'personal' | 'teammate';
   isPrimary: boolean;
