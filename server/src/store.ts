@@ -22,6 +22,7 @@ export function toBot(r: any): Bot {
     description: r.description,
     instructions: r.instructions,
     avatarShape: r.avatar_shape,
+    avatarImage: r.avatar_image ?? null,
     avatarColor: r.avatar_color,
     mode: r.mode,
     isPrimary: !!r.is_primary,

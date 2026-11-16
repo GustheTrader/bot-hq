@@ -1,6 +1,7 @@
 import type { AvatarColor, AvatarShape, Bot } from '@shared/types';
 import { palette } from '../lib/colors';
 import { Icon } from '../components/Icon';
+import { useStore } from '../store';
 import { SHAPES, type ShapeDef } from './shapes.gen';
 
 /** Shapes without an exported SVG fall back to the closest silhouette we have. */
@@ -55,6 +56,37 @@ export function BotAvatar({ shape, color, size, star, ring, className, title }: 
   );
 }
 
-export function BotAvatarFor({ bot, size, star, className }: { bot: Pick<Bot, 'avatarShape' | 'avatarColor' | 'name'> & { isPrimary?: boolean }; size: number; star?: boolean; className?: string }) {
-  return <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} star={star} className={className} title={bot.name} />;
+export const PORTRAITS = ['Chief', 'Neon', 'Signal', 'Recon', 'Archive', 'Operations'];
+
+export function portraitSource(index: number) {
+  return `/portraits/${index}.webp`;
+}
+
+type PortraitBot = Pick<Bot, 'avatarShape' | 'avatarColor' | 'name' | 'avatarImage'> & Partial<Pick<Bot, 'id' | 'kind' | 'isPrimary'>>;
+
+export function BotAvatarFor({ bot, size, star, className }: { bot: PortraitBot; size: number; star?: boolean; className?: string }) {
+  const roster = useStore((state) => state.bots);
+  if (bot.kind === 'room') return <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} className={className} title={bot.name} />;
+  const index = roster.filter((member) => member.kind !== 'room' && !member.isPrimary)
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .findIndex((member) => member.id === bot.id);
+  const preset = bot.avatarImage?.startsWith('preset:') ? Number(bot.avatarImage.slice(7)) : null;
+  const source = preset === null ? bot.avatarImage ?? portraitSource(bot.isPrimary ? 0 : 1 + Math.max(index, 0) % 5) : portraitSource(preset);
+  return (
+    <span className={`bot-avatar bot-portrait ${bot.isPrimary ? 'bot-portrait--chief' : ''} ${className ?? ''}`} style={{ width: size, height: size }} title={bot.name}>
+      <img src={source} alt={bot.name} width={size} height={size} draggable={false} />
+      {star && <span className="bot-avatar__star"><Icon name="star" size={Math.round(size / 7)} color="#FFFFFF" /></span>}
+    </span>
+  );
+}
+
+export function PortraitPresets({ value, disabled, onSelect }: { value?: string | null; disabled?: boolean; onSelect: (value: string) => void }) {
+  return <div className="portrait-picker__presets" role="group" aria-label="Portraits">
+    {PORTRAITS.slice(1).map((name, index) => {
+      const option = `preset:${index + 1}`;
+      return <button key={name} type="button" aria-label={name} title={name} aria-pressed={value === option} disabled={disabled} onClick={() => onSelect(option)}>
+        <img src={portraitSource(index + 1)} alt="" width={48} height={48} />
+      </button>;
+    })}
+  </div>;
 }

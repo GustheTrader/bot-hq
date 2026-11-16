@@ -280,7 +280,7 @@ export function Transcript({ bot, rows, live, loaded }: Props) {
 function EmptyChat({ bot }: { bot: Bot }) {
   return (
     <div className="empty-chat">
-      <BotAvatarFor bot={bot} size={72} />
+      <BotAvatarFor bot={bot} size={bot.isPrimary ? 148 : 112} className="bot-portrait--welcome" />
       <div className="empty-chat__title">{bot.name}</div>
       <div className="empty-chat__sub">{bot.description || (bot.mode === 'teammate' ? 'A Bot for the whole team. Hand it a task and it will see it through.' : 'Your personal assistant. Hand it a task and it will see it through.')}</div>
     </div>

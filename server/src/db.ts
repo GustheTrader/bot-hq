@@ -144,6 +144,7 @@ function addColumn(table: string, col: string, ddl: string) {
   if (!cols.some((c) => c.name === col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${ddl}`);
 }
 addColumn('bots', 'voice', "TEXT NOT NULL DEFAULT 'luna'");
+addColumn('bots', 'avatar_image', 'TEXT');
 addColumn('bots', 'voice_speed', 'REAL NOT NULL DEFAULT 1');
 addColumn('bots', 'voice_language', "TEXT NOT NULL DEFAULT 'auto'");
 // Hermes engine: per-bot model choice, which engine runs the bot ('primary' = the existing agent,
