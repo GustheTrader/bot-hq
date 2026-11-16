@@ -128,9 +128,11 @@ Hindsight is the **semantic index**, not the system of record. Raw bytes stay wh
 
 ## 7. Blockers
 
-1. **Hindsight write path is dead.** `403 your subscription payment is past due` from Ollama Cloud, reached through `https://jeffgus--llm-endpoint-api.us-east.modal.run/v1`. The Modal endpoint is up; the upstream account is not. This is a billing fix, not code, and it blocks every ingest path. Until it is fixed, Phase 2 runs in chunk-only mode.
-2. **Hosted-service slots are full** (Basic cap 5). Bot HQ is supervisord-only, so `https://bot-hq-herb.zocomputer.io` 404s and the Zo browser cannot reach it. The data plane does not need a public hostname, but the UI does.
-3. **`COMPOSIO_API_KEY` shape** (`ak_…`) does not match Composio's project-key format. Verify before the cloud-mcp leg depends on it.
+_Status as of the 2026-11-16 audit. Two of the three are closed._
+
+1. ~~**Hindsight write path is dead.**~~ **CLOSED 2026-11-16.** The LLM provider moved off the past-due Ollama Cloud account to OpenRouter `openai/gpt-6-luna` (`/var/lib/hindsight/env.sh`), so fact extraction works again. Verified live: a multipart `POST /v1/default/banks/shared/files/retain` returns an `operation_id`, the operation completes, and `facts_committed: 1` with no 403. Bank `shared` is at 21 facts between the earlier manual writes and this probe. Phase 2 (ingest worker, per-bot banks, KB search) is unblocked. Note the move had a silent-failure mode: the old path 403'd on every retain without surfacing it, which is why the fact count sat at 9 for days.
+2. ~~**Hosted-service slots are full** (Basic cap 5).~~ **CLOSED.** Bot HQ is now a registered public hosted service (`svc__7DXrLTfPNY`, port 8797), and `https://bot-hq-herb.zocomputer.io/` returns 200 for both `/` and `/api/health` from outside. The Vercel frontend (`bot-hq-sandy.vercel.app` → aliases `bot-hq-jeffgus-gmailcoms-projects` / `bot-hq-git-main-…`) proxies `/api/*` here and passes `VITE_T3_WORKSPACE_URL=https://modal.taila95594.ts.net:8443/` (baked into the deployed bundle). The Zo browser can reach it.
+3. **`COMPOSIO_API_KEY` is the literal placeholder `ak_**TODO`.** Still open, and it is the only live blocker. `backend.composio.dev/api/v3.1` rejects it (401 `APIKey_InvalidAPIKey`), so Composio-backed sign-in and every connected app are dead until a real key is pasted into `.env`. The code path is correct (`x-api-key` header, `REST = …/api/v3.1`); only the value is wrong. This gates the `cloud-mcp` leg of the data plane and Composio OAuth sign-in.
 
 ## 8. Phases
 
@@ -177,3 +179,31 @@ Roots: `fs://workspace`, `fs://cloud`, `fs://pub`, `fs://library` (override with
 | latency | 422 ms p50 / 2.9 s p95 | mean 877 tokens to answer |
 
 The confidence signal is term coverage, not RRF score: on this set the answerable and unanswerable halves overlap on score (0.019–0.039 vs 0.016–0.032) but an unanswerable question misses its own query words. That is what `confidence: none` keys off. Known misses: `a02` (Bot HQ MCP endpoint — `ARCHITECTURE.md` ranked 4th) and `a08` (handyhub blog — the project `README.md` lost to `content/blog/README.md`). Both are ranking problems, not retrieval failures.
+
+## 11. Audit — 2026-11-16
+
+A full pass over the repo, the running service and the two supposed blockers. Result: the phase-0 surface is intact and both of the "hard" blockers are resolved; one new real blocker (Composio key) surfaced.
+
+**Verified working**
+
+| Check | Result |
+|---|---|
+| Server health | `GET http://127.0.0.1:8797/api/health` → `{"ok":true,"engine":"hermes"}` |
+| Public host | `https://bot-hq-herb.zocomputer.io/` → 200, `/api/health` → 200 (from outside the box) |
+| Data tools on `/mcp/primary` | `tools/list` returns `data_search`, `data_read`, `data_list`, `data_grep` alongside the 18 app tools |
+| Data-plane eval (20q) | top-1 0.50, top-3 0.80, quote 1.00, abstain 0.95, p50 277 ms, mean 872 tok — reproduces §10 |
+| Typecheck | `npm run typecheck` clean (server + web) |
+| Unit tests | `npm test -w server` → 8/8 |
+| Hindsight write | `POST …/files/retain` → completed, `facts_committed: 1` |
+| Code view URL | `https://modal.taila95594.ts.net:8443/` baked into the deployed Vercel bundle; Caddy → `127.0.0.1:3090` returns 200 on SNI |
+| T3 Caddy | listening on `:8443`, valid cert for `modal.taila95594.ts.net`, `auto_https off` |
+
+**Fixed in this audit**
+
+- **Screen-lease race (merged).** `codex/zo-six-bot-capacity` carried one unmerged commit, `5c28451 "Keep bot desktop leases exclusive"`, that main lacked: a `inScreenOrder()` promise-chain serializer so that "check reservations → provision a display → save the lease" cannot interleave across bots, plus a `first_lease` guard so two bots that land on the same screen do not both think they own it, and a `reserved` set in `local.createScreen` so a display is not double-allocated during provisioning. Cherry-picked onto `main` as `9e5b1e6`, merge `b4df7be`; pushed to `origin/main`; `feat/screen-lease-exclusive` pushed for reference. Typecheck clean, 8/8 tests, service rebuilt (`npm run build`) and restarted — the `no screen for <bot> yet` warnings that fired on every boot are gone after a clean restart.
+
+**Open**
+
+- **Composio key.** See §7.3. Needs a real `ak_…` project key in `.env`.
+- **Ranking misses** `a02` / `a08` from §10 are unchanged; both are coarse top-1 ranking, not retrieval gaps. Candidate fix: weight `docs/ARCHITECTURE.md` and project-root `README.md` higher in `CANON` (currently `ARCHITECTURE.md` matches none of the `CANON` patterns, so it gets no 1.35× boost).
+- **`docs/ARCHITECTURE.md` predates the data plane, the ACP harness layer and the Code/Work views** — it still describes the Orgo-era tool list. Doc debt, not a code bug.
