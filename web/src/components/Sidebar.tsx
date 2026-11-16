@@ -1,3 +1,4 @@
+import { CodeXml } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
@@ -50,8 +51,8 @@ export function Sidebar() {
   const bots = useStore((s) => s.bots);
   const live = useStore((s) => s.live);
   const storeSelectedBotId = useStore((s) => s.selectedBotId);
-  const inTasks = useConfigUI((s) => s.view === 'tasks');
-  const selectedBotId = inTasks ? null : storeSelectedBotId; // nothing highlighted while the Tasks view is open
+  const view = useConfigUI((s) => s.view);
+  const selectedBotId = view === 'chat' ? storeSelectedBotId : null;
   const user = useStore((s) => s.user);
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const set = useStore((s) => s.set);
@@ -87,6 +88,10 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar__scroll">
+        <button type="button" className={`sidebar-island${view === 'code' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('code')} title="Code" aria-pressed={view === 'code'}>
+          <span className="sidebar-island__icon"><CodeXml size={18} aria-hidden /></span>
+          <span className="sidebar-island__label">Code</span>
+        </button>
         <TasksIsland />
         {primary && (
           <div className="pinned">

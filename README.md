@@ -194,3 +194,11 @@ docs/               architecture; the Orgo and xAI/Composio guides predate the H
 Project code is available under the [MIT license](LICENSE). The bot artwork and some icons come from Grok Bot's design and remain the property of their owners, as do third-party app logos; the MIT license does not cover them. See [third-party notices](THIRD_PARTY_NOTICES.md).
 
 Continued from [grokbot-clone](https://github.com/nickvasilescu/grokbot-clone). Built with [Hermes Agent](https://github.com/NousResearch/hermes-agent), [Orgo](https://orgo.ai), [Composio](https://composio.dev), and [xAI](https://x.ai). This is an independent project, unaffiliated with xAI, Cursor/Anysphere or Nous Research.
+
+## Code and Work
+
+**Work** opens the existing Bot HQ task list. **Code** opens the T3 Code workspace, where T3 handles coding sessions and sign-in.
+
+Run T3 Code as a separate service on Zo and use an authenticated HTTPS workspace address reachable from the browser. Set `VITE_T3_WORKSPACE_URL` in the environment that builds the Bot HQ web app (Vercel for the hosted frontend). Use the workspace address without a query, fragment, or pairing code. Rebuild the frontend after setting it. Until configured, the Code view shows that the workspace is awaiting setup.
+
+See the [T3 Code project](https://github.com/pingdotgg/t3code) for installation and provider setup.
