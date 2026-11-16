@@ -9,6 +9,13 @@ export type AvatarColor =
   | 'black' | 'brown' | 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'violet' | 'magenta' | 'gray';
 
 export interface User { id: string; email: string; name: string; avatarUrl: string | null }
+/** A person on the team who does not sign in yet (mirrors whatsapp/handy-man style roster entries). */
+export interface Human {
+  id: string;
+  name: string;
+  email: string | null;
+  createdAt: number;
+}
 
 export interface Bot {
   id: string;
@@ -21,8 +28,10 @@ export interface Bot {
   avatarColor: AvatarColor;
   mode: 'personal' | 'teammate';
   isPrimary: boolean;
-  /** 'room' = group chat (members answer instead of the bot itself). */
-  kind?: 'agent' | 'room';
+  /** 'team' = a team channel (its members answer instead of the bot itself). */
+  kind?: 'agent' | 'team';
+  /** Team channels only: how many members are on the team. */
+  memberCount?: number;
   pinned: boolean;
   effort: 'low' | 'medium' | 'high' | 'xhigh';
   /** Voice chat settings: xAI voice id, speed multiplier (0.7–1.5), BCP-47 language or 'auto'. */
@@ -43,7 +52,40 @@ export interface Bot {
   createdAt: number;
 }
 
-/** A transcript row. `seq` orders rows; `updatedSeq` is a per-bot revision counter (rows are rewritten while streaming). */
+/** A transcript row. `seq` orders rows; `updatedSeq` is a per-bot revision counter (rows are rewritten while streaming). *//**
+ * A member of a team. `bot` members are Hermes agents with their own screen; `human` members
+ * are people on the team who read the team channel but have no agent of their own.
+ */
+export type TeamMember = BotMember | HumanMember;
+
+export interface BotMember {
+  kind: 'bot';
+  id: string;
+  name: string;
+  label: string;
+  role: TeamRole;
+  avatarShape?: AvatarShape;
+  avatarColor?: AvatarColor;
+  avatarImage?: string | null;
+}
+
+/** A person on a team. `human` is a teammate without a sign-in; `user` is the account owner. */
+export interface HumanMember {
+  kind: 'human' | 'user';
+  id: string;
+  name: string;
+  label: string;
+  role: TeamRole;
+}
+
+export type TeamRole = 'lead' | 'member';
+
+export interface TeamRosterResponse {
+  team: { id: string; name: string };
+  members: TeamMember[];
+}
+
+
 export interface Row {
   botId: string;
   generation: number;

@@ -122,3 +122,14 @@
 .group-pick__opt:hover { background: var(--color-bg-hover); }
 .group-pick__opt.is-active { background: var(--color-bg-active, var(--color-bg-hover)); }
 .group-pick__name { flex: 1; font-size: 13px; line-height: 18px; color: var(--color-ink); }
+
+/* new team */
+.section-label__hint { margin-left: 6px; font-weight: 400; color: var(--color-text-quaternary); }
+.team-people { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.team-people__row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: var(--color-bg-subtle, transparent); }
+.team-people__avatar { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--color-bg-hover); }
+.team-people__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.team-people__name { font-size: 13px; line-height: 18px; color: var(--color-ink); }
+.team-people__email { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+.team-people__add { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.team-people__add .text-input { flex: 1; min-width: 0; }

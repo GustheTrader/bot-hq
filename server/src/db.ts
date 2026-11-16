@@ -159,4 +159,46 @@ addColumn('bots', 'harness_model', 'TEXT');
 addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS humans (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  email TEXT,
+  created_at INTEGER NOT NULL
+);
+
+-- Membership for teams. A team is a bots row with kind='team'; members may be bots or humans.
+CREATE TABLE IF NOT EXISTS team_members (
+  team_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  member_kind TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'member',
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (team_id, member_kind, member_id)
+);
+CREATE INDEX IF NOT EXISTS team_members_member ON team_members(member_kind, member_id);
+`);
+
+// Legacy group chats were kind='room' with a JSON members list of bot ids. Promote them to
+// teams (with team_members rows) once, then leave 'room' behind. Idempotent: the UPDATE only
+// matches rows still marked 'room'.
+// A database created before teams existed has no kind/members columns yet; the legacy migration
+// below reads them, so add them here (initRooms does the same, idempotently).
+for (const col of ["kind TEXT NOT NULL DEFAULT 'agent'", 'members TEXT']) {
+  try { db.exec(`ALTER TABLE bots ADD COLUMN ${col}`); } catch { /* exists */ }
+}
+function migrateRoomsToTeams() {
+  const rooms = db.prepare("SELECT id, members, created_at FROM bots WHERE kind='room'").all() as any[];
+  if (!rooms.length) return;
+  const ins = db.prepare('INSERT OR IGNORE INTO team_members(team_id, member_kind, member_id, role, created_at) VALUES (?,?,?,?,?)');
+  for (const r of rooms) {
+    let ids: string[] = [];
+    try { ids = r.members ? JSON.parse(r.members) : []; } catch { ids = []; }
+    for (const id of ids) ins.run(r.id, 'bot', id, 'member', r.created_at ?? Date.now());
+  }
+  db.prepare("UPDATE bots SET kind='team' WHERE kind='room'").run();
+}
+migrateRoomsToTeams();
+
 export const now = () => Date.now();

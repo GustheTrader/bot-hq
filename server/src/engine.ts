@@ -356,7 +356,7 @@ export async function engineFor(botId: string): Promise<Engine> {
   if (!kind) {
     const b = botRow(botId);
     if (!b) throw new Error('bot not found');
-    if (b.kind === 'room') throw new Error('A group chat has no agent of its own.');
+    if (b.kind === 'team') throw new Error('A team channel has no agent of its own.');
     kind = assignEngine(botId);
   }
   if (kind === 'primary') return { kind, url: env.hermesUrl, key: primaryKey(), home: env.hermesHome };
@@ -433,7 +433,7 @@ export async function removeEngine(botId: string): Promise<void> {
 /** On server start: give older bots an engine, then bring the managed gateways up. */
 export function initEngines() {
   fs.mkdirSync(env.enginesDir, { recursive: true });
-  const bots = db.prepare("SELECT id, is_primary FROM bots WHERE engine IS NULL AND COALESCE(kind,'agent') <> 'room' AND COALESCE(hidden,0)=0 ORDER BY is_primary DESC, created_at ASC").all() as any[];
+  const bots = db.prepare("SELECT id, is_primary FROM bots WHERE engine IS NULL AND COALESCE(kind,'agent') <> 'team' AND COALESCE(hidden,0)=0 ORDER BY is_primary DESC, created_at ASC").all() as any[];
   for (const b of bots) assignEngine(b.id);
   for (const b of db.prepare("SELECT id FROM bots WHERE engine='managed'").all() as any[]) provisionEngine(b.id);
 }

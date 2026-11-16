@@ -35,7 +35,7 @@ function hashPick<T>(id: string, list: T[]): T {
 /** Thrown for things the user can fix; the message is shown to them. */
 class UserError extends Error {}
 
-const agentCount = () => (db.prepare("SELECT COUNT(*) n FROM bots WHERE COALESCE(kind,'agent')<>'room' AND COALESCE(hidden,0)=0").get() as any).n as number;
+const agentCount = () => (db.prepare("SELECT COUNT(*) n FROM bots WHERE COALESCE(kind,'agent')<>'team' AND COALESCE(hidden,0)=0").get() as any).n as number;
 
 function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; avatarImage?: string; mode?: string; isPrimary?: boolean }) {
   // Every bot needs a screen of its own on the one shared computer.
@@ -207,7 +207,7 @@ api.patch('/bots/:id', async (c) => {
   for (const [k, col] of Object.entries(cols)) {
     if (p[k] !== undefined) db.prepare(`UPDATE bots SET ${col}=?, updated_at=? WHERE id=?`).run(typeof p[k] === 'boolean' ? (p[k] ? 1 : 0) : p[k], now(), b.id);
   }
-  if (b.kind !== 'room') {
+  if (b.kind !== 'team') {
     if (['name', 'label', 'description'].some((k) => p[k] !== undefined)) syncPersona(b.id);
     // Its desktop carries its name and colour: dress the screen again, if it has one.
     const looks = ['name', 'label', 'avatarShape', 'avatarColor'].some((k) => p[k] !== undefined);
@@ -229,7 +229,7 @@ api.delete('/bots/:id', async (c) => {
     unscheduleRoutine(r.id);
     await deleteEventTrigger(r.id).catch(() => {});
   }
-  if (b.kind !== 'room') {
+  if (b.kind !== 'team') {
     await removeEngine(b.id).catch((e) => console.warn('[engine] remove failed', e?.message ?? e));
     await releaseScreen(b.id).catch((e) => console.warn('[computer] release failed', e?.message ?? e));
     await forgetBotFiles(b.id).catch((e) => console.warn('[computer] cleanup failed', e?.message ?? e));
@@ -273,7 +273,7 @@ api.post('/bots/:id/messages', async (c) => {
   if (!text?.trim()) return c.json({ error: 'empty' }, 400);
   const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text: text.trim() });
   // Group chats dispatch to their member Bots instead of running their own loop.
-  if (b.kind === 'room') dispatchRoomMessage(b.id, text.trim(), enqueue);
+  if (b.kind === 'team') dispatchRoomMessage(b.id, text.trim(), enqueue);
   // Any pending question card is answered by a free-text message.
   else enqueue(b.id, { type: 'user', text: text.trim() });
   return c.json({ row });

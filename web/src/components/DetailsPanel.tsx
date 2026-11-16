@@ -73,7 +73,7 @@ export function DetailsPanel() {
         </button>
       </div>
       <div className="details__scroll">
-        {bot.kind === 'room' ? (
+        {bot.kind === 'team' ? (
           <div className="details__identity">
             <BotAvatarFor bot={bot} size={64} />
             <div className="details__name" title={displayName(bot)}>{displayName(bot)}</div>
@@ -114,13 +114,13 @@ export function DetailsPanel() {
                 )}
               </div>
             </section>
-            {bot.kind === 'room' && (
+            {bot.kind === 'team' && (
               <section>
                 <div className="section-label">Members</div>
-                <MembersCard room={bot} />
+                <MembersCard team={bot} />
               </section>
             )}
-            {bot.kind !== 'room' && !hideSuggested && (
+            {bot.kind !== 'team' && !hideSuggested && (
               <section>
                 <div className="section-label section-label--row">
                   <span>Suggested</span>
@@ -135,7 +135,7 @@ export function DetailsPanel() {
                 </div>
               </section>
             )}
-            {bot.kind !== 'room' && (
+            {bot.kind !== 'team' && (
               <>
                 <section>
                   <div className="section-label">Engine</div>

@@ -11,7 +11,7 @@ const COLOR_ROWS = [COLOR_ORDER.slice(0, 6), COLOR_ORDER.slice(6)];
 
 export function CreateBotModal() {
   const setModal = useStore((s) => s.setModal);
-  const peerCount = useStore((s) => s.bots.filter((bot) => bot.kind !== 'room' && !bot.isPrimary).length);
+  const peerCount = useStore((s) => s.bots.filter((bot) => bot.kind !== 'team' && !bot.isPrimary).length);
   const [name, setName] = useState('');
   const [avatarImage, setAvatarImage] = useState(() => `preset:${1 + peerCount % 5}`);
   const [color, setColor] = useState<AvatarColor>('orange');

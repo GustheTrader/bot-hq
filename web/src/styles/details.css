@@ -60,15 +60,21 @@
 
 .mini-select { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 2px 4px 2px 6px; border-radius: 8px; border: 1px solid var(--color-border-tertiary); font-size: 13px; line-height: 18px; letter-spacing: -0.08px; color: var(--color-ink); }
 
-/* group chat members */
-.members__row { gap: 8px; height: 40px; }
+/* team members */
+.members__row { gap: 8px; min-height: 40px; }
 .members__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.members__name { font-size: 13px; line-height: 18px; color: var(--color-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.members__name { display: flex; align-items: center; gap: 6px; font-size: 13px; line-height: 18px; color: var(--color-ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .members__label { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
 .members__remove { width: 22px; height: 22px; border-radius: 6px; }
 .members__remove:disabled { opacity: 0.3; cursor: default; }
+.members__lead { width: 22px; height: 22px; border-radius: 6px; opacity: 0; }
+.members__row:hover .members__lead { opacity: 1; }
+.members__person { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%; background: var(--color-bg-hover); color: var(--color-icon-secondary); }
+.members__badge { padding: 0 5px; border-radius: var(--radius-full); background: var(--color-bg-hover); font-size: 10px; line-height: 15px; letter-spacing: 0.2px; color: var(--color-text-tertiary); text-transform: uppercase; }
 .members__dot { width: 24px; height: 24px; border-radius: 50%; background: var(--color-bg-hover); }
 .members__add { border-top: 0.5px solid var(--color-border-tertiary); margin-top: 4px; padding-top: 4px; }
+.members__add--human { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; }
+.members__add-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .members__hint { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); padding: 6px 8px 2px; }
 
 /* engine: provider, model, sign-in */

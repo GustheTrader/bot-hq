@@ -302,7 +302,7 @@ const TOOLBOX = new Set(['tool_search', 'tool_describe']);
 
 async function runTurn(botId: string, trigger: Trigger) {
   const bot = getBotRow(botId);
-  if (!bot || bot.kind === 'room') return;
+  if (!bot || bot.kind === 'team') return;
   const userId: string = bot.user_id;
   const ctrl = new AbortController();
   aborts.set(botId, ctrl);

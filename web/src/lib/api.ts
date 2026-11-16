@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, LiveState, Routine, Row, Toolkit, User } from '@shared/types';
+import type { Bot, ComputerState, LiveState, Routine, Row, TeamMember, Toolkit, User } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -22,7 +22,9 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export interface AppsResponse { apps: Toolkit[]; connected: string[]; categories: string[]; total: number }
 
-export interface RoomMember { id: string; name: string; label: string; avatarShape: string; avatarColor: string }
+
+export interface Human { id: string; name: string; email: string | null; createdAt: number }
+export interface TeamsResponse { teams: { id: string; name: string; label: string; description: string; members: TeamMember[] }[]; humans: Human[] }
 
 export const api = {
   me: () => req<{ user: User | null; devLogin: boolean }>('GET', '/auth/me'),
@@ -52,9 +54,17 @@ export const api = {
   connect: (slug: string, botId?: string, seq?: number) => req<{ redirectUrl: string }>('POST', `/apps/${slug}/connect`, { botId, seq }),
   disconnect: (slug: string) => req<{ ok: true }>('DELETE', `/apps/${slug}`),
 
-  roomMembers: (id: string) => req<{ members: RoomMember[] }>('GET', `/rooms/${id}/members`),
-  setRoomMembers: (id: string, botIds: string[]) => req<{ ok: true; members: string[] }>('PUT', `/rooms/${id}/members`, { botIds }),
-  createRoom: (name: string, botIds: string[]) => req<{ id: string }>('POST', '/rooms', { name, botIds }),
+  teamMembers: (id: string) => req<{ members: TeamMember[] }>('GET', `/rooms/${id}/members`),
+  setTeamRoster: (id: string, botIds: string[], humanIds: string[]) => req<{ ok: true; members: TeamMember[] }>('PUT', `/rooms/${id}/members`, { botIds, humanIds }),
+  setTeamLead: (id: string, memberId: string | null) => req<{ ok: true; members: TeamMember[] }>('POST', `/rooms/${id}/lead`, { memberId }),
+  createTeam: (name: string, botIds: string[], humanIds: string[] = [], newPeople: { name: string; email?: string }[] = []) =>
+    req<{ id: string }>('POST', '/rooms', { name, botIds, humanIds, newPeople }),
+  /** Create a team and its people in one go. People may be new (by name) or existing (by id). */
+  createTeamWithPeople: (name: string, botIds: string[], people: { id?: string; name: string; email?: string }[]) =>
+    req<{ id: string }>('POST', '/rooms', { name, botIds, people }),
+  teams: () => req<TeamsResponse>('GET', '/rooms'),
+  addHuman: (name: string, email?: string) => req<{ id: string }>('POST', '/rooms/humans', { name, email }),
+  removeHuman: (id: string) => req<{ ok: true }>('DELETE', `/rooms/humans/${id}`),
 };
 
 /** Open a Composio redirect in a centered popup. */

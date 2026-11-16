@@ -17,10 +17,10 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
   const owner = user?.name ?? 'the user';
   const primaryEngine = bot.engine === 'primary';
 
-  const team = (db.prepare("SELECT name, label, is_primary FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'room' ORDER BY created_at").all(userId, botId) as any[])
+  const team = (db.prepare("SELECT name, label, is_primary FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'team' ORDER BY created_at").all(userId, botId) as any[])
     .map((b) => `- ${b.name}${b.label ? ` (${b.label})` : ''}${b.is_primary ? ' [main point of contact]' : ''}`)
     .join('\n');
-  const groups = (db.prepare("SELECT name FROM bots WHERE user_id=? AND kind='room' AND members LIKE ? ORDER BY created_at").all(userId, `%${botId}%`) as any[]).map((g) => g.name).join(', ');
+  const groups = (db.prepare("SELECT name FROM bots WHERE user_id=? AND kind='team' AND id IN (SELECT team_id FROM team_members WHERE member_kind='bot' AND member_id=?) ORDER BY created_at").all(userId, botId) as any[]).map((g) => g.name).join(', ');
   const skills = (db.prepare('SELECT name, body FROM skills WHERE bot_id=? ORDER BY created_at').all(botId) as any[]).map((s) => `### ${s.name}\n${s.body}`).join('\n\n');
   const routines = listRoutines(botId).map((r) => `- ${r.name} (${r.id}): ${r.enabled ? r.description : 'paused'}; ${r.prompt.slice(0, 120)}`).join('\n');
   let apps = '';

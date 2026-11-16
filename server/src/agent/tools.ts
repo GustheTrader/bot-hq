@@ -330,7 +330,7 @@ export const TOOLS: ToolDef[] = [
       const target = botByName(ctx.userId, a.bot_name);
       if (!target) return { output: `No bot named "${a.bot_name}". Team: ${(db.prepare('SELECT name FROM bots WHERE user_id=?').all(ctx.userId) as any[]).map((b) => b.name).join(', ')}` };
       if (target.id === ctx.botId) return { output: 'That is you.' };
-      if (target.kind === 'room') return { output: `"${target.name}" is a group chat; use post_to_group instead.` };
+      if (target.kind === 'team') return { output: `"${target.name}" is a team channel; use post_to_group instead.` };
       if (ctx.depth >= 3) return { output: 'Too many hops between bots; answer the user directly instead.' };
       ctx.enqueueBotMessage(ctx.botId, target.id, String(a.message), ctx.depth + 1);
       return { output: `Sent to ${target.name}. Their reply will come back to you as a message.`, summary: `Messaged ${target.name}` };
@@ -347,12 +347,12 @@ export const TOOLS: ToolDef[] = [
       const missing: string[] = [];
       for (const n of (a.bot_names ?? []) as string[]) {
         const b = botByName(ctx.userId, n);
-        if (b && b.kind !== 'room') ids.push(b.id); else missing.push(n);
+        if (b && b.kind !== 'team') ids.push(b.id); else missing.push(n);
       }
-      if (ids.length < 2) return { output: `A group needs at least 2 Bots. Not found: ${missing.join(', ') || 'none'}.` };
+      if (ids.length < 2) return { output: `A team needs at least 2 Bots. Not found: ${missing.join(', ') || 'none'}.` };
       const id = createRoom(ctx.userId, String(a.name), [...new Set(ids)]);
-      appendRow(id, 'event', { type: 'event', event: 'bot-message', text: `Group created with ${(a.bot_names as string[]).filter((n) => !missing.includes(n)).join(', ')}` });
-      return { output: JSON.stringify({ ok: true, group_id: id, missing }), summary: `Created group ${a.name}` };
+      appendRow(id, 'event', { type: 'event', event: 'bot-message', text: `Team created with ${(a.bot_names as string[]).filter((n) => !missing.includes(n)).join(', ')}` });
+      return { output: JSON.stringify({ ok: true, group_id: id, missing }), summary: `Created team ${a.name}` };
     },
   },
   {
@@ -363,7 +363,7 @@ export const TOOLS: ToolDef[] = [
     label: 'Posting to the group',
     impl: async (a, ctx) => {
       const out = postToRoom(ctx.botId, String(a.group_name), String(a.text));
-      return { output: out, summary: `Posted to ${a.group_name}`, endTurn: out === 'Posted to the group.' };
+      return { output: out, summary: `Posted to ${a.group_name}`, endTurn: out === 'Posted to the team.' };
     },
   },
   {

@@ -66,8 +66,8 @@ type PortraitBot = Pick<Bot, 'avatarShape' | 'avatarColor' | 'name' | 'avatarIma
 
 export function BotAvatarFor({ bot, size, star, className }: { bot: PortraitBot; size: number; star?: boolean; className?: string }) {
   const roster = useStore((state) => state.bots);
-  if (bot.kind === 'room') return <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} className={className} title={bot.name} />;
-  const index = roster.filter((member) => member.kind !== 'room' && !member.isPrimary)
+  if (bot.kind === 'team') return <BotAvatar shape={bot.avatarShape} color={bot.avatarColor} size={size} className={className} title={bot.name} />;
+  const index = roster.filter((member) => member.kind !== 'team' && !member.isPrimary)
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
     .findIndex((member) => member.id === bot.id);
   const preset = bot.avatarImage?.startsWith('preset:') ? Number(bot.avatarImage.slice(7)) : null;

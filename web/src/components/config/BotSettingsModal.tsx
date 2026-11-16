@@ -159,7 +159,7 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
             </button>
           </div>
         </div>
-        {picker && (bot.kind === 'room'
+        {picker && (bot.kind === 'team'
           ? <LookPicker shape={draft.avatarShape} color={draft.avatarColor} onShape={(s) => put('avatarShape', s)} onColor={(c) => put('avatarColor', c)} />
           : <div className="portrait-picker">
               <PortraitPresets value={draft.avatarImage} disabled={importing || saving} onSelect={(value) => put('avatarImage', value)} />
