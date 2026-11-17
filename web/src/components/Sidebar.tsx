@@ -1,4 +1,4 @@
-import { Briefcase, CodeXml, Users } from 'lucide-react';
+import { Briefcase, CodeXml, LayoutDashboard, Users } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
@@ -100,6 +100,10 @@ export function Sidebar() {
         <button type="button" className={`sidebar-island${view === 'revopt' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('revopt')} title="RevOpt Admin" aria-pressed={view === 'revopt'}>
           <span className="sidebar-island__icon"><Briefcase size={18} aria-hidden /></span>
           <span className="sidebar-island__label">RevOpt Admin</span>
+        </button>
+        <button type="button" className={`sidebar-island${view === 'macro' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('macro')} title="Macro" aria-pressed={view === 'macro'}>
+          <span className="sidebar-island__icon"><LayoutDashboard size={18} aria-hidden /></span>
+          <span className="sidebar-island__label">Macro</span>
         </button>
         {primary && (
           <div className="pinned">
