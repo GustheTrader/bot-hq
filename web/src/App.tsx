@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { startEvents } from './lib/events';
 import { useStore } from './store';
 import { CodeView } from './components/CodeView';
+import { MacroView } from './components/MacroView';
 import { ChatView } from './components/ChatView';
 import { ComputerViewer } from './components/ComputerViewer';
 import { DetailsPanel } from './components/DetailsPanel';
@@ -59,7 +60,7 @@ function Shell() {
   return (
     <div className={`app${collapsed ? ' is-sidebar-collapsed' : ''}${detailsOpen && hasBot && view === 'chat' ? ' has-details' : ''}`}>
       <Sidebar />
-      {view === 'code' ? <CodeView /> : view === 'tasks' ? <TasksView /> : view === 'teams' ? <TeamsView /> : <ChatView />}
+      {view === 'code' ? <CodeView /> : view === 'tasks' ? <TasksView /> : view === 'teams' ? <TeamsView /> : view === 'macro' ? <MacroView /> : <ChatView />}
       {detailsOpen && hasBot && view === 'chat' && <DetailsPanel />}
       {modal === 'create' && <CreateBotModal />}
       {modal === 'group' && <CreateGroupModal />}
