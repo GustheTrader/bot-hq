@@ -98,6 +98,47 @@ export interface TeamRosterResponse {
   members: TeamMember[];
   brief: TeamBrief;
 }
+/**
+ * RevOpt Admin: revenue-operations tasks owned by a team. The catalog mixes two kinds of work
+ * and a person on one screen decides what to run.
+ *
+ * - `email` — an inbox-action task (triage, reply, follow-up, sequence step).
+ * - `crm` — a pipeline-action task (enrich, advance stage, log activity, open a deal).
+ * - `other` — anything that is not mail or pipeline (a report, an ops chore).
+ */
+export type RevOptKind = 'email' | 'crm' | 'other';
+export type RevOptStatus = 'todo' | 'running' | 'review' | 'done' | 'blocked';
+export type RevOptPriority = 'low' | 'normal' | 'high' | 'urgent';
+
+export interface RevOptTask {
+  id: string;
+  teamId: string;
+  teamName: string;
+  botId: string | null;
+  botName: string | null;
+  kind: RevOptKind;
+  status: RevOptStatus;
+  priority: RevOptPriority;
+  title: string;
+  detail: string;
+  /** The counterparty the task acts on: an email address, a domain, or a CRM record id. */
+  target: string;
+  payload: Record<string, unknown>;
+  createdAt: number;
+  updatedAt: number;
+  dueAt: number | null;
+  /** The transcript row this task dispatched, if any. */
+  rowSeq: number | null;
+}
+
+export interface RevOptSummary {
+  total: number;
+  byStatus: Record<RevOptStatus, number>;
+  byKind: Record<RevOptKind, number>;
+  /** Tasks that are `running` or in `review`, newest first. */
+  active: RevOptTask[];
+}
+
 
 
 export interface Row {

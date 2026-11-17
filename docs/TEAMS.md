@@ -85,6 +85,13 @@ room migration, brief round-trip/trim/clear, brief in every responder prompt, ob
 volunteers but runs when @mentioned, and lead promotion (which demotes the old lead and refuses an
 observer). Run with `npm test -w server`.
 
+## Related: RevOpt Admin
+
+A team is the routing target for the revenue-operations console (`docs/REVOPT.md`). A RevOpt
+task belongs to a team and **Dispatch** posts it into that team's channel as a user message,
+then starts the lead — the same dispatch path as a typed message, so the roster rules above
+apply unchanged.
+
 ## Still open
 
 - **Slice 3:** the **Macro sub-app** (Docker on the Zen laptop, `macro-desktop-web` on

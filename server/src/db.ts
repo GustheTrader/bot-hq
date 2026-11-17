@@ -160,7 +160,7 @@ addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');
 // A team's standing brief: prepended to every member's context on each turn.
 addColumn('bots', 'brief', 'TEXT');
-addColumn('bots', 'brief_updated_at', 'INTEGER');addColumn('bots', 'brief_updated_at', 'INTEGER');
+addColumn('bots', 'brief_updated_at', 'INTEGER');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS humans (
@@ -185,6 +185,37 @@ CREATE TABLE IF NOT EXISTS team_members (
 );
 CREATE INDEX IF NOT EXISTS team_members_member ON team_members(member_kind, member_id);
 `);
+// RevOpt Admin: the revenue-operations console. A task is owned by a team, mixes a kind of
+// work (email | crm | other) with a status a person triages, and carries an arbitrary payload
+// (subject, threadId, dealStage, amountCents, ...). Kept apart from `tasks` (which belongs to
+// a single bot) because a RevOpt task is dispatched to a whole team channel.
+db.exec(`
+CREATE TABLE IF NOT EXISTS revopt_tasks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  team_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+  -- 'email' | 'crm' | 'other'
+  kind TEXT NOT NULL DEFAULT 'email',
+  title TEXT NOT NULL,
+  -- Free-text instruction the team reads; the task's brief.
+  detail TEXT NOT NULL DEFAULT '',
+  -- Who this touches: an email address, a domain, a person, a CRM record id.
+  target TEXT NOT NULL DEFAULT '',
+  -- 'todo' | 'running' | 'review' | 'done' | 'blocked'
+  status TEXT NOT NULL DEFAULT 'todo',
+  -- 'low' | 'normal' | 'high' | 'urgent'
+  priority TEXT NOT NULL DEFAULT 'normal',
+  payload TEXT NOT NULL DEFAULT '{}',
+  -- The team-channel row this task dispatched, so the console can jump to the work.
+  row_seq INTEGER,
+  due_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS revopt_tasks_team ON revopt_tasks(team_id, status);
+CREATE INDEX IF NOT EXISTS revopt_tasks_user ON revopt_tasks(user_id, created_at);
+`);
+
 
 // Legacy group chats were kind='room' with a JSON members list of bot ids. Promote them to
 // teams (with team_members rows) once, then leave 'room' behind. Idempotent: the UPDATE only

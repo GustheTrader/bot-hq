@@ -74,6 +74,7 @@ export const env = {
   primaryCdpUrl: process.env.PRIMARY_CDP_URL ?? '',
   /** Bot and screen capacity. Orgo limits a Linux computer to four screens. */
   maxBots: computerProvider === 'local' ? configuredMaxBots : Math.min(configuredMaxBots, 4),
-  /** Comma-separated emails allowed to sign in; empty = anyone who can reach the app. */
+  /** Comma-separated emails allowed to sign in; empty = anyone who can reach the app. */  /** RevOpt Admin: the Macro desktop frontend to embed beside the task catalog, if it is reachable. */
+  macroTeamUrl: process.env.MACRO_TEAM_URL ?? process.env.VITE_MACRO_TEAM_URL ?? '',
   allowedEmails: (process.env.ALLOWED_EMAILS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
 };

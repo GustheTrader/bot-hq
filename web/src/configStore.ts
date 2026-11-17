@@ -25,7 +25,7 @@ export type AppSection = 'general' | 'computer' | 'subscriptions' | 'wiki' | 'pe
 interface ConfigUI {
   botSettings: { botId: string; tab: BotSettingsTab } | null;
   appSettings: AppSection | null;
-  view: 'chat' | 'tasks' | 'teams' | 'code' | 'macro';
+  view: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro';
   theme: Theme;
   palette: Palette;
   /** Bumped by server events (tasks, memories) so open views refetch. Keys: 'tasks', 'memories:<botId>'. */
@@ -34,7 +34,7 @@ interface ConfigUI {
   closeBotSettings(): void;
   openAppSettings(section?: AppSection): void;
   closeAppSettings(): void;
-  setView(v: 'chat' | 'tasks' | 'teams' | 'code' | 'macro'): void;
+  setView(v: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro'): void;
   setTheme(t: Theme): void;
   setPalette(p: Palette): void;
   bump(key: string): void;

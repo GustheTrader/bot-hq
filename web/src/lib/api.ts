@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, LiveState, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';
+import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -26,6 +26,8 @@ export interface AppsResponse { apps: Toolkit[]; connected: string[]; categories
 export interface Human { id: string; name: string; email: string | null; createdAt: number }
 export interface TeamsResponse { teams: { id: string; name: string; label: string; description: string; members: TeamMember[]; brief: TeamBrief }[]; humans: Human[] }
 
+export interface RevOptTeam { id: string; name: string; label: string; members: number; counts: Record<RevOptStatus, number>; total: number }
+export interface RevOptConfig { teams: RevOptTeam[]; kinds: RevOptKind[]; statuses: RevOptStatus[]; priorities: RevOptPriority[]; macroUrl: string | null }
 export const api = {
   me: () => req<{ user: User | null; devLogin: boolean }>('GET', '/auth/me'),
   devLogin: (email: string, name?: string) => req<{ ok: true }>('POST', '/auth/dev', { email, name }),
@@ -69,6 +71,19 @@ export const api = {
     req<{ ok: true; members: TeamMember[] }>('POST', `/rooms/${id}/role`, { kind, id: memberId, role }),
   addHuman: (name: string, email?: string) => req<{ id: string }>('POST', '/rooms/humans', { name, email }),
   removeHuman: (id: string) => req<{ ok: true }>('DELETE', `/rooms/humans/${id}`),
+  revoptConfig: () => req<RevOptConfig>('GET', '/revopt/summary'),
+  revoptTasks: (q: { team?: string; status?: string; kind?: string } = {}) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v) p.set(k, v);
+    const s = p.toString();
+    return req<{ tasks: RevOptTask[] }>('GET', `/revopt/tasks${s ? `?${s}` : ''}`);
+  },
+  createRevoptTask: (t: { teamId: string; kind?: RevOptKind; title: string; detail?: string; target?: string; priority?: RevOptPriority; payload?: Record<string, unknown>; dueAt?: number | null }) =>
+    req<{ id: string }>('POST', '/revopt/tasks', t),
+  updateRevoptTask: (id: string, patch: { status?: RevOptStatus; priority?: RevOptPriority; title?: string; detail?: string; target?: string; payload?: Record<string, unknown> }) =>
+    req<{ ok: true; task: RevOptTask }>('PATCH', `/revopt/tasks/${id}`, patch),
+  deleteRevoptTask: (id: string) => req<{ ok: true }>('DELETE', `/revopt/tasks/${id}`),
+  dispatchRevoptTask: (id: string) => req<{ ok: true; prompt: string; teamId: string }>('POST', `/revopt/tasks/${id}/dispatch`),
 };
 
 /** Open a Composio redirect in a centered popup. */
