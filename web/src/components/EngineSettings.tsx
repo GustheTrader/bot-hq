@@ -345,7 +345,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
           {busy === 'signin' ? 'Opening sign-in…' : signInTo ? `Sign in to ${signInTo.name}…` : 'Sign in to a subscription…'}
         </button>
       )}
-      {harness === 'hermes' && selected?.id === 'anthropic' && !claudeUrl && (
+      {(harness === 'claude-code' || (harness === 'hermes' && selected?.id === 'anthropic')) && !claudeUrl && (
         <button type="button" className="panel-row panel-row--action engine__signin" onClick={claudeStart} disabled={busy === 'claude'}>
           <Icon name="monitor" size={14} opacity={0.56} />
           {busy === 'claude' ? 'Starting…' : 'Sign in with a Claude subscription here…'}
@@ -353,7 +353,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
       )}
       {claudeUrl && (
         <div className="engine__notice">
-          <span>1. <a href={claudeUrl} target="_blank" rel="noopener noreferrer">Open Claude and approve</a>. 2. Paste the code it shows here.</span>
+          <span>1. <a href={claudeUrl} target="_blank" rel="noopener noreferrer">Open Claude and approve</a>. 2. Paste the whole code, including the # in the middle. One sign-in covers Claude Code and Hermes.</span>
           <input
             className="engine__model" aria-label="Code from Claude" value={claudeCode} spellCheck={false} autoComplete="off" placeholder="Code from Claude"
             onChange={(e) => setClaudeCode(e.target.value)}

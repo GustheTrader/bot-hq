@@ -210,7 +210,8 @@ configApi.post('/bots/:id/engine/login', async (c) => {
 
 /**
  * Claude subscription sign-in from the web app itself: the first call returns the link to open, the
- * second takes the code that page shows. For when the bot's screen is not at hand (see engine-login.ts).
+ * second takes the code that page shows. Claude Code's login is adopted by Hermes, so one sign-in
+ * covers both harnesses (see engine-login.ts).
  */
 configApi.post('/bots/:id/engine/claude-login', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
