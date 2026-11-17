@@ -1,0 +1,35 @@
+/* Teams view: one roster mixing Bots (agents) and people. */
+.teams-view { display: flex; flex-direction: column; min-width: 0; }
+.teams-view__header { flex-shrink: 0; padding: 18px 24px 12px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+.teams-view__title { font-size: 20px; font-weight: 600; line-height: 26px; letter-spacing: -0.2px; color: var(--color-ink); }
+.teams-view__sub { margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--color-text-tertiary); }
+.teams-view__scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.teams-view__inner { max-width: 720px; margin: 0 auto; padding: 16px 24px 48px; }
+
+.teams-panel { margin-bottom: 20px; }
+.teams-panel--new { padding: 12px; border: 0.5px solid var(--color-border-tertiary); border-radius: 12px; background: var(--color-bg-subtle, transparent); }
+.teams-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.teams-panel__name { font-size: 15px; font-weight: 600; line-height: 20px; color: var(--color-ink); }
+
+.teams-new { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.teams-new__empty { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+.teams-new__pick { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.teams-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; border-radius: 999px; border: 0.5px solid var(--color-border-secondary); font-size: 13px; line-height: 18px; color: var(--color-ink); }
+.teams-chip:hover { background: var(--color-bg-hover); }
+.teams-chip.is-on { border-color: var(--color-border-primary, var(--color-ink)); background: var(--color-bg-active, var(--color-bg-hover)); }
+
+.teams-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.teams-tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; border: 0.5px solid transparent; font-size: 13px; line-height: 18px; color: var(--color-text-secondary); }
+.teams-tab:hover { background: var(--color-bg-hover); }
+.teams-tab.is-active { border-color: var(--color-border-secondary); background: var(--color-bg-active, var(--color-bg-hover)); color: var(--color-ink); }
+.teams-tab__count { padding: 0 5px; border-radius: 999px; background: var(--color-bg-hover); font-size: 11px; line-height: 16px; color: var(--color-text-tertiary); }
+
+.teams-known { margin-top: 10px; }
+
+/* People rows reuse .members__row from details.css; the person dot stands in for a portrait. */
+.members__person { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%; background: var(--color-bg-hover); color: var(--color-text-secondary); }
+.members__badge { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--color-bg-hover); font-size: 11px; line-height: 16px; letter-spacing: 0.2px; color: var(--color-text-tertiary); text-transform: none; }
+
+.team-people__add { display: flex; gap: 6px; padding: 8px 8px 4px; }
+.team-people__add .text-input { flex: 1; min-width: 0; }
