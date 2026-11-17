@@ -1,50 +1,51 @@
-# Bot HQ — slice 3 (Macro Team sub-app): status + decision needed
+# Bot HQ — slice 3 (Macro Team sub-app): RESOLVED
 
-Date: 2026-11-17
+Date: 2026-11-17 (updated after the Zen frontend finished building)
 
-## What I verified this pass
+## Outcome
 
-- Slices 1–2 are **shipped and green**: `npm run typecheck` 0 errors, `npm test -w server` 18/18 pass,
-  working tree clean, `HEAD = 2ba7745` pushed to `origin/main`.
-- Live service is healthy: `http://127.0.0.1:8797/api/health` → `{"ok":true,"engine":"hermes"}`.
-- Teams API is mounted at `/api/rooms` (list, create, members GET/PUT, lead, brief GET/PUT, role, humans).
-  Reference: `docs/TEAMS.md`.
+The Zen Macro frontend **serves** as of 2026-11-17: `macro-desktop-web-build`
+(`127.0.0.1:3018` on Zen) answers a real HTTP 200 with the "Macro AI Workspace" HTML. The
+earlier mid-rebuild blocker is gone.
 
-## Slice 3 scope (from `docs/TEAMS.md` "Still open")
+It is now wired into Bot HQ end to end (option **(c)** from the decision list below):
 
-Surface the **Macro** sub-app under the **Team** label: Docker stack on the Zen laptop,
-`macro-desktop-web` on `127.0.0.1:3017`. Iframe vs. bot-tool is undecided.
+```
+Zen 127.0.0.1:3018  (Macro Vite dev server)
+   ▲  Zen reverse SSH tunnel: ssh -R 3020:127.0.0.1:3018  (scheduled task `macro-sshtun`)
+   │
+modal 127.0.0.1:3020
+   ▲  scripts/macro-gateway.ts  (process service `macro-gateway`, :8801) — rewrites Host, passes HMR ws
+   │
+Caddy `macro-workspace-tls`  (/var/lib/caddy-macro) — TLS on :8444 with this box's tailscale cert
+   │
+https://modal.taila95594.ts.net:8444/   (= MACRO_TEAM_URL in .env)
+```
 
-## Blocker found on Zen (real, not theoretical)
+Verified from this box: `curl https://modal.taila95594.ts.net:8444/` → 200, `content-type:
+text/html`, ~5.5 KB body. The RevOpt console's Macro panel points at exactly that URL.
 
-`macro-desktop-web` (3017) and `macro-desktop-web-build` (3018) are **Up** but **not serving** —
-TCP connects, HTTP closes the connection. `docker logs macro-desktop-web` shows the container is
-mid-**nix rebuild of the Rust toolchain** (`rust-std 1.94.0`, `rustc 1.94.0`, llvm/clang 21.1.8,
-playwright, cargo-lambda). It has been building for hours and will keep re-building because the
-image is a from-source dev image (`Dockerfile.dev`), not a prebuilt runtime.
+## Residual caveat
 
-Also: `docker ps` shows **no Macro backend/DB** (postgres/redis/kafka not up). Only the frontend
-containers exist. Ports 5432/6379 are already held by `honcho-quanta-core`.
+The panel browser-embeds the tailnet URL. Tailnet hosts reach it; off-tailnet browsers do not
+resolve `modal.taila95594.ts.net`. To render off-tailnet, front it through a Zo hosted service or
+bind Caddy to a Zo-proxied port instead — a networking choice, not a Bot HQ code change.
 
-## Decision needed before building
+## What shipped
 
-1. **Which Macro endpoint does the Team sub-app point at?**
-   - (a) Local compose stack on Zen — needs the full build to finish + backend/db up; heavy, and
-     port-conflicts with honcho-quanta-core.
-   - (b) Hosted `macro.com` / `*-dev` services, frontend-only — light, no docker, but requires a
-     Macro account/session and outbound access from the Zen browser.
-   - (c) **Point Bot HQ at the desktop frontend once it serves** (`3017`), embedded under Team.
-2. **Iframe vs. bot tool.** Iframe is fastest if the Zen frontend serves on a reachable URL; a bot
-   tool is needed if the app is only reachable inside the Zen desktop and must be driven by a Bot.
+- `scripts/macro-gateway.ts` — the Host-rewriting reverse gateway.
+- Zen scheduled task `macro-sshtun` — keeps the reverse tunnel up (auto-restart).
+- Zo process services `macro-workspace-tls` (Caddy) and `macro-gateway` (bun).
+- `.env`: `MACRO_TEAM_URL=https://modal.taila95594.ts.net:8444/`.
 
-## Recommendation
+## Superseded (original blocker, kept for history)
 
-Don't build the embed against a container that isn't serving. Two concrete unblocks, pick one:
+`macro-desktop-web` (3017) and `macro-desktop-web-build` (3018) were Up but not serving — TCP
+connected, HTTP closed the connection — while the container ran a nix rebuild of the Rust
+toolchain. That build completed and the frontend now serves.
 
-- **Fast path:** get the Zen Macro frontend actually answering on 3017 (prove with a real 200 +
-  HTML body), then embed it under the Team label behind a `VITE_MACRO_TEAM_URL` build constant
-  (mirrors the existing `VITE_T3_WORKSPACE_URL` pattern, which is already a build-time constant).
-- **Heavy path:** stand up the Macro backend (postgres/redis/kafka on free ports, e.g. 55432/56379)
-  so the local stack is functional, then embed.
+### Original decision list (option (c) was chosen)
 
-Until the Zen frontend serves a real HTTP 200, slice 3 is an infra task on Zen, not a Bot HQ code task.
+1. (a) Local compose stack on Zen; (b) hosted macro.com; (c) **point Bot HQ at the desktop
+   frontend once it serves (3017/3018), embedded under Team** — chosen.
+2. **Iframe vs. bot tool** — iframe, since the Zen frontend serves on a reachable (tailnet) URL.

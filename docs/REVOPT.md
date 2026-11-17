@@ -79,10 +79,20 @@ Set `MACRO_TEAM_URL` (server) or `VITE_MACRO_TEAM_URL` (web build) to an HTTPS U
 beside the queue; with neither set it shows the setup hint instead. This is a build-time constant
 on the web side, mirroring `VITE_T3_WORKSPACE_URL`, so changing it needs a redeploy.
 
-**Known blocker:** the Zen Macro frontend (`macro-desktop-web`) is a from-source nix dev image that
-exits mid-rebuild and never serves; no Macro backend/DB is up either. Until it answers a real
-HTTP 200, the panel stays in its "not pointed at a reachable endpoint" state. See
-`docs/TEAMS-macro.md`. The Bot HQ side is done — this is an infra task on Zen.
+**Serving (2026-11-17):** the Zen Macro frontend is now reachable. `macro-desktop-web-build`
+finished its nix rebuild and serves on Zen `127.0.0.1:3018` (verified: real HTTP 200 + 5.5 KB
+"Macro AI Workspace" HTML). It is exposed to this box over a Zen **reverse SSH tunnel**
+(`macro-sshtun` scheduled task: Zen `-R 3020:127.0.0.1:3018` → modal `127.0.0.1:3020`), then
+`scripts/macro-gateway.ts` (process service `macro-gateway`, port 8801) rewrites the Host and
+Caddy (`macro-workspace-tls`, Caddyfile at `/var/lib/caddy-macro`) terminates TLS on `:8444` with
+this box's tailscale cert. `MACRO_TEAM_URL=https://modal.taila95594.ts.net:8444/` is set in `.env`.
+Full end-to-end verified from this box: `https://modal.taila95594.ts.net:8444/` → 200 + Macro HTML.
+
+**Caveat:** the revopt iframe in the deployed web app renders a placeholder because the tailnet
+`modal.taila95594.ts.net` host is only resolvable/reachable from machines on the tailnet (and the
+Caddy `:8444` listener is not exposed through Zo's hosted-service proxy). Any tailnet browser
+(both boxes) reaches it fine; a browser outside the tailnet cannot. Serving infrastructure is done;
+making the panel render off-tailnet is a separate networking decision.
 
 ## Tests
 
