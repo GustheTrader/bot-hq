@@ -101,9 +101,9 @@ export function Sidebar() {
           <span className="sidebar-island__icon"><Briefcase size={18} aria-hidden /></span>
           <span className="sidebar-island__label">RevOpt Admin</span>
         </button>
-        <button type="button" className={`sidebar-island${view === 'macro' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('macro')} title="Macro" aria-pressed={view === 'macro'}>
+        <button type="button" className={`sidebar-island${view === 'macro' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('macro')} title="GTM Tools" aria-pressed={view === 'macro'}>
           <span className="sidebar-island__icon"><LayoutDashboard size={18} aria-hidden /></span>
-          <span className="sidebar-island__label">Macro</span>
+          <span className="sidebar-island__label">GTM Tools</span>
         </button>
         {primary && (
           <div className="pinned">

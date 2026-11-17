@@ -1,5 +1,5 @@
 /**
- * Macro: the business-apps sub-app, embedded under the Team label.
+ * GTM Tools (Macro): the business-apps sub-app, embedded under the Team label.
  *
  * Macro runs in Docker on the owner's laptop, so its address is usually
  * http://127.0.0.1:<port>. Only a browser on that same machine can reach it;
@@ -25,7 +25,7 @@ export function MacroView() {
   return (
     <main className="chat tasks-view macro-view">
       <header className="tasks-view__header">
-        <h1 className="tasks-view__title">Macro</h1>
+        <h1 className="tasks-view__title">GTM Tools</h1>
         {macro && (
           <a href={macro.href} target="_blank" rel="noopener noreferrer">Open in new tab</a>
         )}
@@ -34,15 +34,15 @@ export function MacroView() {
         <>
           {onlyThisComputer && (
             <p className="tasks-empty__sub macro-view__note">
-              Macro runs on your laptop, so this only loads in a browser on that computer.
+              GTM Tools runs on your laptop, so this only loads in a browser on that computer.
             </p>
           )}
-          <iframe className="macro-view__frame" src={macro.href} title="Macro" />
+          <iframe className="macro-view__frame" src={macro.href} title="GTM Tools" />
         </>
       ) : (
         <div className="tasks-empty">
-          <h2 className="tasks-empty__title">Macro</h2>
-          <p className="tasks-empty__sub">Macro is awaiting setup. Set VITE_MACRO_TEAM_URL and rebuild the web app.</p>
+          <h2 className="tasks-empty__title">GTM Tools</h2>
+          <p className="tasks-empty__sub">GTM Tools is awaiting setup. Set VITE_MACRO_TEAM_URL and rebuild the web app.</p>
         </div>
       )}
     </main>

@@ -309,9 +309,9 @@ function MacroPanel({ url, teamName }: { url: string | null; teamName: string | 
   if (!url) {
     return (
       <section className="revopt-macro">
-        <div className="section-label">Macro console</div>
+        <div className="section-label">GTM Tools console</div>
         <div className="revopt-macro__empty">
-          Macro is not pointed at a reachable endpoint yet. Set <code>MACRO_TEAM_URL</code> on the server
+          GTM Tools is not pointed at a reachable endpoint yet. Set <code>MACRO_TEAM_URL</code> on the server
           (or <code>VITE_MACRO_TEAM_URL</code> for the web build) once the Zen desktop frontend serves,
           and it appears here beside the queue.
         </div>
@@ -321,10 +321,10 @@ function MacroPanel({ url, teamName }: { url: string | null; teamName: string | 
   return (
     <section className="revopt-macro">
       <div className="revopt-macro__head">
-        <div className="section-label" style={{ margin: 0 }}>Macro console{teamName ? ` · ${teamName}` : ''}</div>
+        <div className="section-label" style={{ margin: 0 }}>GTM Tools console{teamName ? ` · ${teamName}` : ''}</div>
         <a href={url} target="_blank" rel="noopener noreferrer" className="revopt-macro__open">Open in new tab</a>
       </div>
-      <iframe className="revopt-macro__frame" src={url} title="Macro console" />
+      <iframe className="revopt-macro__frame" src={url} title="GTM Tools console" />
     </section>
   );
 }
