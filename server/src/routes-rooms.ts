@@ -7,9 +7,14 @@ import {
   addHuman,
   createTeam,
   listHumans,
+  setTeamBrief,
   setTeamLead,
+  setTeamRole,
   setTeamRoster,
+  TEAM_ROLES,
+  teamBrief,
   teamMembers,
+  type TeamRoleName,
 } from './agent/rooms.js';
 
 /**
@@ -31,13 +36,13 @@ const isHumanMember = (userId: string, id: string) =>
 roomsApi.get('/:id/members', (c) => {
   const team = ownTeam(c.get('user').id, c.req.param('id'));
   if (!team) return c.json({ error: 'not found' }, 404);
-  return c.json({ members: teamMembers(team.id) });
+  return c.json({ team: { id: team.id, name: team.name }, members: teamMembers(team.id), brief: teamBrief(team.id) });
 });
 
 roomsApi.get('/', (c) => {
   const userId = c.get('user').id;
   const teams = (db.prepare("SELECT id, name, label, description FROM bots WHERE user_id=? AND kind='team' ORDER BY created_at").all(userId) as any[])
-    .map((t) => ({ id: t.id, name: t.name, label: t.label, description: t.description, members: teamMembers(t.id) }));
+    .map((t) => ({ id: t.id, name: t.name, label: t.label, description: t.description, brief: teamBrief(t.id), members: teamMembers(t.id) }));
   return c.json({ teams, humans: listHumans(userId) });
 });
 
@@ -127,6 +132,47 @@ roomsApi.post('/:id/lead', async (c) => {
     return c.json({ error: 'Pick a Bot on this team.' }, 400);
   }
   setTeamLead(team.id, memberId);
+  hub.emit(user.id, { type: 'roster' });
+  return c.json({ ok: true, members: teamMembers(team.id) });
+});
+/** The team's standing brief — the mission every member reads before it answers. */
+roomsApi.get('/:id/brief', (c) => {
+  const team = ownTeam(c.get('user').id, c.req.param('id'));
+  if (!team) return c.json({ error: 'not found' }, 404);
+  return c.json(teamBrief(team.id));
+});
+
+/** Set the brief. An empty string clears it. */
+roomsApi.put('/:id/brief', async (c) => {
+  const user = c.get('user');
+  const team = ownTeam(user.id, c.req.param('id'));
+  if (!team) return c.json({ error: 'not found' }, 404);
+  const { text } = await c.req.json<{ text?: string }>();
+  const brief = setTeamBrief(team.id, String(text ?? ''));
+  appendRow(team.id, 'event', {
+    type: 'event', event: 'bot-message',
+    text: brief.text ? 'Team brief updated.' : 'Team brief cleared.',
+  });
+  hub.emit(user.id, { type: 'roster' });
+  return c.json(brief);
+});
+
+/** Set one member's role: lead | member | observer. */
+roomsApi.post('/:id/role', async (c) => {
+  const user = c.get('user');
+  const team = ownTeam(user.id, c.req.param('id'));
+  if (!team) return c.json({ error: 'not found' }, 404);
+  const { kind, id, role } = await c.req.json<{ kind: 'bot' | 'human' | 'user'; id: string; role: TeamRoleName }>();
+  if (!TEAM_ROLES.includes(role)) return c.json({ error: `Role must be one of ${TEAM_ROLES.join(', ')}.` }, 400);
+  if (kind === 'bot' && role === 'lead' && !teamMembers(team.id).some((m) => m.kind === 'bot' && m.id === id)) {
+    return c.json({ error: 'That Bot is not on this team.' }, 400);
+  }
+  if (role === 'observer' && kind !== 'bot') {
+    // People are never dispatchers, so an observer role on a person is a no-op we forbid
+    // rather than store, to keep "who actually talks" unambiguous.
+    return c.json({ error: 'Only Bots can be observers.' }, 400);
+  }
+  setTeamRole(team.id, kind, id, role);
   hub.emit(user.id, { type: 'roster' });
   return c.json({ ok: true, members: teamMembers(team.id) });
 });

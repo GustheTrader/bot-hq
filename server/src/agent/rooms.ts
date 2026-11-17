@@ -21,6 +21,34 @@ import type { TeamMember } from '../types.js';
 
 const MAX_RESPONDERS = 3;
 
+/**
+ * Roles on a team:
+ * - `lead` speaks first when nobody is @mentioned.
+ * - `member` answers when @mentioned (and may chime in after the lead).
+ * - `observer` is read-only: it is never chosen to answer, but an explicit @mention still
+ *   runs it, so an observer can be pulled in deliberately.
+ */
+export const TEAM_ROLES = ['lead', 'member', 'observer'] as const;
+export type TeamRoleName = (typeof TEAM_ROLES)[number];
+
+/** Standing team context, stored on the team row. */
+export function teamBrief(teamId: string) {
+  const r = db.prepare('SELECT brief, brief_updated_at FROM bots WHERE id=?').get(teamId) as any;
+  return { text: r?.brief ?? '', updatedAt: r?.brief_updated_at ?? null };
+}
+
+export function setTeamBrief(teamId: string, text: string) {
+  const clean = (text ?? '').replace(/\r\n/g, '\n').trim().slice(0, 8000);
+  db.prepare('UPDATE bots SET brief=?, brief_updated_at=? WHERE id=?').run(clean, now(), teamId);
+  return teamBrief(teamId);
+}
+
+function briefLine(teamId: string): string {
+  const b = teamBrief(teamId);
+  if (!b.text) return '';
+  return `\nTeam brief (standing context from the user — treat as the team's current objective):\n${b.text}\n`;
+}
+
 export function initRooms() {
   for (const col of ["kind TEXT NOT NULL DEFAULT 'agent'", 'members TEXT']) {
     try { db.exec(`ALTER TABLE bots ADD COLUMN ${col}`); } catch { /* exists */ }
@@ -65,7 +93,7 @@ export function teamBots(teamId: string): TeamMember[] {
 export const roomMembers = (teamId: string) =>
   teamBots(teamId).map((m) => ({ id: m.id, name: m.name }));
 
-function addMember(teamId: string, kind: 'bot' | 'human' | 'user', id: string, role: 'lead' | 'member') {
+function addMember(teamId: string, kind: 'bot' | 'human' | 'user', id: string, role: TeamRoleName) {
   db.prepare(
     'INSERT OR REPLACE INTO team_members(team_id, member_kind, member_id, role, created_at) VALUES (?,?,?,?, COALESCE((SELECT created_at FROM team_members WHERE team_id=? AND member_kind=? AND member_id=?), ?))',
   ).run(teamId, kind, id, role, teamId, kind, id, now());
@@ -122,22 +150,54 @@ export function listHumans(userId: string) {
   }));
 }
 
-/** Replace a team's roster wholesale. Bot ids and human ids are separate lists. */
+/** Replace a team's roster wholesale. Bot ids and human ids are separate lists.
+ *  Observers already on the team keep their role; new bots default to member
+ *  (unless no bot leads yet, in which case the first one takes the lead). */
 export function setTeamRoster(teamId: string, botIds: string[], humanIds: string[]) {
-  const before = new Set(teamMembers(teamId).map((m) => `${m.kind}:${m.id}`));
-  const lead = teamMembers(teamId).find((m) => m.role === 'lead' && m.kind === 'bot');
+  const prior = teamMembers(teamId);
+  const before = new Set(prior.map((m) => `${m.kind}:${m.id}`));
+  const roleOf = new Map(prior.map((m) => [`${m.kind}:${m.id}`, m.role]));
+  const lead = prior.find((m) => m.role === 'lead' && m.kind === 'bot');
   db.prepare('DELETE FROM team_members WHERE team_id=?').run(teamId);
   const bots = [...new Set(botIds)];
-  const leadId = lead && bots.includes(lead.id) ? lead.id : bots[0];
-  bots.forEach((bid) => addMember(teamId, 'bot', bid, bid === leadId ? 'lead' : 'member'));
-  [...new Set(humanIds)].forEach((hid) => addMember(teamId, 'human', hid, 'member'));
+  const leadId = lead && bots.includes(lead.id) ? lead.id : bots.find((b) => roleOf.get(`bot:${b}`) !== 'observer') ?? bots[0];
+  bots.forEach((bid) => {
+    const priorRole = roleOf.get(`bot:${bid}`);
+    const role = bid === leadId ? 'lead' : priorRole === 'observer' ? 'observer' : 'member';
+    addMember(teamId, 'bot', bid, role);
+  });
+  [...new Set(humanIds)].forEach((hid) => addMember(teamId, 'human', hid, roleOf.get(`human:${hid}`) === 'observer' ? 'observer' : 'member'));
   return { added: teamMembers(teamId).filter((m) => !before.has(`${m.kind}:${m.id}`)), removed: [] as TeamMember[] };
 }
 
-/** Set (or clear) the lead for a team. Pass null to leave the first bot leading. */
+/** Set (or clear) the lead for a team. Pass null to leave the first bot leading.
+ *  Observers are never promoted: only a speaking bot can lead. */
 export function setTeamLead(teamId: string, memberId: string | null) {
-  db.prepare("UPDATE team_members SET role='member' WHERE team_id=?").run(teamId);
+  // Validate before demoting: promoting an ineligible member must not strip the existing lead.
+  if (memberId) {
+    const eligible = db
+      .prepare("SELECT 1 FROM team_members WHERE team_id=? AND member_kind='bot' AND member_id=? AND role<>'observer'")
+      .get(teamId, memberId);
+    if (!eligible) return;
+  }
+  db.prepare("UPDATE team_members SET role='member' WHERE team_id=? AND role='lead'").run(teamId);
   if (memberId) db.prepare("UPDATE team_members SET role='lead' WHERE team_id=? AND member_id=?").run(teamId, memberId);
+}
+
+/** Set one member's role. Only one member leads at a time; picking a new lead demotes the old one.
+ *  Demoting the lead with role 'member'/'observer' leaves the team without a speaker, which dispatch
+ *  tolerates (it falls back to the first non-observer). */
+export function setTeamRole(teamId: string, kind: 'bot' | 'human' | 'user', id: string, role: TeamRoleName) {
+  if (!TEAM_ROLES.includes(role)) throw new Error(`Unknown role "${role}".`);
+  if (role === 'lead') {
+    // Only a Bot can lead, so resolve the write to a bot row before demoting the current lead.
+    const target = db.prepare("SELECT 1 FROM team_members WHERE team_id=? AND member_kind='bot' AND member_id=?").get(teamId, id);
+    if (kind !== 'bot' || !target) return;
+    db.prepare("UPDATE team_members SET role='member' WHERE team_id=? AND role='lead'").run(teamId);
+    db.prepare("UPDATE team_members SET role='lead' WHERE team_id=? AND member_kind='bot' AND member_id=?").run(teamId, id);
+    return;
+  }
+  db.prepare('UPDATE team_members SET role=? WHERE team_id=? AND member_kind=? AND member_id=?').run(role, teamId, kind, id);
 }
 
 /**
@@ -167,11 +227,16 @@ export function dispatchRoomMessage(teamId: string, text: string, enqueue: (botI
 
   for (const h of mentionedHumans) notifyHuman(teamId, h, text);
 
-  const lead = bots.find((b) => b.role === 'lead') ?? bots[0];
+  // Observers never volunteer; they only run when @mentioned by name.
+  const speakers = bots.filter((b) => b.role !== 'observer');
+  const lead = speakers.find((b) => b.role === 'lead') ?? speakers[0];
   const responders = mentionedBots.length
     ? mentionedBots.slice(0, MAX_RESPONDERS)
-    : [lead, ...bots.filter((b) => b.id !== lead.id)].slice(0, MAX_RESPONDERS);
-
+    : [lead, ...speakers.filter((b) => b.id !== lead?.id)].slice(0, MAX_RESPONDERS);
+  if (!responders.length) {
+    appendRow(teamId, 'notice', { type: 'notice', text: 'Everyone on this team is an observer, so nobody volunteered. @mention a Bot by name to run it.', tone: 'warn' });
+    return;
+  }
   // Who else is on the team, so a responder can hand work to them by name.
   const others = roster.filter((m) => !responders.some((r) => r.id === m.id));
   const humanLine = mentionedHumans.length
@@ -190,9 +255,11 @@ export function dispatchRoomMessage(teamId: string, text: string, enqueue: (botI
     enqueue(m.id, {
       type: 'system',
       text:
-        `[Team "${team.name}"] Members: ${roster.map((x) => `${x.name}${x.kind === 'bot' ? '' : ' (person)'}${x.role === 'lead' ? ' [lead]' : ''}`).join(', ')}. ` +
+        `[Team "${team.name}"] Members: ${roster.map((x) => `${x.name}${x.kind === 'bot' ? '' : ' (person)'}${x.role === 'lead' ? ' [lead]' : ''}${x.role === 'observer' ? ' [observer]' : ''}`).join(', ')}. ` +
         `${m.role === 'lead' ? 'You lead this team. ' : ''}` +
-        `${mentionedBots.length ? 'You were @mentioned.' : 'The user addressed the whole team.'}${humanLine}\n` +
+        `${m.role === 'observer' ? 'You are an observer here: you were pulled in by name, so answer this one but do not volunteer on other messages. ' : ''}` +
+        `${mentionedBots.length ? 'You were @mentioned.' : 'The user addressed the whole team.'}${humanLine}` +
+        briefLine(team.id) +
         `Recent team messages:\n${recent}\n\n` +
         (others.length ? `If this is not your job, message the right member directly instead of guessing: ${others.map((o) => o.name).join(', ')}.\n` : '') +
         `Reply to the team by calling post_to_group with group_name "${team.name}" (use your tools first if the request needs real work). ` +

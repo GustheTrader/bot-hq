@@ -14,7 +14,7 @@ process.env.ORGO_API_KEY = 'test';
 
 const { db, now } = await import('../src/db.js');
 const { newId } = await import('../src/lib/ids.js');
-const { initRooms, createTeam, teamMembers, dispatchRoomMessage, postToRoom, addHuman, setTeamRoster } =
+const { initRooms, createTeam, teamMembers, dispatchRoomMessage, postToRoom, addHuman, setTeamRoster, teamBrief, setTeamBrief, setTeamLead, setTeamRole } =
   await import('../src/agent/rooms.js');
 
 initRooms();
@@ -132,4 +132,68 @@ test('migration: a legacy kind=room row becomes a team with team_members', async
   assert.equal(kind, 'team', 'legacy room is now a team');
   const names = teamMembers(legacy).map((m) => m.name).sort();
   assert.deepEqual(names, ['Alpha', 'Beta']);
+});
+
+test('team brief round-trips, is trimmed, and is cleared by an empty string', () => {
+  const user = mkUser();
+  const a = mkBot(user, 'Lead');
+  const team = createTeam(user, 'Briefed', { botIds: [a] });
+
+  assert.equal(teamBrief(team).text, '', 'a new team has no brief');
+  const set = setTeamBrief(team, '  Ship the Q4 report.  ');
+  assert.equal(set.text, 'Ship the Q4 report.');
+  assert.ok(set.updatedAt, 'the write stamps updatedAt');
+  assert.equal(teamBrief(team).text, 'Ship the Q4 report.');
+  assert.equal(setTeamBrief(team, '').text, '', 'empty string clears the brief');
+});
+
+test('the brief is prepended to every responder prompt', () => {
+  const user = mkUser();
+  const a = mkBot(user, 'Lead');
+  const team = createTeam(user, 'Directed', { botIds: [a] });
+  setTeamBrief(team, 'Own the pricing model.');
+
+  const seen: { botId: string; text: string }[] = [];
+  dispatchRoomMessage(team, 'where are we?', (botId, t) => seen.push({ botId, text: t.text }));
+  assert.equal(seen.length, 1);
+  assert.match(seen[0].text, /Own the pricing model\./);
+});
+
+test('an observer is never a volunteer but runs when @mentioned', () => {
+  const user = mkUser();
+  const lead = mkBot(user, 'Lead');
+  const eye = mkBot(user, 'Watcher');
+  const team = createTeam(user, 'Watched', { botIds: [lead, eye] });
+  setTeamRole(team, 'bot', eye, 'observer');
+
+  const roster = teamMembers(team);
+  assert.equal(roster.find((m) => m.id === eye)?.role, 'observer');
+  assert.equal(roster.find((m) => m.id === lead)?.role, 'lead', 'the lead is untouched');
+
+  // No mention: only the lead answers; the observer stays out of it.
+  const silent: string[] = [];
+  dispatchRoomMessage(team, 'status update please', (botId) => silent.push(botId));
+  assert.deepEqual(silent, [lead]);
+
+  // Mentioned by name: the observer is pulled in deliberately.
+  const pulled: string[] = [];
+  dispatchRoomMessage(team, '@Watcher what do you see?', (botId) => pulled.push(botId));
+  assert.deepEqual(pulled, [eye]);
+});
+
+test('promoting a new lead demotes the old one and observers cannot lead', () => {
+  const user = mkUser();
+  const a = mkBot(user, 'Alpha');
+  const b = mkBot(user, 'Beta');
+  const team = createTeam(user, 'Chain', { botIds: [a, b] });
+  assert.equal(teamMembers(team).find((m) => m.role === 'lead')?.id, a);
+
+  setTeamLead(team, b);
+  const leads = teamMembers(team).filter((m) => m.role === 'lead');
+  assert.equal(leads.length, 1, 'exactly one lead');
+  assert.equal(leads[0].id, b);
+
+  setTeamRole(team, 'bot', a, 'observer');
+  setTeamLead(team, a);
+  assert.equal(teamMembers(team).find((m) => m.id === b)?.role, 'lead', 'an observer is not promoted to lead');
 });

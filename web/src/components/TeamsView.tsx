@@ -150,8 +150,11 @@ function TeamDetail({
   const [error, setError] = useState<string | null>(null);
   const [addName, setAddName] = useState('');
   const [addEmail, setAddEmail] = useState('');
+  const [brief, setBrief] = useState(team.brief.text);
+  const [savingBrief, setSavingBrief] = useState(false);
 
   useEffect(() => setMembers(team.members), [team.members]);
+  useEffect(() => setBrief(team.brief.text), [team.id, team.brief.text]);
 
   const reload = useCallback(() => {
     api.teamMembers(team.id).then((r) => setMembers(r.members)).catch((e) => setError((e as Error).message));
@@ -170,6 +173,22 @@ function TeamDetail({
     setError(null);
     try { await api.setTeamLead(team.id, memberId); reload(); }
     catch (e) { setError((e as Error).message); }
+  };
+  /** Flip a bot between observer (silent unless @mentioned) and a normal responder. */
+  const setObserver = async (memberId: string, on: boolean) => {
+    setError(null);
+    try { await api.setTeamRole(team.id, 'bot', memberId, on ? 'observer' : 'member'); reload(); }
+    catch (e) { setError((e as Error).message); }
+  };
+
+  const saveBrief = async () => {
+    setSavingBrief(true); setError(null);
+    try {
+      const r = await api.setTeamBrief(team.id, brief);
+      setBrief(r.text);
+      onChanged();
+    } catch (e) { setError((e as Error).message); }
+    finally { setSavingBrief(false); }
   };
 
   const addPerson = async () => {
@@ -192,13 +211,42 @@ function TeamDetail({
         <button type="button" className="btn btn--secondary btn--sm" onClick={onOpenChat}>Open team chat</button>
       </div>
 
+      <div className="section-label">Team brief</div>
+      <div className="panel-card team-brief">
+        <textarea
+          className="team-brief__text"
+          placeholder="What is this team for? The mission, the current objective, the rules — every member reads this before it answers."
+          value={brief}
+          rows={4}
+          onChange={(e) => setBrief(e.target.value)}
+          aria-label="Team brief"
+        />
+        <div className="team-brief__foot">
+          <span className="team-brief__meta">
+            {team.brief.updatedAt && brief === team.brief.text
+              ? `Saved ${relativeShort(team.brief.updatedAt)}`
+              : brief.trim() === team.brief.text
+                ? 'Standing context for every member'
+                : 'Unsaved changes'}
+          </span>
+          <button
+            type="button"
+            className="btn btn--primary btn--sm"
+            disabled={savingBrief || brief.trim() === team.brief.text}
+            onClick={saveBrief}
+          >
+            {savingBrief ? 'Saving…' : 'Save brief'}
+          </button>
+        </div>
+      </div>
+
       <div className="section-label">Bots on this team</div>
       <div className="panel-card members">
         {members.filter((m) => m.kind === 'bot').length === 0 ? (
           <div className="panel-empty">No Bots on this team yet.</div>
         ) : members.filter((m) => m.kind === 'bot').map((m) => {
           const bot = bots.find((b) => b.id === m.id);
-          const isLead = m.id === leadId;
+          const isLead = m.id === leadId;          const isObserver = m.role === 'observer';
           return (
             <div key={`bot:${m.id}`} className="panel-row members__row">
               {bot ? <BotAvatarFor bot={bot} size={24} /> : <span className="members__dot" />}
@@ -206,6 +254,7 @@ function TeamDetail({
                 <span className="members__name">
                   {bot ? displayName(bot) : m.name}
                   {isLead && <span className="members__badge">Speaks first</span>}
+                  {isObserver && <span className="members__badge members__badge--obs">Observer</span>}
                 </span>
               </span>
               {!isLead && (
@@ -213,6 +262,9 @@ function TeamDetail({
                   <Icon name="star" size={12} opacity={0.5} />
                 </button>
               )}
+              <button type="button" className="icon-btn members__obs" title={isObserver ? 'Observer: silent unless @mentioned' : 'Make an observer (silent unless @mentioned)'} aria-label={`Toggle observer for ${m.name}`} aria-pressed={isObserver} disabled={isLead} onClick={() => setObserver(m.id, !isObserver)}>
+                <Icon name="eye" size={12} opacity={isObserver ? 0.95 : 0.4} />
+              </button>
               <button type="button" className="icon-btn members__remove" title="Remove from team" aria-label={`Remove ${m.name}`} disabled={botIds.length <= 1} onClick={() => save(botIds.filter((x) => x !== m.id), humanIds)}>
                 <Icon name="close" size={10} opacity={0.56} />
               </button>

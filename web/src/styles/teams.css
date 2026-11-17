@@ -33,3 +33,15 @@
 
 .team-people__add { display: flex; gap: 6px; padding: 8px 8px 4px; }
 .team-people__add .text-input { flex: 1; min-width: 0; }
+
+/* Slice 2: the standing team brief and the observer role. */
+.team-brief { padding: 10px 10px 8px; }
+.team-brief__text { width: 100%; min-height: 72px; resize: vertical; padding: 8px 10px; border: 0.5px solid var(--color-border-secondary); border-radius: 8px; background: var(--color-bg-subtle, transparent); font: inherit; font-size: 13px; line-height: 19px; color: var(--color-ink); }
+.team-brief__text:focus { outline: none; border-color: var(--color-border-primary, var(--color-ink)); }
+.team-brief__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.team-brief__meta { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+
+.members__badge--obs { background: var(--color-bg-active, var(--color-bg-hover)); color: var(--color-text-secondary); }
+.icon-btn.members__obs { opacity: 0.75; }
+.icon-btn.members__obs:hover { opacity: 1; }
+.icon-btn.members__obs:disabled { opacity: 0.3; cursor: not-allowed; }

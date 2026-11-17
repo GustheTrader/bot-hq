@@ -158,6 +158,9 @@ addColumn('bots', 'harness', "TEXT NOT NULL DEFAULT 'hermes'");
 addColumn('bots', 'harness_model', 'TEXT');
 addColumn('screens', 'width', 'INTEGER');
 addColumn('screens', 'height', 'INTEGER');
+// A team's standing brief: prepended to every member's context on each turn.
+addColumn('bots', 'brief', 'TEXT');
+addColumn('bots', 'brief_updated_at', 'INTEGER');addColumn('bots', 'brief_updated_at', 'INTEGER');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS humans (
@@ -173,6 +176,9 @@ CREATE TABLE IF NOT EXISTS team_members (
   team_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
   member_kind TEXT NOT NULL,
   member_id TEXT NOT NULL,
+  -- 'lead' speaks first, 'member' answers when addressed, 'observer' stays silent unless
+  -- mentioned by name. Observers are read-only eyes on the team (a monitor bot, a person
+  -- who is only watching). Kept as TEXT, not a CHECK, so older rows survive schema drift.
   role TEXT NOT NULL DEFAULT 'member',
   created_at INTEGER NOT NULL,
   PRIMARY KEY (team_id, member_kind, member_id)

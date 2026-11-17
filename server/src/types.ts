@@ -78,11 +78,25 @@ export interface HumanMember {
   role: TeamRole;
 }
 
-export type TeamRole = 'lead' | 'member';
+/**
+ * Role on a team.
+ *
+ * - `lead` — the bot that speaks first when a message has no @mention.
+ * - `member` — answers when @mentioned, or as a fallback responder.
+ * - `observer` — read-only. Never picked as a responder; only runs when @mentioned by name.
+ */
+export type TeamRole = 'lead' | 'member' | 'observer';
+
+/** A team's standing context, shown above the roster in the team UI. */
+export interface TeamBrief {
+  text: string;
+  updatedAt: number | null;
+}
 
 export interface TeamRosterResponse {
   team: { id: string; name: string };
   members: TeamMember[];
+  brief: TeamBrief;
 }
 
 

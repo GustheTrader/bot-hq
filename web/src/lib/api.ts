@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, LiveState, Routine, Row, TeamMember, Toolkit, User } from '@shared/types';
+import type { Bot, ComputerState, LiveState, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -24,7 +24,7 @@ export interface AppsResponse { apps: Toolkit[]; connected: string[]; categories
 
 
 export interface Human { id: string; name: string; email: string | null; createdAt: number }
-export interface TeamsResponse { teams: { id: string; name: string; label: string; description: string; members: TeamMember[] }[]; humans: Human[] }
+export interface TeamsResponse { teams: { id: string; name: string; label: string; description: string; members: TeamMember[]; brief: TeamBrief }[]; humans: Human[] }
 
 export const api = {
   me: () => req<{ user: User | null; devLogin: boolean }>('GET', '/auth/me'),
@@ -57,12 +57,16 @@ export const api = {
   teamMembers: (id: string) => req<{ members: TeamMember[] }>('GET', `/rooms/${id}/members`),
   setTeamRoster: (id: string, botIds: string[], humanIds: string[]) => req<{ ok: true; members: TeamMember[] }>('PUT', `/rooms/${id}/members`, { botIds, humanIds }),
   setTeamLead: (id: string, memberId: string | null) => req<{ ok: true; members: TeamMember[] }>('POST', `/rooms/${id}/lead`, { memberId }),
-  createTeam: (name: string, botIds: string[], humanIds: string[] = [], newPeople: { name: string; email?: string }[] = []) =>
-    req<{ id: string }>('POST', '/rooms', { name, botIds, humanIds, newPeople }),
+  createTeam: (name: string, botIds: string[], humanIds: string[] = [], people: { name: string; email?: string }[] = []) =>
+    req<{ id: string }>('POST', '/rooms', { name, botIds, humanIds, people }),
   /** Create a team and its people in one go. People may be new (by name) or existing (by id). */
   createTeamWithPeople: (name: string, botIds: string[], people: { id?: string; name: string; email?: string }[]) =>
     req<{ id: string }>('POST', '/rooms', { name, botIds, people }),
   teams: () => req<TeamsResponse>('GET', '/rooms'),
+  teamBrief: (id: string) => req<TeamBrief>('GET', `/rooms/${id}/brief`),
+  setTeamBrief: (id: string, text: string) => req<TeamBrief>('PUT', `/rooms/${id}/brief`, { text }),
+  setTeamRole: (id: string, kind: 'bot' | 'human' | 'user', memberId: string, role: TeamRole) =>
+    req<{ ok: true; members: TeamMember[] }>('POST', `/rooms/${id}/role`, { kind, id: memberId, role }),
   addHuman: (name: string, email?: string) => req<{ id: string }>('POST', '/rooms/humans', { name, email }),
   removeHuman: (id: string) => req<{ ok: true }>('DELETE', `/rooms/humans/${id}`),
 };
