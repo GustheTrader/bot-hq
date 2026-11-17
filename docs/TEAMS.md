@@ -1,53 +1,71 @@
-# Teams (Bots + people) — 2026-11-16
+# Bot HQ — Teams
 
-Status: **Slice 1 shipped.** Team is a first-class object; the roster mixes Bots and people.
+Status: **slice 1 shipped** (2026-11-16). Slices 2 and 3 pending.
 
-## What changed
+## The model
 
-Rooms are gone. What was `bots.kind='room'` — a group chat with a JSON list of bot ids —
-is now `bots.kind='team'` with its roster in a real table. Legacy rows are migrated on boot
-(`migrateRoomsToTeams` in `server/src/db.ts`, idempotent).
+A **team** is a `bots` row with `kind='team'`. It is a channel, not an agent: it never runs its
+own loop. Its roster lives in the `team_members` table, one row per member:
 
-- **`team_members`** — `(team_id, member_kind, member_id, role, created_at)` where
-  `member_kind ∈ {bot, human, user}` and `role ∈ {lead, member}`. A team's roster is rows
-  here, not a JSON blob, so it can be queried and indexed both ways.
-- **`humans`** — people the owner names: name + optional email, no sign-in. They are
-  contacts, not accounts, which keeps the door open for real invites later without a
-  schema rewrite.
-- **`agent/rooms.ts`** — `teamMembers`, `teamBots`, `createTeam`, `addHuman`,
-  `setTeamRoster`, `setTeamLead`, `dispatchTeamMessage`, `postToRoom`. `isRoom` is kept
-  as an alias of `isTeam` for callers that predate the rename.
-- **`routes-rooms.ts`** — served at `/api/teams` (the mount is still `/api/rooms`):
-  `GET /`, `POST /`, `PUT /:id/members`, `POST /:id/lead`, `POST /humans`, `DELETE /humans/:id`.
-- **Tools** — `create_group` and `post_to_group` still work and now produce teams.
-- **Web** — Teams island in the sidebar (alongside Code / Work), `TeamsView` with create,
-  roster editing, lead pick, and "Open team chat"; `MembersCard` and `DetailsPanel` render
-  the mixed roster.
-
-## Dispatch rules
-
-`dispatchTeamMessage(teamId, text, enqueue)`:
-
-1. `@mention` a bot → only mentioned bots answer (capped at 3).
-2. No mention → the **lead** bot answers first, then up to 2 others.
-3. `@mention` a person → they get an event row on the channel; no loop runs, since a human
-   has no agent.
-4. Responders are told who else is on the roster so they can hand work over by name, and
-   told to `stay_silent` if they have nothing to add.
-
-## Verification
-
-| Check | Result |
+| column | values |
 |---|---|
-| `npm run typecheck` (server + web) | pass |
-| `npm test -w server` | 14/14 pass (9 pre-existing + 5 team) |
-| `npm run build` | pass |
-| `/api/health` on 8797 | `{"ok":true,"engine":"hermes"}` |
-| Teams view rendered in browser | sidebar island, team tabs, Bots + People sections, lead badge |
-| Public bundle | `https://bot-hq-herb.zocomputer.io` serves the Teams build |
+| `member_kind` | `bot` (a Hermes agent with its own screen), `human` (a person with no agent), `user` (the account owner) |
+| `member_id` | the bot id, the `humans.id`, or the `users.id` |
+| `role` | `lead` or `member` — exactly one bot leads |
 
-## Next
+People are rows in `humans` (`id, user_id, name, email`). They are **contacts, not logins**.
 
-Slice 2 — team brief prepended to every member's group context, and role behavior
-(observer bots stay silent unless mentioned). Slice 3 — Macro sub-app: decision pending on
-iframe vs. bridging Macro's API in as a bot tool (recon in the conversation workspace).
+Legacy group chats (`kind='room'`, JSON `members` list) are migrated once at boot by
+`migrateRoomsToTeams()` in `server/src/db.ts`: each room becomes a team with `team_members` rows.
+The migration is idempotent — the `UPDATE` only matches rows still marked `room`.
+
+## Dispatch
+
+Posting to a team goes through `dispatchTeamMessage` (`server/src/agent/rooms.ts`), not the agent
+loop:
+
+- **@mention narrows responders.** Mentioned bots answer (capped at `MAX_RESPONDERS = 3`).
+- **Mentioning a person** does not run a loop — it appends an `event` row so the mention is visible
+  on the channel, and the responding bot is told that person is "a person, not a Bot".
+- **No mentions:** the team's lead answers first, then up to two other bots may chime in.
+- Each responder gets a synthetic `[Team "…"]` system prompt carrying the roster, the recent
+  messages, who was mentioned, and who else is on the team to hand work to.
+- Bots reply with the `post_to_group` tool (still named that; it resolves a team by name).
+  `stay_silent` lets a bot opt out.
+
+## API
+
+Mounted at `/api/rooms` (`server/src/routes-rooms.ts`), all session-gated:
+
+| method | path | purpose |
+|---|---|---|
+| `GET` | `/api/rooms` | list teams (with members) + known humans |
+| `POST` | `/api/rooms` | create a team: `{ name, botIds[], humanIds[], people[], includeUser? }` |
+| `GET` | `/api/rooms/:id/members` | the roster |
+| `PUT` | `/api/rooms/:id/members` | replace the roster `{ botIds[], humanIds[] }` |
+| `POST` | `/api/rooms/:id/lead` | pick which bot speaks first |
+| `POST` | `/api/rooms/humans` | add a person (name + optional email) |
+| `DELETE` | `/api/rooms/humans/:id` | remove a person everywhere |
+
+A team must keep at least one bot — the routes reject a roster with zero bots.
+
+## UI
+
+`web/src/components/TeamsView.tsx`, reached from the sidebar **Teams** island
+(`useConfigUI.setView('teams')`). One screen: a creation panel, a tab per team, then the roster
+split into **Bots on this team** and **People on this team**. From here you swap bots, add/remove
+people, pick who speaks first, and open the team chat.
+
+## Tests
+
+`server/test/teams.test.ts` (5 cases): create with mixed roster, mention routing, @mentioning a
+person notifies instead of dispatching, non-member post refusal, roster swap keeps a lead.
+Run with `npm test -w server`.
+
+## Still open
+
+- **Slice 2:** a team **brief** prepended to every member's context, and an `observer` role that
+  stays silent unless mentioned.
+- **Slice 3:** the **Macro sub-app** (Docker on the Zen laptop, `macro-desktop-web` on
+  `127.0.0.1:3017`) surfaced under the Team label — iframe vs. bot tool is undecided. See
+  `Projects/bot-hq/docs/TEAMS-macro.md`.
