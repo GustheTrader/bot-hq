@@ -74,6 +74,44 @@ select.text-input { cursor: pointer; }
 .proj-spacer { flex: 1 1 0; }
 .proj-danger { color: var(--color-danger, #d9534f); }
 
+/* Launch page */
+.launch { display: flex; flex-direction: column; gap: 18px; padding-top: 24px; }
+.launch__hello { margin: 0 0 2px; text-align: center; font-size: 28px; line-height: 36px; font-weight: 500; letter-spacing: -0.01em; color: var(--color-text-primary); }
+.launch__attention { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; border: 0.5px solid color-mix(in srgb, var(--color-warn) 55%, transparent); background: color-mix(in srgb, var(--color-warn) 10%, transparent); color: var(--color-text-primary); font-size: 13px; line-height: 18px; text-align: left; cursor: pointer; }
+.launch__attention-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--color-warn); }
+.launch__attention-go { margin-left: auto; color: var(--color-text-secondary); }
+.launch__chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.launch__chip { display: flex; flex-direction: column; gap: 1px; max-width: 220px; padding: 8px 12px; border-radius: 10px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-elevated); color: var(--color-text-primary); text-align: left; cursor: pointer; }
+.launch__chip:hover { background: var(--color-bg-elevated-hover); }
+.launch__chip.is-on { border-color: var(--color-text-secondary); }
+.launch__chip-name { font-size: 13px; font-weight: 500; line-height: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.launch__chip-meta { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Composer: skills chips and the / menu */
+/* "workbox", not "composer": the chat page already owns .composer and .composer__input. */
+.workbox--launch { padding: 14px; }
+.workbox--launch .proj-composer__text { min-height: 88px; font-size: 15px; line-height: 22px; }
+.workbox__input { position: relative; }
+.workbox__buttons { display: flex; flex: none; gap: 8px; }
+.proj-field--wide { flex: 1 1 240px; }
+.skill-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.skill-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 8px; border-radius: 999px; font-size: 12px; line-height: 18px; color: var(--color-text-primary); background: var(--color-bg-hover); }
+.skill-chip__src { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-tertiary); }
+.skill-chip button { width: 18px; height: 18px; border-radius: 50%; font-size: 14px; line-height: 16px; color: var(--color-text-secondary); cursor: pointer; }
+.skill-chip button:hover { background: var(--color-bg-elevated-hover); color: var(--color-text-primary); }
+.skill-menu { position: absolute; left: 0; right: 0; top: 100%; z-index: 20; max-height: 280px; overflow-y: auto; overflow-x: hidden; margin-top: 4px; padding: 4px; border-radius: 12px; border: 0.5px solid var(--color-border-secondary); background: var(--color-bg-elevated); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35); }
+.skill-menu__heading { padding: 6px 8px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--color-text-tertiary); }
+.skill-menu__item { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 8px; border-radius: 8px; text-align: left; color: var(--color-text-primary); cursor: pointer; }
+.skill-menu__item[data-active="true"] { background: var(--color-bg-hover); }
+.skill-menu__name { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 500; line-height: 18px; }
+.skill-menu__cat { font-size: 11px; font-weight: 400; color: var(--color-text-tertiary); }
+.skill-menu__desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; line-height: 16px; color: var(--color-text-secondary); }
+.skill-menu__note { padding: 10px 8px; font-size: 13px; color: var(--color-text-tertiary); }
+
+/* Open in Code */
+.proj-code { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 4px; }
+.proj-code__link { font-size: 13px; }
+
 @media (max-width: 640px) {
   .attn-row { flex-wrap: wrap; }
   .attn-row__actions { width: 100%; justify-content: flex-end; }

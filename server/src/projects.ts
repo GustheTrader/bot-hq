@@ -34,6 +34,9 @@ const text = (s: unknown, max: number) => (typeof s === 'string' ? s.replace(CON
 /** Single-line fields (name, folder, description): line breaks collapse to spaces. */
 const line = (s: unknown, max: number) => text(s, max * 2).replace(/\s*[\r\n]+\s*/g, ' ').slice(0, max).trim();
 
+/** For callers that take a single-line value (a folder) from the request. */
+export const cleanLine = line;
+
 function toProject(r: any, skillCount: number): Project {
   return {
     id: r.id,
@@ -182,27 +185,44 @@ export function deleteProjectSkill(userId: string, skillId: string): boolean {
  * The request always goes in whole. The notes and skills share a budget; a skill that does not fit is listed by
  * name and description only, so the bot knows it exists and can ask for it.
  */
-export function buildProjectPrompt(project: Pick<Project, 'name' | 'description' | 'folder' | 'instructions'>, skills: ProjectSkill[], request: string): string {
-  const head: string[] = [`You are starting work in the project "${project.name}".`];
-  if (project.folder) head.push(`Folder: ${project.folder}`);
-  if (project.description) head.push(`About: ${project.description}`);
-  if (project.instructions) head.push('', 'Project notes:', project.instructions);
+export function buildProjectPrompt(
+  project: Pick<Project, 'name' | 'description' | 'folder' | 'instructions'> | null,
+  skills: ProjectSkill[],
+  request: string,
+  /** Skills the person picked for this one request (from the Zo and Hermes libraries). They go first and get budget first. */
+  chosen: { name: string; description: string; body: string }[] = [],
+  /** The folder for work that is not in a project. */
+  folder = '',
+): string {
+  const head: string[] = project ? [`You are starting work in the project "${project.name}".`] : ['You are starting some work.'];
+  const where = project ? project.folder : folder;
+  if (where) head.push(`Folder: ${where}`);
+  if (project?.description) head.push(`About: ${project.description}`);
+  if (project?.instructions) head.push('', 'Project notes:', project.instructions);
 
   let budget = LIMITS.brief - head.join('\n').length;
-  const blocks: string[] = [];
-  const trimmed: string[] = [];
-  for (const s of skills) {
-    const full = `## ${s.name}${s.description ? `\n${s.description}` : ''}\n${s.body}`;
-    if (full.length <= budget) {
-      blocks.push(full);
-      budget -= full.length;
-    } else {
-      trimmed.push(`- ${s.name}${s.description ? `: ${s.description}` : ''}`);
+  const fit = (items: { name: string; description: string; body: string }[]) => {
+    const shown: string[] = [];
+    const listed: string[] = [];
+    for (const s of items) {
+      const full = `## ${s.name}${s.description ? `\n${s.description}` : ''}\n${s.body}`;
+      if (full.length <= budget) {
+        shown.push(full);
+        budget -= full.length;
+      } else {
+        listed.push(`- ${s.name}${s.description ? `: ${s.description}` : ''}`);
+      }
     }
-  }
+    return { shown, listed };
+  };
+  const picked = fit(chosen);
+  const own = fit(skills);
+
   const out = [...head];
-  if (blocks.length) out.push('', 'Project skills (follow these when they apply):', blocks.join('\n\n'));
-  if (trimmed.length) out.push('', 'More project skills, not shown in full to keep this short (ask the user if you need one):', trimmed.join('\n'));
+  if (picked.shown.length) out.push('', 'Skills chosen for this request (use them):', picked.shown.join('\n\n'));
+  if (picked.listed.length) out.push('', 'More chosen skills, not shown in full to keep this short (ask the user if you need one):', picked.listed.join('\n'));
+  if (own.shown.length) out.push('', 'Project skills (follow these when they apply):', own.shown.join('\n\n'));
+  if (own.listed.length) out.push('', 'More project skills, not shown in full to keep this short (ask the user if you need one):', own.listed.join('\n'));
   out.push('', 'Request:', request.trim().slice(0, LIMITS.prompt));
   return out.join('\n');
 }

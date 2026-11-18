@@ -20,8 +20,8 @@ export const PALETTES = [
 ] as const;
 export type Palette = (typeof PALETTES)[number]['id'];
 export type BotSettingsTab = 'general' | 'skills' | 'memories' | 'routines';
-/** The Work page's sections: what needs the person, every task, and projects. */
-export type WorkTab = 'attention' | 'all' | 'projects';
+/** The Work page's sections: where to start, what needs the person, every task, and projects. */
+export type WorkTab = 'launch' | 'attention' | 'all' | 'projects';
 export type AppSection = 'general' | 'computer' | 'subscriptions' | 'wiki' | 'permissions' | 'apps' | 'account';
 
 interface ConfigUI {
@@ -72,7 +72,7 @@ export const useConfigUI = create<ConfigUI>((set, get) => ({
   botSettings: null,
   appSettings: null,
   view: 'chat',
-  workTab: 'attention',
+  workTab: 'launch',
   theme: readTheme(),
   palette: readPalette(),
   versions: {},

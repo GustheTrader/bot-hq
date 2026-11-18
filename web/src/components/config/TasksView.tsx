@@ -5,6 +5,7 @@ import { relativeShort } from '../../lib/time';
 import { useConfigUI, type WorkTab } from '../../configStore';
 import { useStore } from '../../store';
 import { useAttention, useTasks } from '../work/attention';
+import { LaunchPage } from '../work/LaunchPage';
 import { NeedsAttention } from '../work/NeedsAttention';
 import { ProjectsPanel } from '../work/ProjectsPanel';
 import { Glyph } from './glyphs';
@@ -78,6 +79,7 @@ export function TasksView() {
   const setTab = useConfigUI((s) => s.setWorkTab);
   const attention = useAttention();
   const tabs: [WorkTab, string][] = [
+    ['launch', 'Launch'],
     ['attention', `Needs attention${attention.total ? ` ${attention.total}` : ''}`],
     ['all', 'All work'],
     ['projects', 'Projects'],
@@ -95,7 +97,7 @@ export function TasksView() {
       </header>
       <div className="tasks-view__scroll">
         <div className="tasks-view__inner">
-          {tab === 'attention' ? <NeedsAttention /> : tab === 'projects' ? <ProjectsPanel /> : <AllWork />}
+          {tab === 'launch' ? <LaunchPage /> : tab === 'attention' ? <NeedsAttention /> : tab === 'projects' ? <ProjectsPanel /> : <AllWork />}
         </div>
       </div>
     </main>
