@@ -15,6 +15,7 @@ import { initRooms } from './agent/rooms.js';
 import { checkinsApi } from './routes-proactive.js';
 import { roomsApi } from './routes-rooms.js';
 import { revoptApi } from './routes-revopt.js';
+import { projectsApi } from './routes-projects.js';
 import { enqueue, expireStaleApprovals } from './agent/loop.js';
 import { restorePendingQuestions } from './store.js';
 import { desSelfTest } from './lib/des.js';
@@ -38,6 +39,7 @@ app.route('/mcp', mcpApi);
 app.route('/api/checkins', checkinsApi);
 app.route('/api/rooms', roomsApi);
 app.route('/api/revopt', revoptApi);
+app.route('/api/projects', projectsApi);
 app.route('/api', api);
 app.route('/api', configApi);
 
