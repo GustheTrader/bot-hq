@@ -321,7 +321,7 @@ export interface ComputerState {
   orgoId: string | null;
   error: string | null;
   /** One screen per bot on the shared computer. width/height are the screen's pixel size. */
-  screens: { botId: string; screenId: string; width?: number; height?: number }[];
+  screens: { botId: string; screenId: string; width?: number; height?: number; /** The display is stopped to save memory; the next turn or viewer starts it again. */ asleep?: boolean }[];
   /** How many bots can have their own screen at once. */
   maxScreens?: number;
 }

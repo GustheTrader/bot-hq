@@ -43,8 +43,11 @@ export function computerState(userId: string): ComputerState {
     screenId: s.screen_id as string,
     ...(s.width && s.height ? { width: s.width as number, height: s.height as number } : {}),
   }));
-  return { status: r.status, orgoId: env.orgoComputerId || r.orgo_id, error: r.error, screens, maxScreens: env.maxBots };
+  return { status: r.status, orgoId: env.orgoComputerId || r.orgo_id, error: r.error, screens: screens.map((s) => (asleep.has(s.botId) ? { ...s, asleep: true } : s)), maxScreens: env.maxBots };
 }
+
+/** Bots whose screen is asleep right now (display stopped, lease and browser profile kept). */
+const asleep = new Set<string>();
 
 function mapStatus(s: string): ComputerState['status'] {
   if (s === 'running') return 'running';
@@ -159,8 +162,12 @@ async function lease(userId: string, botId: string): Promise<BotScreen> {
       return { computerId: id, screenId: mine.screen_id, width: mine.width ?? undefined, height: mine.height ?? undefined };
     }
     try {
-      const s = await orgo.getScreen(id, mine.screen_id);
+      const s = await orgo.getScreen(id, mine.screen_id); // on a local computer this also starts a sleeping display
       verified.set(botId, Date.now());
+      if (asleep.delete(botId)) {
+        console.log(`[screen-sleep] woke ${mine.screen_id} for ${botId}`);
+        hub.emit(userId, { type: 'computer', state: computerState(userId) });
+      }
       saveSize(botId, s);
       db.prepare('UPDATE screens SET last_used_at=? WHERE bot_id=?').run(now(), botId);
       return { computerId: id, screenId: mine.screen_id, width: s?.width ?? mine.width ?? undefined, height: s?.height ?? mine.height ?? undefined };
@@ -252,11 +259,47 @@ export function releaseScreen(botId: string): Promise<void> {
     db.prepare('DELETE FROM screens WHERE bot_id=?').run(botId);
     dressing.delete(botId);
     verified.delete(botId);
+    asleep.delete(botId);
     const stillLeased = db.prepare('SELECT 1 FROM screens WHERE screen_id=? LIMIT 1').get(mine.screen_id);
     if (mine.screen_id !== 'default' && !stillLeased) {
       try { await undressScreen(botId, mine.screen_id); } catch (e: any) { console.warn(`[computer] undress failed: ${e?.message ?? e}`); }
     }
     hub.emit(mine.user_id, { type: 'computer', state: computerState(mine.user_id) });
+  });
+}
+
+/** Marks the bot's screen as just used (a turn ended, a viewer closed), so it is not put to sleep straight away. */
+export function touchScreen(botId: string): void {
+  db.prepare('UPDATE screens SET last_used_at=? WHERE bot_id=?').run(now(), botId);
+}
+
+/** The leases a sleep sweep looks at: every screen except the main one (which never sleeps). */
+export function sleepCandidates(): { botId: string; userId: string; screenId: string; lastUsedAt: number; asleep: boolean }[] {
+  return (db.prepare("SELECT bot_id, user_id, screen_id, last_used_at FROM screens WHERE screen_id <> 'default'").all() as any[])
+    .map((r) => ({ botId: r.bot_id, userId: r.user_id, screenId: r.screen_id, lastUsedAt: Number(r.last_used_at) || 0, asleep: asleep.has(r.bot_id) }));
+}
+
+/**
+ * Puts one bot's screen to sleep: what we run there stops (its browser and desktop pieces) and the display goes
+ * down, but the lease and the browser profile stay, so the bot keeps its screen number and its sign-ins. The next
+ * turn or viewer wakes it (lease → getScreen starts the display, readyScreen dresses it again).
+ * `stillIdle` is checked again inside the screen queue, so a turn that started meanwhile wins.
+ */
+export function sleepBotScreen(botId: string, stillIdle: () => boolean): Promise<boolean> {
+  return inScreenOrder(async () => {
+    if (env.computerProvider !== 'local' || asleep.has(botId) || leasing.has(botId) || !stillIdle()) return false;
+    const mine = db.prepare('SELECT screen_id, user_id FROM screens WHERE bot_id=?').get(botId) as { screen_id: string; user_id: string } | undefined;
+    if (!mine || mine.screen_id === 'default') return false;
+    const shared = db.prepare('SELECT COUNT(*) AS n FROM screens WHERE screen_id=?').get(mine.screen_id) as { n: number };
+    if (shared.n > 1) return false; // two leases on one display: leave it alone
+    try { await undressScreen(botId, mine.screen_id); } catch (e: any) { console.warn(`[screen-sleep] undress ${mine.screen_id} failed: ${e?.message ?? e}`); }
+    await local.deleteScreen(env.orgoComputerId, mine.screen_id);
+    dressing.delete(botId);
+    verified.delete(botId);
+    asleep.add(botId);
+    console.log(`[screen-sleep] ${mine.screen_id} asleep (${botId})`);
+    hub.emit(mine.user_id, { type: 'computer', state: computerState(mine.user_id) });
+    return true;
   });
 }
 

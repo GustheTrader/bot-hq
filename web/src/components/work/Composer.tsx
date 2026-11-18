@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { LibrarySkill, Project } from '@shared/types';
+import type { Bot, LibrarySkill, Project } from '@shared/types';
 import { configApi, type HarnessOption } from '../../lib/configApi';
 import { displayName, useStore } from '../../store';
 import { useConfigUI } from '../../configStore';
@@ -51,6 +51,12 @@ interface Props {
   projects?: Project[];
   projectChoice?: string;
   onProjectChoice?: (v: string) => void;
+  /**
+   * Stay on this page after starting (GnoesisWork): the box clears for the next request and the bot's progress
+   * shows on its Bot HQ page and its live card, instead of opening the chat.
+   */
+  stay?: boolean;
+  onStarted?: (bot: Bot) => void;
 }
 
 /**
@@ -58,7 +64,7 @@ interface Props {
  * and go. If that is not the bot's current engine, starting sets it (the bot keeps it afterwards) and the page says
  * so before you press the button.
  */
-export function Composer({ harnesses, project, projects, projectChoice = '', onProjectChoice }: Props) {
+export function Composer({ harnesses, project, projects, projectChoice = '', onProjectChoice, stay = false, onStarted }: Props) {
   const allBots = useStore((s) => s.bots);
   const bots = useMemo(() => allBots.filter((b) => b.kind !== 'team'), [allBots]);
   const active = project ?? projects?.find((p) => p.id === projectChoice) ?? null;
@@ -82,7 +88,12 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
   const { skills, error: libError } = useSkillLibrary(wantLibrary);
 
   // Default bot: the primary one, else the first. Set once bots have loaded.
-  useEffect(() => { if (!botId && bots.length) setBotId(bots.find((b) => b.isPrimary)?.id ?? bots[0].id); }, [bots, botId]);
+  // In GnoesisWork (`stay`) its own bot comes first when it exists.
+  useEffect(() => {
+    if (botId || !bots.length) return;
+    const own = stay ? bots.find((b) => b.name.trim().toLowerCase() === 'gnoesiswork') : undefined;
+    setBotId(own?.id ?? bots.find((b) => b.isPrimary)?.id ?? bots[0].id);
+  }, [bots, botId, stay]);
   // The engine starts as the project's, or, with no project, as the chosen bot's own, so starting work never changes
   // a bot's engine unless the person picks a different one. Re-runs only when the bot or project changes, never on a
   // roster refresh, so a hand-picked engine is kept.
@@ -149,6 +160,12 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
         skills: picked.map((s) => s.id),
       });
       await useStore.getState().loadBots().catch(() => {});
+      if (stay) {
+        setPrompt(''); setCaret(0); setPicked([]); setBusy(false);
+        onStarted?.(bot);
+        taRef.current?.focus();
+        return;
+      }
       useStore.getState().selectBot(bot.id);
       useConfigUI.getState().openChat();
     } catch (e) {

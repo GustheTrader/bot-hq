@@ -4,7 +4,7 @@ import { hub } from '../lib/hub.js';
 import { appendRow, emitBot, getBotRow, getLive, getRow, setLive, updateRow } from '../store.js';
 import type { ActivityKind, MessageBody, ToolCallBody } from '../types.js';
 import { toolkitInfo } from '../composio.js';
-import { screenForWork } from '../computer.js';
+import { screenForWork, touchScreen } from '../computer.js';
 import { engineFor } from '../engine.js';
 import { instructionsFor } from './prompt.js';
 import { harnessTurn, isHarnessId } from '../harness.js';
@@ -111,6 +111,9 @@ interface Turn {
 }
 
 const turns = new Map<string, Turn>();
+
+/** Is a turn running (or paused on an approval) for this bot right now? Used to keep its screen awake. */
+export const isTurnActive = (botId: string) => turns.has(botId);
 
 export const turnDepth = (botId: string) => turns.get(botId)?.depth ?? 0;
 
@@ -541,6 +544,7 @@ async function runTurn(botId: string, trigger: Trigger) {
     }
     if (aborts.get(botId) === ctrl) aborts.delete(botId);
     if (turns.get(botId) === turn) turns.delete(botId);
+    touchScreen(botId); // the screen was just used: give it the full idle time before it may sleep
     if (grokId) {
       const question = getLive(botId).question;
       const last = db.prepare("SELECT body FROM rows WHERE bot_id=? AND generation=? AND seq>=? AND kind='message' AND json_extract(body,'$.role')='assistant' ORDER BY seq DESC LIMIT 1").get(botId, bot.generation, startingSeq) as any;
