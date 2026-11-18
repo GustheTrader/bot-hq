@@ -40,8 +40,24 @@
 .hq-section + .hq-section { margin-top: 20px; }
 .hq-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
 
-.hq-card { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; text-align: left; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-elevated); color: var(--color-text-primary); cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease; }
+.hq-card { display: flex; flex-direction: column; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-elevated); color: var(--color-text-primary); transition: background 0.15s ease, border-color 0.15s ease; }
 .hq-card:hover { background: var(--color-bg-elevated-hover); }
+/* The header is the click target that opens the chat; the answer buttons below are separate controls. */
+.hq-card__main { display: flex; align-items: flex-start; gap: 12px; width: 100%; padding: 12px 14px; text-align: left; color: inherit; cursor: pointer; border-radius: 12px; }
+/* A question can be long: show all of it instead of clamping to two lines. */
+.hq-card.has-question .hq-card__signal .live-signal__text { display: block; -webkit-line-clamp: unset; white-space: normal; }
+
+/* Answering a bot's multiple-choice question without leaving the board (indented to line up under the bot's text). */
+.hq-question { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 12px 66px; }
+.hq-question__options { display: flex; flex-direction: column; gap: 6px; }
+.hq-option { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; border: 0.5px solid var(--color-border-secondary); background: var(--color-bg-pane); color: var(--color-text-primary); font-size: 13px; line-height: 18px; text-align: left; cursor: pointer; }
+.hq-option:hover:not(:disabled) { background: var(--color-bg-hover); }
+.hq-option:disabled { opacity: 0.55; cursor: default; }
+.hq-option.is-sending { opacity: 1; border-color: var(--color-warn); }
+.hq-option__key { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 5px; font-size: 11px; font-weight: 600; background: var(--color-bg-hover); color: var(--color-text-secondary); }
+.hq-option__label { flex: 1 1 0; min-width: 0; }
+.hq-question__chat { align-self: flex-start; font-size: 12px; color: var(--color-text-tertiary); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.hq-question__chat:hover { color: var(--color-text-primary); }
 .hq-card.is-needs { border-color: color-mix(in srgb, var(--color-warn) 55%, transparent); }
 .hq-card__avatar { flex: none; }
 .hq-card__body { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-width: 0; }

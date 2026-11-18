@@ -3,7 +3,7 @@ import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
 import { box } from '../box.js';
 import { env } from '../env.js';
-import { appendRow, getBotRow, listRoutines, toRoutine, describeCron } from '../store.js';
+import { appendRow, getBotRow, listRoutines, toRoutine, describeCron, setPendingQuestion } from '../store.js';
 import { executeComposio, innerToolSlugs, isReadOnlySlug, toolkitInfo } from '../composio.js';
 import { scheduleRoutine, unscheduleRoutine } from '../routines.js';
 import { createEventRoutine, deleteEventTrigger, describeEvent, listTriggerTypes } from '../triggers.js';
@@ -373,7 +373,10 @@ export const TOOLS: ToolDef[] = [
     activity: 'waiting_for_you',
     label: 'Waiting on you',
     impl: async (a, ctx) => {
-      appendRow(ctx.botId, 'card', { type: 'card', card: 'question', question: a.question, options: (a.options ?? []).slice(0, 6), status: 'pending' });
+      const options = (a.options ?? []).slice(0, 6);
+      const row = appendRow(ctx.botId, 'card', { type: 'card', card: 'question', question: a.question, options, status: 'pending' });
+      // Mark the bot as waiting so the sidebar, HQ board and team rosters show the question, not "idle".
+      setPendingQuestion(ctx.botId, { seq: row.seq, question: String(a.question), options: options.map(String) });
       return { output: 'Question shown to the user. Stop here and wait for their answer.', endTurn: true };
     },
   },
