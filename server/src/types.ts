@@ -296,6 +296,19 @@ export interface Project {
 /** A skill that belongs to a project (unlike a bot's own skills, any bot working in the project gets it). */
 export interface ProjectSkill { id: string; projectId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }
 
+/** Where a library skill lives: Zo's workspace Skills folder, or the primary Hermes agent's skills. */
+export type SkillSource = 'zo' | 'hermes';
+
+/** A skill that already exists on the computer (read-only). `id` is the only handle: `zo:<folder>` or `hermes:<category>/<folder>`. */
+export interface LibrarySkill {
+  id: string;
+  source: SkillSource;
+  name: string;
+  description: string;
+  /** Hermes groups skills in category folders; Zo's are flat. Empty when there is none. */
+  category: string;
+}
+
 export interface Memory { id: string; botId: string; text: string; createdAt: number; source?: 'chat' | 'learned' }
 
 export interface Skill { id: string; botId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }

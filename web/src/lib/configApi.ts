@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Project, ProjectSkill, Routine, Skill, Subscription, Task, Toolkit } from '@shared/types';
+import type { Bot, ComputerState, EngineInfo, LibraryFile, LibrarySkill, Memory, Project, ProjectSkill, Routine, Skill, Subscription, Task, Toolkit } from '@shared/types';
 import { ApiError } from './api';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -74,8 +74,16 @@ export const configApi = {
   addProjectSkill: (id: string, s: Pick<ProjectSkill, 'name' | 'description' | 'body'>) => req<{ skill: ProjectSkill }>('POST', `/projects/${id}/skills`, s),
   updateProjectSkill: (skillId: string, s: Partial<Pick<ProjectSkill, 'name' | 'description' | 'body'>>) => req<{ skill: ProjectSkill }>('PATCH', `/projects/skills/${skillId}`, s),
   deleteProjectSkill: (skillId: string) => req<{ ok: true }>('DELETE', `/projects/skills/${skillId}`),
-  /** Records the request in the bot's chat and hands the bot the project's notes and skills with it. */
-  startProject: (id: string, botId: string, prompt: string) => req<{ ok: true; botId: string }>('POST', `/projects/${id}/start`, { botId, prompt }),
+  /** Registers the project's folder with the Code workspace (T3) on the server, so it opens there with a terminal. */
+  openProjectInCode: (id: string) => req<{ ok: true; folder: string; already: boolean }>('POST', `/projects/${id}/open-code`),
+
+  /** The skills already on the computer: Zo's and the primary Hermes agent's. Read-only. */
+  skillLibrary: () => req<{ skills: LibrarySkill[] }>('GET', '/launch/skills'),
+  /**
+   * Starts work on a bot: records the request in its chat and hands it the brief. A project is optional; without
+   * one, `folder` is just told to the bot. `skills` are ids from skillLibrary (at most 8), never skill text.
+   */
+  launch: (p: { botId: string; prompt: string; projectId?: string | null; folder?: string; skills?: string[] }) => req<{ ok: true; botId: string }>('POST', '/launch/start', p),
 
   files: (botId: string, path = '', wake = false) => req<LibraryListing>('GET', `/bots/${botId}/files?path=${encodeURIComponent(path)}${wake ? '&wake=1' : ''}`),
   downloadFile: (botId: string, path: string) => req<{ url: string }>('POST', `/bots/${botId}/files/download`, { path }),

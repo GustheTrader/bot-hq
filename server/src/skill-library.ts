@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
 import { env } from './env.js';
+import type { LibrarySkill, SkillSource } from './types.js';
 
 /**
  * The skills already on this computer, read-only: Zo's (`<workspace>/Skills/<name>/SKILL.md`) and the primary
@@ -12,17 +13,7 @@ import { env } from './env.js';
  * folder it claims to be in (including where a symlink really points) before anything is read.
  */
 
-export type SkillSource = 'zo' | 'hermes';
-
-export interface LibrarySkill {
-  /** `zo:<folder>` or `hermes:<category>/<folder>`: the only handle a caller ever holds. */
-  id: string;
-  source: SkillSource;
-  name: string;
-  description: string;
-  /** Hermes groups skills in category folders; Zo's are flat. Empty when there is none. */
-  category: string;
-}
+export type { LibrarySkill, SkillSource };
 
 export type SkillRoots = Record<SkillSource, string>;
 
