@@ -14,6 +14,7 @@ import './styles/voice.css';
 import './styles/teams.css';
 import './styles/revopt.css';
 import './styles/hq.css';
+import './styles/work.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

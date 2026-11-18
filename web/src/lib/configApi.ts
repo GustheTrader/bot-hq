@@ -1,4 +1,4 @@
-import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Routine, Skill, Subscription, Task, Toolkit } from '@shared/types';
+import type { Bot, ComputerState, EngineInfo, LibraryFile, Memory, Project, ProjectSkill, Routine, Skill, Subscription, Task, Toolkit } from '@shared/types';
 import { ApiError } from './api';
 
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -25,6 +25,9 @@ export interface BotSettingsBundle {
 }
 
 export interface LibraryListing { status: 'ok' | 'asleep' | 'error'; path: string; files: LibraryFile[]; error?: string }
+
+/** The fields a person sets on a project (everything else is derived by the server). */
+export interface ProjectDraft { name: string; description: string; folder: string; instructions: string; harness: string; harnessModel: string | null }
 
 /** An agent program a bot can run on (Hermes, or an ACP harness such as Codex). */
 export interface HarnessOption { id: string; name: string; subscription: string; installed: boolean }
@@ -62,6 +65,17 @@ export const configApi = {
 
   tasks: () => req<{ tasks: Task[] }>('GET', '/tasks'),
   botTasks: (botId: string) => req<{ tasks: Task[] }>('GET', `/bots/${botId}/tasks`),
+
+  projects: () => req<{ projects: Project[] }>('GET', '/projects'),
+  project: (id: string) => req<{ project: Project; skills: ProjectSkill[] }>('GET', `/projects/${id}`),
+  createProject: (p: ProjectDraft) => req<{ project: Project }>('POST', '/projects', p),
+  updateProject: (id: string, p: Partial<ProjectDraft>) => req<{ project: Project }>('PATCH', `/projects/${id}`, p),
+  deleteProject: (id: string) => req<{ ok: true }>('DELETE', `/projects/${id}`),
+  addProjectSkill: (id: string, s: Pick<ProjectSkill, 'name' | 'description' | 'body'>) => req<{ skill: ProjectSkill }>('POST', `/projects/${id}/skills`, s),
+  updateProjectSkill: (skillId: string, s: Partial<Pick<ProjectSkill, 'name' | 'description' | 'body'>>) => req<{ skill: ProjectSkill }>('PATCH', `/projects/skills/${skillId}`, s),
+  deleteProjectSkill: (skillId: string) => req<{ ok: true }>('DELETE', `/projects/skills/${skillId}`),
+  /** Records the request in the bot's chat and hands the bot the project's notes and skills with it. */
+  startProject: (id: string, botId: string, prompt: string) => req<{ ok: true; botId: string }>('POST', `/projects/${id}/start`, { botId, prompt }),
 
   files: (botId: string, path = '', wake = false) => req<LibraryListing>('GET', `/bots/${botId}/files?path=${encodeURIComponent(path)}${wake ? '&wake=1' : ''}`),
   downloadFile: (botId: string, path: string) => req<{ url: string }>('POST', `/bots/${botId}/files/download`, { path }),

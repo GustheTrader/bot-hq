@@ -20,12 +20,15 @@ export const PALETTES = [
 ] as const;
 export type Palette = (typeof PALETTES)[number]['id'];
 export type BotSettingsTab = 'general' | 'skills' | 'memories' | 'routines';
+/** The Work page's sections: what needs the person, every task, and projects. */
+export type WorkTab = 'attention' | 'all' | 'projects';
 export type AppSection = 'general' | 'computer' | 'subscriptions' | 'wiki' | 'permissions' | 'apps' | 'account';
 
 interface ConfigUI {
   botSettings: { botId: string; tab: BotSettingsTab } | null;
   appSettings: AppSection | null;
   view: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro' | 'hq';
+  workTab: WorkTab;
   theme: Theme;
   palette: Palette;
   /** Bumped by server events (tasks, memories) so open views refetch. Keys: 'tasks', 'memories:<botId>'. */
@@ -35,6 +38,7 @@ interface ConfigUI {
   openAppSettings(section?: AppSection): void;
   closeAppSettings(): void;
   setView(v: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro' | 'hq'): void;
+  setWorkTab(t: WorkTab): void;
   setTheme(t: Theme): void;
   setPalette(p: Palette): void;
   bump(key: string): void;
@@ -68,6 +72,7 @@ export const useConfigUI = create<ConfigUI>((set, get) => ({
   botSettings: null,
   appSettings: null,
   view: 'chat',
+  workTab: 'attention',
   theme: readTheme(),
   palette: readPalette(),
   versions: {},
@@ -76,6 +81,7 @@ export const useConfigUI = create<ConfigUI>((set, get) => ({
   openAppSettings: (section = 'general') => set({ appSettings: section }),
   closeAppSettings: () => set({ appSettings: null }),
   setView: (view) => set({ view }),
+  setWorkTab: (workTab) => set({ workTab }),
   setTheme: (theme) => {
     try { localStorage.setItem(LS_THEME, theme); } catch { /* ignore */ }
     applyTheme(theme);
