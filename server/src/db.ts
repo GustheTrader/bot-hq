@@ -215,6 +215,34 @@ CREATE TABLE IF NOT EXISTS revopt_tasks (
 CREATE INDEX IF NOT EXISTS revopt_tasks_team ON revopt_tasks(team_id, status);
 CREATE INDEX IF NOT EXISTS revopt_tasks_user ON revopt_tasks(user_id, created_at);
 `);
+// Projects: named pieces of ongoing work. A project carries standing notes, a default engine (harness and
+// model) and its own skills; any bot can be pointed at one to start work with that context.
+db.exec(`
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  -- Advisory path on the bot's computer; told to the bot, never opened by the server.
+  folder TEXT NOT NULL DEFAULT '',
+  instructions TEXT NOT NULL DEFAULT '',
+  harness TEXT NOT NULL DEFAULT 'hermes',
+  harness_model TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS projects_user ON projects(user_id, updated_at);
+CREATE TABLE IF NOT EXISTS project_skills (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_skills_project ON project_skills(project_id, created_at);
+`);
 
 
 // Legacy group chats were kind='room' with a JSON members list of bot ids. Promote them to

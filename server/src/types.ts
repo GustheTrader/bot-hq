@@ -273,6 +273,29 @@ export interface Routine {
 
 export interface Task { id: string; botId: string; title: string; state: 'working' | 'needs_input' | 'done'; note: string; updatedAt: number }
 
+/**
+ * A project: a named piece of ongoing work with its own notes, skills and a default engine. `folder` is
+ * advisory text (a path on the bot's computer that the brief tells the bot about); the server never opens it.
+ */
+export interface Project {
+  id: string;
+  name: string;
+  description: string;
+  folder: string;
+  /** Standing notes every bot reads when work starts here. */
+  instructions: string;
+  /** Default engine for work started in this project: Hermes or an ACP harness id. */
+  harness: string;
+  /** Model picked for that harness; null keeps the harness's own default. */
+  harnessModel: string | null;
+  skillCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A skill that belongs to a project (unlike a bot's own skills, any bot working in the project gets it). */
+export interface ProjectSkill { id: string; projectId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }
+
 export interface Memory { id: string; botId: string; text: string; createdAt: number; source?: 'chat' | 'learned' }
 
 export interface Skill { id: string; botId: string; name: string; description: string; body: string; createdAt: number; updatedAt: number }

@@ -8,7 +8,7 @@ import { useConfigUI } from '../configStore';
 import { api } from '../lib/api';
 import { LiveSignal } from './LiveSignal';
 
-type Tier = 'needs' | 'working' | 'idle';
+export type Tier = 'needs' | 'working' | 'idle';
 
 function tierOf(live: LiveState | undefined): Tier {
   if (isWaitingForYou(live)) return 'needs';
@@ -28,7 +28,7 @@ export function useActiveBotCount(): { working: number; needs: number } {
   return { working, needs };
 }
 
-function ActiveCard({ bot, live, tier }: { bot: Bot; live: LiveState; tier: Tier }) {
+export function ActiveCard({ bot, live, tier }: { bot: Bot; live: LiveState; tier: Tier }) {
   const [sending, setSending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const q = live.question ?? null;

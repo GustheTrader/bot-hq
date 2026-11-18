@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Bot, Task } from '@shared/types';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
-import { configApi } from '../../lib/configApi';
 import { relativeShort } from '../../lib/time';
-import { useConfigUI, useVersion } from '../../configStore';
+import { useConfigUI, type WorkTab } from '../../configStore';
 import { useStore } from '../../store';
+import { useAttention, useTasks } from '../work/attention';
+import { NeedsAttention } from '../work/NeedsAttention';
+import { ProjectsPanel } from '../work/ProjectsPanel';
 import { Glyph } from './glyphs';
 import './ui';
 
@@ -36,24 +38,13 @@ function TaskRow({ t, bot, showBot }: { t: Task; bot?: Bot; showBot: boolean }) 
   );
 }
 
-function useTasks(botId?: string): Task[] | null {
-  const v = useVersion(botId ? `tasks:${botId}` : 'tasks');
-  const [tasks, setTasks] = useState<Task[] | null>(null);
-  useEffect(() => {
-    let alive = true;
-    (botId ? configApi.botTasks(botId) : configApi.tasks()).then((r) => { if (alive) setTasks(r.tasks); }).catch(() => { if (alive) setTasks([]); });
-    return () => { alive = false; };
-  }, [botId, v]);
-  return tasks;
-}
-
 function sortTasks(list: Task[]) {
   const rank = { needs_input: 0, working: 1, done: 2 } as const;
   return [...list].sort((a, b) => rank[a.state] - rank[b.state] || b.updatedAt - a.updatedAt);
 }
 
-/** Full Tasks view in the main column (sidebar → Work). */
-export function TasksView() {
+/** Work → All work: every task from every bot, filtered by progress. */
+function AllWork() {
   const bots = useStore((s) => s.bots);
   const tasks = useTasks();
   const [filter, setFilter] = useState<Filter>('open');
@@ -62,42 +53,64 @@ export function TasksView() {
   const shown = useMemo(() => sortTasks((tasks ?? []).filter((t) => filter === 'all' || (filter === 'done' ? t.state === 'done' : t.state !== 'done'))), [tasks, filter]);
 
   return (
+    <>
+      <div className="segmented work-filter" role="tablist" aria-label="Filter tasks">
+        {([['open', `In progress${counts.open ? ` ${counts.open}` : ''}`], ['done', 'Done'], ['all', 'All']] as [Filter, string][]).map(([f, label]) => (
+          <button key={f} type="button" role="tab" aria-selected={filter === f} className={filter === f ? 'is-active' : ''} onClick={() => setFilter(f)}>{label}</button>
+        ))}
+      </div>
+      {tasks === null ? <div className="cfg-empty">Loading…</div> : shown.length === 0 ? (
+        <div className="tasks-empty">
+          <Glyph name="tasks" size={28} opacity={0.35} />
+          <div className="tasks-empty__title">{filter === 'done' ? 'Nothing finished yet' : 'Nothing in progress'}</div>
+          <div className="tasks-empty__sub">Give a Bot a multi-part request and every piece gets its own row here, so progress is easy to follow.</div>
+        </div>
+      ) : (
+        <div className="task-list">{shown.map((t) => <TaskRow key={t.id} t={t} bot={byId.get(t.botId)} showBot />)}</div>
+      )}
+    </>
+  );
+}
+
+/** Full Work view in the main column (sidebar → Work): what needs you, all tasks, and projects. */
+export function TasksView() {
+  const tab = useConfigUI((s) => s.workTab);
+  const setTab = useConfigUI((s) => s.setWorkTab);
+  const attention = useAttention();
+  const tabs: [WorkTab, string][] = [
+    ['attention', `Needs attention${attention.total ? ` ${attention.total}` : ''}`],
+    ['all', 'All work'],
+    ['projects', 'Projects'],
+  ];
+
+  return (
     <main className="chat tasks-view">
       <header className="tasks-view__header">
         <div className="tasks-view__title">Work</div>
-        <div className="segmented" role="tablist" aria-label="Filter tasks">
-          {([['open', `In progress${counts.open ? ` ${counts.open}` : ''}`], ['done', 'Done'], ['all', 'All']] as [Filter, string][]).map(([f, label]) => (
-            <button key={f} type="button" role="tab" aria-selected={filter === f} className={filter === f ? 'is-active' : ''} onClick={() => setFilter(f)}>{label}</button>
+        <div className="segmented" role="tablist" aria-label="Work sections">
+          {tabs.map(([t, label]) => (
+            <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'is-active' : ''} onClick={() => setTab(t)}>{label}</button>
           ))}
         </div>
       </header>
       <div className="tasks-view__scroll">
         <div className="tasks-view__inner">
-          {tasks === null ? <div className="cfg-empty">Loading…</div> : shown.length === 0 ? (
-            <div className="tasks-empty">
-              <Glyph name="tasks" size={28} opacity={0.35} />
-              <div className="tasks-empty__title">{filter === 'done' ? 'Nothing finished yet' : 'Nothing in progress'}</div>
-              <div className="tasks-empty__sub">Give a Bot a multi-part request and every piece gets its own row here, so progress is easy to follow.</div>
-            </div>
-          ) : (
-            <div className="task-list">{shown.map((t) => <TaskRow key={t.id} t={t} bot={byId.get(t.botId)} showBot />)}</div>
-          )}
+          {tab === 'attention' ? <NeedsAttention /> : tab === 'projects' ? <ProjectsPanel /> : <AllWork />}
         </div>
       </div>
     </main>
   );
 }
 
-/** Sidebar entry for the Tasks view, with a count of tasks waiting on the user. */
+/** Sidebar entry for the Work view, with a count of everything that needs the person. */
 export function TasksIsland() {
   const view = useConfigUI((s) => s.view);
-  const tasks = useTasks();
-  const waiting = tasks?.filter((t) => t.state === 'needs_input').length ?? 0;
+  const { total } = useAttention();
   return (
-    <button type="button" className={`sidebar-island${view === 'tasks' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView(view === 'tasks' ? 'chat' : 'tasks')} title="Work" aria-pressed={view === 'tasks'}>
+    <button type="button" className={`sidebar-island${view === 'tasks' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView(view === 'tasks' ? 'chat' : 'tasks')} title={total > 0 ? `Work: ${total} need${total === 1 ? 's' : ''} you` : 'Work'} aria-pressed={view === 'tasks'}>
       <span className="sidebar-island__icon"><Glyph name="tasks" size={18} /></span>
       <span className="sidebar-island__label">Work</span>
-      {waiting > 0 && <span className="sidebar-island__count" aria-label={`${waiting} waiting on you`}>{waiting}</span>}
+      {total > 0 && <span className="sidebar-island__count" aria-label={`${total} need attention`}>{total}</span>}
     </button>
   );
 }
