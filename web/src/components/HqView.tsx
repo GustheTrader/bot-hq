@@ -5,6 +5,7 @@ import { activityStatus, isWaitingForYou } from '../lib/phrases';
 import { relativeShort } from '../lib/time';
 import { displayName, useStore } from '../store';
 import { useConfigUI } from '../configStore';
+import { api } from '../lib/api';
 import { LiveSignal } from './LiveSignal';
 
 type Tier = 'needs' | 'working' | 'idle';
@@ -28,23 +29,63 @@ export function useActiveBotCount(): { working: number; needs: number } {
 }
 
 function ActiveCard({ bot, live, tier }: { bot: Bot; live: LiveState; tier: Tier }) {
+  const [sending, setSending] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const q = live.question ?? null;
   const open = () => {
     useStore.getState().selectBot(bot.id);
     useConfigUI.getState().setView('chat');
   };
+  /** Answer the bot's question right here: same endpoint the chat card uses, so the bot gets it as its next message. */
+  const answer = async (option: string) => {
+    if (!q || sending) return;
+    setSending(option);
+    setError(null);
+    try {
+      await api.answer(bot.id, q.seq, option);
+      // The server pushes the new state too; clear it here so the card never sits there looking unanswered.
+      useStore.setState((s) =>
+        s.live[bot.id]?.question?.seq === q.seq
+          ? { live: { ...s.live, [bot.id]: { ...s.live[bot.id], question: null, awaiting: null, activity: null } } }
+          : {},
+      );
+    } catch (e) {
+      setError((e as Error).message || 'Could not send your answer');
+    } finally {
+      setSending(null);
+    }
+  };
   const steps = live.steps ?? 0;
   return (
-    <button type="button" className={`hq-card${tier === 'needs' ? ' is-needs' : ''}`} onClick={open}>
-      <span className="hq-card__avatar"><BotAvatarFor bot={bot} size={40} /></span>
-      <span className="hq-card__body">
-        <span className="hq-card__top">
-          <span className="hq-card__name">{displayName(bot)}</span>
-          <span className="hq-card__status">{activityStatus(live, [])}</span>
-          {steps > 0 && <span className="hq-card__steps">{steps} {steps === 1 ? 'step' : 'steps'}</span>}
+    <div className={`hq-card${tier === 'needs' ? ' is-needs' : ''}${q ? ' has-question' : ''}`}>
+      <button type="button" className="hq-card__main" onClick={open}>
+        <span className="hq-card__avatar"><BotAvatarFor bot={bot} size={40} /></span>
+        <span className="hq-card__body">
+          <span className="hq-card__top">
+            <span className="hq-card__name">{displayName(bot)}</span>
+            <span className="hq-card__status">{activityStatus(live, [])}</span>
+            {steps > 0 && <span className="hq-card__steps">{steps} {steps === 1 ? 'step' : 'steps'}</span>}
+          </span>
+          <LiveSignal botId={bot.id} className="hq-card__signal" />
         </span>
-        <LiveSignal botId={bot.id} className="hq-card__signal" />
-      </span>
-    </button>
+      </button>
+      {q && (
+        <div className="hq-question">
+          {q.options.length > 0 && (
+            <div className="hq-question__options" role="group" aria-label={`Answer ${bot.name}`}>
+              {q.options.map((opt, i) => (
+                <button key={`${i}:${opt}`} type="button" className={`hq-option${sending === opt ? ' is-sending' : ''}`} disabled={!!sending} onClick={() => answer(opt)}>
+                  <span className="hq-option__key">{String.fromCharCode(65 + i)}</span>
+                  <span className="hq-option__label">{opt}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <button type="button" className="hq-question__chat" onClick={open}>Reply in your own words</button>
+          {error && <div className="card__error" role="alert">{error}</div>}
+        </div>
+      )}
+    </div>
   );
 }
 

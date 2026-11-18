@@ -16,6 +16,7 @@ import { checkinsApi } from './routes-proactive.js';
 import { roomsApi } from './routes-rooms.js';
 import { revoptApi } from './routes-revopt.js';
 import { enqueue, expireStaleApprovals } from './agent/loop.js';
+import { restorePendingQuestions } from './store.js';
 import { desSelfTest } from './lib/des.js';
 import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
@@ -27,6 +28,8 @@ initSubagents();
 initRooms();
 // Approvals wait in memory; whatever was still open when the last process stopped can no longer be answered.
 expireStaleApprovals();
+// Questions a bot asked (ask_user) stay answerable across a restart, so bring back their "needs you" state.
+restorePendingQuestions();
 
 const app = new Hono();
 app.get('/api/health', (c) => c.json({ ok: true, engine: 'hermes' }));

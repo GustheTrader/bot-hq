@@ -3,7 +3,7 @@ import { startEvents } from './lib/events';
 import { useStore } from './store';
 import { CodeView } from './components/CodeView';
 import { MacroView } from './components/MacroView';
-import { HqView } from './components/HqView';
+import { HqView, useActiveBotCount } from './components/HqView';
 import { ChatView } from './components/ChatView';
 import { ComputerViewer } from './components/ComputerViewer';
 import { DetailsPanel } from './components/DetailsPanel';
@@ -26,6 +26,14 @@ function Shell() {
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const hasBot = useStore((s) => !!s.selectedBotId);
   const view = useConfigUI((s) => s.view);
+  const { needs } = useActiveBotCount();
+
+  // "(2) GnoesisBots" in the tab title: a bot waiting on you is visible even from another tab.
+  useEffect(() => {
+    const base = 'GnoesisBots';
+    document.title = needs > 0 ? `(${needs}) ${base}` : base;
+    return () => { document.title = base; };
+  }, [needs]);
 
   useEffect(() => {
     const st = useStore.getState();

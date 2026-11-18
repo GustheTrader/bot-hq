@@ -6,7 +6,7 @@ import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, screenTicket, userFromCookieHeader, type AuthVars } from './lib/auth.js';
-import { allLive, appendRow, clearConversation, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
+import { allLive, appendRow, clearConversation, clearPendingQuestion, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
@@ -309,6 +309,7 @@ api.post('/bots/:id/cards/:seq/answer', async (c) => {
   if (!row || row.body.type !== 'card' || row.body.card !== 'question') return c.json({ error: 'not a question' }, 400);
   updateRow(b.id, row.seq, { ...row.body, status: 'answered', answer });
   appendRow(b.id, 'message', { type: 'message', role: 'user', text: answer });
+  clearPendingQuestion(b.id, row.seq); // stop showing "needs you" now, not whenever the next turn starts
   enqueue(b.id, { type: 'user', text: `[Answer to "${row.body.question}"] ${answer}` });
   return c.json({ ok: true });
 });
@@ -320,6 +321,7 @@ api.post('/bots/:id/cards/:seq/dismiss', (c) => {
   if (!row || row.body.type !== 'card') return c.json({ error: 'not a card' }, 400);
   const body: any = { ...row.body, status: row.body.card === 'connect' ? 'skipped' : 'dismissed' };
   updateRow(b.id, row.seq, body);
+  if (row.body.card === 'question') clearPendingQuestion(b.id, row.seq);
   if (row.body.card === 'connect') enqueue(b.id, { type: 'system', text: `The user skipped connecting ${row.body.toolkitName}. Continue without it.` });
   return c.json({ ok: true });
 });

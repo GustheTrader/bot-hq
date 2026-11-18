@@ -308,7 +308,8 @@ async function runTurn(botId: string, trigger: Trigger) {
   aborts.set(botId, ctrl);
   const turn: Turn = { botId, userId, depth: trigger.type === 'bot' ? trigger.depth : 0, silent: false, tools: [], outcomes: new Map() };
   turns.set(botId, turn);
-  setLive(botId, { isRunning: true, activity: { kind: 'thinking', since: now() }, awaiting: null, startedAt: now(), caption: null, steps: 0 });
+  // A new turn means the person answered (clicked an option or typed a reply), so any open question is resolved.
+  setLive(botId, { isRunning: true, activity: { kind: 'thinking', since: now() }, awaiting: null, question: null, startedAt: now(), caption: null, steps: 0 });
 
   // The assistant message being written right now.
   let msgSeq: number | null = null;
@@ -505,8 +506,9 @@ async function runTurn(botId: string, trigger: Trigger) {
     }
     if (aborts.get(botId) === ctrl) aborts.delete(botId);
     if (turns.get(botId) === turn) turns.delete(botId);
-    // An approval asked for outside this turn may still be waiting; leave its state alone.
-    if (!pendingApprovals(botId).length) setLive(botId, { isRunning: false, activity: null, awaiting: null, startedAt: null, caption: null });
+    // An approval asked for outside this turn may still be waiting, and a question the bot just asked (ask_user)
+    // ends the turn on purpose; leave that waiting state alone so the bot does not read as idle.
+    if (!pendingApprovals(botId).length && !getLive(botId).question) setLive(botId, { isRunning: false, activity: null, awaiting: null, startedAt: null, caption: null });
     else setLive(botId, { isRunning: false, caption: null });
     emitBot(botId);
   }

@@ -157,6 +157,58 @@ export function setLive(botId: string, patch: Partial<LiveState>) {
   if (b) hub.emit(b.user_id, { type: 'live', state: next });
 }
 
+/**
+ * The bot asked a question with ask_user and its turn is over. Without this the bot reads as idle everywhere
+ * except inside its own chat, because the turn-end reset clears `awaiting`.
+ */
+export function setPendingQuestion(botId: string, q: { seq: number; question: string; options: string[] }) {
+  const t = now();
+  setLive(botId, { isRunning: false, activity: { kind: 'waiting_for_you', since: t }, awaiting: { reason: q.question, since: t }, question: q });
+}
+
+/** The question was answered or skipped. Only clears the waiting state if it is still that same question. */
+export function clearPendingQuestion(botId: string, seq: number) {
+  const cur = getLive(botId);
+  if (cur.question?.seq !== seq) return;
+  setLive(botId, { question: null, awaiting: null, activity: cur.isRunning ? cur.activity : null });
+}
+
+/**
+ * Live state is in memory, so a restart forgets that a bot is waiting on a question. Rebuild it from the
+ * transcript: a question card still pending, with no later message from the person (a typed reply counts as
+ * an answer). Call once at boot.
+ */
+export function restorePendingQuestions() {
+  const rows = db
+    .prepare(
+      `SELECT r.bot_id, r.seq, r.body, r.created_at FROM rows r
+       JOIN bots b ON b.id = r.bot_id AND b.generation = r.generation
+       WHERE r.kind = 'card'
+         AND json_extract(r.body, '$.card') = 'question'
+         AND json_extract(r.body, '$.status') = 'pending'
+         AND NOT EXISTS (
+           SELECT 1 FROM rows m
+           WHERE m.bot_id = r.bot_id AND m.generation = r.generation AND m.seq > r.seq
+             AND m.kind = 'message' AND json_extract(m.body, '$.role') = 'user')
+       ORDER BY r.seq ASC`,
+    )
+    .all() as any[];
+  const latest = new Map<string, any>();
+  for (const r of rows) latest.set(r.bot_id, r); // the newest pending question per bot wins
+  for (const r of latest.values()) {
+    const body = JSON.parse(r.body);
+    live.set(r.bot_id, {
+      ...getLive(r.bot_id),
+      botId: r.bot_id,
+      isRunning: false,
+      activity: { kind: 'waiting_for_you', since: r.created_at },
+      awaiting: { reason: body.question, since: r.created_at },
+      question: { seq: r.seq, question: body.question, options: Array.isArray(body.options) ? body.options : [] },
+    });
+  }
+  return latest.size;
+}
+
 export const allLive = (userId: string) => listBots(userId).map((b) => getLive(b.id));
 
 // ---------- routines / tasks ----------

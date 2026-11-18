@@ -262,6 +262,8 @@ export interface LiveState {
   caption?: string | null;
   /** Tool calls made so far in the current turn. */
   steps?: number;
+  /** A multiple-choice question the bot asked (ask_user) and is still waiting on, so any screen can show and answer it. */
+  question?: { seq: number; question: string; options: string[] } | null;
 }
 
 export interface Routine {

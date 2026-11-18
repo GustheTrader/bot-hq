@@ -13,7 +13,7 @@ function injectRosterLive(selected: string, now: number) {
   const others = useStore.getState().bots.filter((b) => b.id !== selected && b.kind !== 'team');
   const samples: Omit<LiveState, 'botId'>[] = [
     { isRunning: true, activity: { kind: 'searching_web', since: now - 40_000 }, awaiting: null, startedAt: now - 190_000, caption: 'Comparing the three pricing pages for seat limits', steps: 7 },
-    { isRunning: true, activity: { kind: 'waiting_for_you', since: now - 95_000 }, awaiting: { reason: 'Which inbox should I watch: Work or Personal?', since: now - 95_000 }, startedAt: now - 140_000, caption: null, steps: 3 },
+    { isRunning: true, activity: { kind: 'waiting_for_you', since: now - 95_000 }, awaiting: { reason: 'Which inbox should I watch: Work or Personal?', since: now - 95_000 }, question: { seq: 1, question: 'Which inbox should I watch: Work or Personal?', options: ['Work', 'Personal', 'Both, but flag anything urgent'] }, startedAt: now - 140_000, caption: null, steps: 3 },
     { isRunning: true, activity: { kind: 'running_commands', since: now - 12_000 }, awaiting: null, startedAt: now - 22_000, caption: null, steps: 1 },
   ];
   const next: Record<string, LiveState> = {};
