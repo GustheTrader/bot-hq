@@ -52,6 +52,46 @@ export function findT3Bin(versionsDir = '/root/.t3/runtime/versions'): string | 
 
 export type Runner = (file: string, args: string[], opts: { timeout: number }, cb: (err: (Error & { code?: unknown }) | null, stdout: string, stderr: string) => void) => unknown;
 
+/** One git worktree of a project's folder (`git worktree list --porcelain`). */
+export interface Worktree { path: string; branch: string | null; head: string; detached: boolean; bare: boolean; main: boolean }
+
+/** Parses `git worktree list --porcelain`. The first entry is the main worktree. */
+export function parseWorktrees(out: string): Worktree[] {
+  const list: Worktree[] = [];
+  for (const block of out.split(/\n\s*\n/)) {
+    const lines = block.split('\n').map((l) => l.trim()).filter(Boolean);
+    const p = lines.find((l) => l.startsWith('worktree '));
+    if (!p) continue;
+    const head = lines.find((l) => l.startsWith('HEAD '))?.slice(5) ?? '';
+    const br = lines.find((l) => l.startsWith('branch '))?.slice(7) ?? null;
+    list.push({
+      path: p.slice(9),
+      branch: br ? br.replace(/^refs\/heads\//, '') : null,
+      head: head.slice(0, 12),
+      detached: lines.includes('detached'),
+      bare: lines.includes('bare'),
+      main: list.length === 0,
+    });
+  }
+  return list;
+}
+
+/**
+ * The git worktrees of a project's (already resolved) folder. Read-only: runs `git worktree list` with an argument
+ * list, never a shell. A folder that is not a git repository gives `repo: false` instead of an error.
+ */
+export function listWorktrees(realFolder: string, run: Runner = execFile as unknown as Runner): Promise<{ repo: boolean; worktrees: Worktree[] }> {
+  return new Promise((resolve, reject) => {
+    run('git', ['-C', realFolder, 'worktree', 'list', '--porcelain'], { timeout: 8_000 }, (err, stdout, stderr) => {
+      if (!err) return resolve({ repo: true, worktrees: parseWorktrees(stdout ?? '') });
+      const text = `${stderr ?? ''}`.trim();
+      if (/not a git repository/i.test(text)) return resolve({ repo: false, worktrees: [] });
+      const first = text.split('\n').find((l) => l.trim());
+      reject(new ProjectError(`Could not read the worktrees: ${(first ?? err.message).slice(0, 200)}`, 409));
+    });
+  });
+}
+
 /** Adds a folder to T3 as a project. A folder T3 already has counts as success. */
 export function addToCode(realFolder: string, title: string, bin: string | null = findT3Bin(), run: Runner = execFile as unknown as Runner): Promise<{ already: boolean }> {
   if (!bin) return Promise.reject(new ProjectError('The Code workspace (T3) is not installed on the server.', 409));

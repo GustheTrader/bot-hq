@@ -34,7 +34,7 @@ export function ActiveCard({ bot, live, tier }: { bot: Bot; live: LiveState; tie
   const q = live.question ?? null;
   const open = () => {
     useStore.getState().selectBot(bot.id);
-    useConfigUI.getState().setView('chat');
+    useConfigUI.getState().openChat();
   };
   /** Answer the bot's question right here: same endpoint the chat card uses, so the bot gets it as its next message. */
   const answer = async (option: string) => {
@@ -112,7 +112,7 @@ export function HqView() {
 
   const open = (id: string) => {
     useStore.getState().selectBot(id);
-    useConfigUI.getState().setView('chat');
+    useConfigUI.getState().openChat();
   };
 
   return (

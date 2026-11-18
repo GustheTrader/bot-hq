@@ -1,0 +1,78 @@
+/* GnoesisWork: the full-page Work view (sidebar + main), laid out like the Claude desktop app. Prefix: gw-. */
+
+.gw { position: fixed; inset: 0; display: flex; background: var(--color-bg-chrome); color: var(--color-text-primary); }
+
+/* ---------- sidebar ---------- */
+.gw-side { display: flex; flex-direction: column; width: 264px; flex-shrink: 0; min-height: 0; padding: 12px 10px 12px; background: var(--color-bg-sidebar); border-right: 0.5px solid var(--color-border-tertiary); }
+.gw-back { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; height: 28px; padding: 0 10px 0 6px; border-radius: var(--radius-full); font-size: 13px; color: var(--color-text-secondary); }
+.gw-back:hover { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.gw-brand { display: flex; align-items: center; gap: 8px; padding: 12px 10px 10px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.gw-brand svg { color: var(--color-warn); }
+
+.gw-nav { display: flex; flex-direction: column; gap: 1px; }
+.gw-nav__item { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 14px; color: var(--color-text-primary); text-align: left; }
+.gw-nav__item:hover { background: var(--color-bg-hover); }
+.gw-nav__item.is-active { background: var(--color-bg-hover); font-weight: 500; }
+.gw-nav__item--new { margin-bottom: 4px; background: var(--color-bg-hover); }
+.gw-nav__count { margin-left: auto; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px; font-size: 11px; line-height: 18px; text-align: center; color: var(--color-text-primary); background: color-mix(in srgb, var(--color-warn) 30%, transparent); }
+
+.gw-search { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; background: var(--color-bg-hover); color: var(--color-text-secondary); }
+.gw-search input { flex: 1 1 0; min-width: 0; font: inherit; font-size: 14px; color: var(--color-text-primary); background: transparent; border: 0; outline: none; }
+
+.gw-side__label { padding: 18px 10px 6px; font-size: 12px; font-weight: 500; color: var(--color-text-tertiary); }
+.gw-recents { display: flex; flex-direction: column; gap: 1px; flex: 1 1 0; min-height: 0; overflow-y: auto; }
+.gw-recents__empty { padding: 4px 10px; font-size: 13px; color: var(--color-text-tertiary); }
+.gw-recent { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 40px; padding: 4px 10px; border-radius: 8px; text-align: left; color: var(--color-text-primary); }
+.gw-recent:hover { background: var(--color-bg-hover); }
+.gw-recent.is-active { background: var(--color-bg-hover); }
+.gw-recent__text { display: flex; flex-direction: column; flex: 1 1 0; min-width: 0; }
+.gw-recent__name { font-size: 13px; line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gw-recent__preview { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gw-recent__when { flex: none; font-size: 11px; color: var(--color-text-tertiary); }
+.gw-recent__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.gw-recent__dot.is-working { background: var(--color-success); animation: breathe 1.6s ease-in-out infinite; }
+.gw-recent__dot.is-waiting { background: var(--color-warn); }
+
+/* ---------- main ---------- */
+.gw-main { display: flex; flex: 1 1 0; min-width: 0; min-height: 0; background: var(--color-bg-chrome); }
+.gw-main--chat > .chat { min-width: 0; }
+.gw-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; }
+.gw-page { max-width: 760px; margin: 0 auto; padding: 40px 24px 64px; }
+.gw-title { margin: 0 0 18px; font-size: 22px; font-weight: 600; line-height: 28px; letter-spacing: -0.2px; }
+.gw-lede { margin: 0 0 14px; font-size: 13px; line-height: 19px; color: var(--color-text-tertiary); }
+
+/* Home: the composer sits in the middle of the window, like Claude's. */
+.gw-main--home .gw-scroll { display: flex; }
+.gw-main--home .gw-page { display: flex; flex-direction: column; justify-content: center; width: 100%; min-height: 100%; padding-top: 24px; }
+.gw-main--home .launch { padding-top: 0; }
+.gw-main--home .launch__hello { font-size: 34px; line-height: 42px; font-weight: 400; letter-spacing: -0.02em; margin-bottom: 8px; }
+.gw-main--home .workbox--launch { border-radius: 18px; padding: 14px 16px 12px; box-shadow: 0 1px 0 var(--color-border-tertiary), 0 10px 30px rgba(0, 0, 0, 0.18); }
+.gw-main--home .proj-composer__row { border-top: 0; padding-top: 2px; }
+.gw-main--home .proj-field__label { font-size: 11px; }
+.gw-main--home select.text-input { height: 30px; padding-top: 0; padding-bottom: 0; border-radius: 999px; font-size: 13px; }
+
+/* Worktrees */
+.gw-trees-wrap { display: flex; flex-direction: column; gap: 12px; }
+.gw-trees { padding: 0; overflow: hidden; }
+.gw-trees__head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+.gw-trees__name { font-size: 14px; font-weight: 600; }
+.gw-trees__folder { flex: 1 1 160px; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gw-trees__note { padding: 8px 14px 0; font-size: 12px; color: var(--color-text-secondary); }
+.gw-trees__empty { padding: 12px 14px; font-size: 13px; color: var(--color-text-tertiary); }
+.gw-trees__list { list-style: none; margin: 0; padding: 4px 0; }
+.gw-tree { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 13px; color: var(--color-text-secondary); }
+.gw-tree__branch { font-weight: 500; color: var(--color-text-primary); white-space: nowrap; }
+.gw-tree__path { flex: 1 1 0; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gw-tree__head { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--color-text-tertiary); }
+
+/* Artifacts */
+.gw-artifacts__bots { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.gw-artifacts__bot { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px 0 8px; border-radius: 999px; border: 0.5px solid var(--color-border-tertiary); font-size: 13px; color: var(--color-text-secondary); }
+.gw-artifacts__bot:hover { background: var(--color-bg-hover); }
+.gw-artifacts__bot.is-active { background: var(--color-bg-hover); color: var(--color-text-primary); border-color: var(--color-text-tertiary); }
+
+@media (max-width: 760px) {
+  .gw { flex-direction: column; }
+  .gw-side { width: auto; max-height: 44vh; border-right: 0; border-bottom: 0.5px solid var(--color-border-tertiary); }
+  .gw-page { padding: 20px 16px 48px; }
+}

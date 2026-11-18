@@ -150,7 +150,7 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
       });
       await useStore.getState().loadBots().catch(() => {});
       useStore.getState().selectBot(bot.id);
-      useConfigUI.getState().setView('chat');
+      useConfigUI.getState().openChat();
     } catch (e) {
       setError(errText(e, 'Could not start the work'));
       setBusy(false);

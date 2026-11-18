@@ -29,6 +29,9 @@ export interface LibraryListing { status: 'ok' | 'asleep' | 'error'; path: strin
 /** The fields a person sets on a project (everything else is derived by the server). */
 export interface ProjectDraft { name: string; description: string; folder: string; instructions: string; harness: string; harnessModel: string | null }
 
+/** One git worktree of a project's folder (server/src/code-workspace.ts). */
+export interface Worktree { path: string; branch: string | null; head: string; detached: boolean; bare: boolean; main: boolean }
+
 /** An agent program a bot can run on (Hermes, or an ACP harness such as Codex). */
 export interface HarnessOption { id: string; name: string; subscription: string; installed: boolean }
 
@@ -76,6 +79,9 @@ export const configApi = {
   deleteProjectSkill: (skillId: string) => req<{ ok: true }>('DELETE', `/projects/skills/${skillId}`),
   /** Registers the project's folder with the Code workspace (T3) on the server, so it opens there with a terminal. */
   openProjectInCode: (id: string) => req<{ ok: true; folder: string; already: boolean }>('POST', `/projects/${id}/open-code`),
+
+  /** The git worktrees of the project's folder (read-only). `repo: false` when the folder is not a git repository. */
+  projectWorktrees: (id: string) => req<{ folder: string; repo: boolean; worktrees: Worktree[] }>('GET', `/projects/${id}/worktrees`),
 
   /** The skills already on the computer: Zo's and the primary Hermes agent's. Read-only. */
   skillLibrary: () => req<{ skills: LibrarySkill[] }>('GET', '/launch/skills'),

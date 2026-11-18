@@ -20,8 +20,11 @@ export const PALETTES = [
 ] as const;
 export type Palette = (typeof PALETTES)[number]['id'];
 export type BotSettingsTab = 'general' | 'skills' | 'memories' | 'routines';
-/** The Work page's sections: where to start, what needs the person, every task, and projects. */
-export type WorkTab = 'launch' | 'attention' | 'all' | 'projects';
+/**
+ * GnoesisWork's sections (the full-page Work view): where to start, what needs the person, every task, projects,
+ * their git worktrees, the files bots made, and a bot's chat opened in place.
+ */
+export type WorkTab = 'launch' | 'attention' | 'all' | 'projects' | 'worktrees' | 'artifacts' | 'chat';
 export type AppSection = 'general' | 'computer' | 'subscriptions' | 'wiki' | 'permissions' | 'apps' | 'account';
 
 interface ConfigUI {
@@ -39,6 +42,8 @@ interface ConfigUI {
   closeAppSettings(): void;
   setView(v: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro' | 'hq'): void;
   setWorkTab(t: WorkTab): void;
+  /** Shows the selected bot's chat: inside GnoesisWork when it is open, else in Bot HQ. */
+  openChat(): void;
   setTheme(t: Theme): void;
   setPalette(p: Palette): void;
   bump(key: string): void;
@@ -82,6 +87,7 @@ export const useConfigUI = create<ConfigUI>((set, get) => ({
   closeAppSettings: () => set({ appSettings: null }),
   setView: (view) => set({ view }),
   setWorkTab: (workTab) => set({ workTab }),
+  openChat: () => (get().view === 'tasks' ? set({ workTab: 'chat' }) : set({ view: 'chat' })),
   setTheme: (theme) => {
     try { localStorage.setItem(LS_THEME, theme); } catch { /* ignore */ }
     applyTheme(theme);
@@ -108,9 +114,11 @@ window.addEventListener('grokbot:event', (e) => {
   if (ev.type === 'memories') bump(`memories:${ev.botId}`);
 });
 
-// Picking a bot anywhere (sidebar, search) goes back to its chat.
+// Picking a bot anywhere (sidebar, search) goes to its chat; inside GnoesisWork the chat opens in place.
 useStore.subscribe((s, prev) => {
-  if (s.selectedBotId !== prev.selectedBotId && useConfigUI.getState().view !== 'chat') useConfigUI.getState().setView('chat');
+  if (s.selectedBotId === prev.selectedBotId || !s.selectedBotId) return;
+  const ui = useConfigUI.getState();
+  if (ui.view !== 'chat') ui.openChat();
 });
 
 export const useVersion = (key: string) => useConfigUI((s) => s.versions[key] ?? 0);

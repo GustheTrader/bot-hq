@@ -14,7 +14,7 @@ import { CreateBotModal } from './components/modals/CreateBotModal';
 import { CreateGroupModal } from './components/modals/CreateGroupModal';
 import { SearchModal } from './components/modals/SearchModal';
 import { ConfigLayer } from './components/config/ConfigLayer';
-import { TasksView } from './components/config/TasksView';
+import { GnoesisWork } from './components/gnoesis/GnoesisWork';
 import { TeamsView } from './components/TeamsView';
 import { RevOptView } from './components/RevOptView';
 import { useConfigUI } from './configStore';
@@ -67,10 +67,23 @@ function Shell() {
     return () => window.removeEventListener('keydown', k);
   }, []);
 
+  // GnoesisWork (Work) takes the whole window, with its own sidebar and a way back to Bot HQ.
+  if (view === 'tasks') {
+    return (
+      <>
+        <GnoesisWork />
+        {modal === 'search' && <SearchModal />}
+        {modal === 'apps' && <ConnectAppsModal />}
+        {viewerOpen && <ComputerViewer />}
+        <ConfigLayer />
+      </>
+    );
+  }
+
   return (
     <div className={`app${collapsed ? ' is-sidebar-collapsed' : ''}${detailsOpen && hasBot && view === 'chat' ? ' has-details' : ''}`}>
       <Sidebar />
-      {view === 'code' ? <CodeView /> : view === 'tasks' ? <TasksView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'hq' ? <HqView /> : <ChatView />}
+      {view === 'code' ? <CodeView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'hq' ? <HqView /> : <ChatView />}
       {detailsOpen && hasBot && view === 'chat' && <DetailsPanel />}
       {modal === 'create' && <CreateBotModal />}
       {modal === 'group' && <CreateGroupModal />}
