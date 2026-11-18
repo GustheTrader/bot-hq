@@ -15,6 +15,7 @@ import './styles/teams.css';
 import './styles/revopt.css';
 import './styles/hq.css';
 import './styles/work.css';
+import './styles/gnoesis.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

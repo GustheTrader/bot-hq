@@ -22,7 +22,7 @@ function when(t: Task): string {
 }
 
 function TaskRow({ t, bot, showBot }: { t: Task; bot?: Bot; showBot: boolean }) {
-  const open = () => { if (bot) { useStore.getState().selectBot(bot.id); useConfigUI.getState().setView('chat'); } };
+  const open = () => { if (bot) { useStore.getState().selectBot(bot.id); useConfigUI.getState().openChat(); } };
   return (
     <button type="button" className={`task-row is-${t.state}`} onClick={open} disabled={!bot} title={bot ? `Open ${bot.name}` : undefined}>
       <span className={`task-row__check is-${t.state}`} aria-hidden>{t.state === 'done' ? <Glyph name="check_circle" size={18} /> : <span className="task-row__ring" />}</span>
@@ -45,7 +45,7 @@ function sortTasks(list: Task[]) {
 }
 
 /** Work → All work: every task from every bot, filtered by progress. */
-function AllWork() {
+export function AllWork() {
   const bots = useStore((s) => s.bots);
   const tasks = useTasks();
   const [filter, setFilter] = useState<Filter>('open');

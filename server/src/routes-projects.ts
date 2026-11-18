@@ -6,7 +6,7 @@ import {
   getProject, listProjectSkills, listProjects, updateProject, updateProjectSkill,
 } from './projects.js';
 import { guard, startWork, type StartInput } from './routes-launch.js';
-import { addToCode, resolveProjectFolder } from './code-workspace.js';
+import { addToCode, listWorktrees, resolveProjectFolder } from './code-workspace.js';
 
 /**
  * Projects: standing notes, skills and a default engine for a piece of ongoing work.
@@ -60,6 +60,14 @@ projectsApi.delete('/skills/:skillId', (c) => (deleteProjectSkill(c.get('user').
 projectsApi.post('/:id/start', (c) => guard(c, async () => {
   const b = (await body(c)) as StartInput;
   return c.json({ ok: true, ...startWork(c.get('user').id, { ...b, projectId: c.req.param('id') }) });
+}));
+
+/** The git worktrees of the project's folder (read-only). */
+projectsApi.get('/:id/worktrees', (c) => guard(c, async () => {
+  const project = getProject(c.get('user').id, c.req.param('id'));
+  if (!project) throw new ProjectError('Project not found.', 404);
+  const folder = resolveProjectFolder(project.folder);
+  return c.json({ folder, ...(await listWorktrees(folder)) });
 }));
 
 /** Registers the project's folder with the Code workspace (T3) so it opens there with a terminal. */

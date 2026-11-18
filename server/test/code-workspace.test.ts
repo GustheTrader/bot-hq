@@ -94,3 +94,34 @@ test('a folder T3 already has counts as success; other failures say why', async 
 test('no T3 installed is a clear error, not a crash', async () => {
   await assert.rejects(W.addToCode(inside, 'P', null), (e: any) => e.status === 409 && /not installed/.test(e.message));
 });
+
+test('parseWorktrees reads git porcelain output, main first', () => {
+  const out = 'worktree /w/app\nHEAD 0123456789abcdef0123\nbranch refs/heads/main\n\nworktree /w/app-feat\nHEAD fedcba9876543210fedc\nbranch refs/heads/feat/login\n\nworktree /w/app-old\nHEAD aaaaaaaaaaaaaaaaaaaa\ndetached\n';
+  const list = W.parseWorktrees(out);
+  assert.equal(list.length, 3);
+  assert.deepEqual(list[0], { path: '/w/app', branch: 'main', head: '0123456789ab', detached: false, bare: false, main: true });
+  assert.equal(list[1].branch, 'feat/login');
+  assert.equal(list[1].main, false);
+  assert.equal(list[2].detached, true);
+  assert.equal(list[2].branch, null);
+});
+
+test('listWorktrees runs git with an argument list and treats a non-repo as empty', async () => {
+  const calls: { file: string; args: string[] }[] = [];
+  const notRepo: import('../src/code-workspace.js').Runner = (file, args, _o, cb) => { calls.push({ file, args }); cb(Object.assign(new Error('x'), { code: 128 }), '', 'fatal: not a git repository (or any parent)'); };
+  assert.deepEqual(await W.listWorktrees('/w/plain', notRepo), { repo: false, worktrees: [] });
+  assert.deepEqual(calls[0], { file: 'git', args: ['-C', '/w/plain', 'worktree', 'list', '--porcelain'] });
+  const broken: import('../src/code-workspace.js').Runner = (_f, _a, _o, cb) => cb(new Error('boom'), '', 'fatal: detected dubious ownership');
+  await assert.rejects(W.listWorktrees('/w/x', broken), /dubious ownership/);
+});
+
+test('listWorktrees on a real git repo lists the main worktree', async () => {
+  const repo = path.join(base, 'repo');
+  fs.mkdirSync(repo, { recursive: true });
+  const { execFileSync } = await import('node:child_process');
+  try { execFileSync('git', ['init', '-q', repo]); } catch { return; } // no git here: nothing to check
+  const r = await W.listWorktrees(repo);
+  assert.equal(r.repo, true);
+  assert.equal(r.worktrees.length, 1);
+  assert.equal(r.worktrees[0].main, true);
+});

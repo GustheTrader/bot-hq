@@ -11,7 +11,7 @@ import { useAttention } from './attention';
 
 const openChat = (botId: string) => {
   useStore.getState().selectBot(botId);
-  useConfigUI.getState().setView('chat');
+  useConfigUI.getState().openChat();
 };
 
 /** One stalled task: what it was, how long it has been quiet, and the two things you can do about it. */
