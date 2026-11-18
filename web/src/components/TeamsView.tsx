@@ -6,6 +6,7 @@ import { relativeShort } from '../lib/time';
 import { displayName, useStore } from '../store';
 import { useConfigUI } from '../configStore';
 import { Icon } from './Icon';
+import { LiveSignal } from './LiveSignal';
 import { Glyph } from './config/glyphs';
 import './config/ui';
 
@@ -256,6 +257,7 @@ function TeamDetail({
                   {isLead && <span className="members__badge">Speaks first</span>}
                   {isObserver && <span className="members__badge members__badge--obs">Observer</span>}
                 </span>
+                {bot && <LiveSignal botId={bot.id} />}
               </span>
               {!isLead && (
                 <button type="button" className="icon-btn members__remove" title="Make this Bot speak first" aria-label={`Make ${m.name} speak first`} onClick={() => setLead(m.id)}>
