@@ -1,10 +1,12 @@
 import { useMemo, useState, type ReactNode } from 'react';
+import { api } from '../../lib/api';
 import type { Bot } from '@shared/types';
 import { useConfigUI, type WorkTab } from '../../configStore';
 import { useStore } from '../../store';
 import { relativeShort } from '../../lib/time';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { ChatView } from '../ChatView';
+import { tierOf } from '../HqView';
 import { AllWork } from '../config/TasksView';
 import { LaunchPage } from '../work/LaunchPage';
 import { NeedsAttention } from '../work/NeedsAttention';
@@ -23,6 +25,7 @@ const PATHS: Record<string, ReactNode> = {
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   branch: <><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="8" r="2" /><path d="M6 7v10M18 10c0 4-6 3-11 7" /></>,
   file: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>,
+  monitor: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></>,
   spark: <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" />,
 };
 
@@ -54,8 +57,8 @@ function Recents({ query, active, onOpen }: { query: string; active: string | nu
   return (
     <div className="gw-recents" role="list">
       {list.map((b) => {
-        const l = live[b.id];
-        const state = l?.question || l?.awaiting ? 'waiting' : l?.activity ? 'working' : null;
+        const t = tierOf(live[b.id]);
+        const state = t === 'needs' ? 'waiting' : t === 'working' ? 'working' : null;
         return (
           <button key={b.id} type="button" role="listitem" className={`gw-recent${active === b.id ? ' is-active' : ''}`} onClick={() => onOpen(b)} title={b.lastPreview ?? b.name}>
             <BotAvatarFor bot={b} size={18} />
@@ -68,6 +71,48 @@ function Recents({ query, active, onOpen }: { query: string; active: string | nu
         );
       })}
     </div>
+  );
+}
+
+/** The bot that GnoesisWork itself works through, with its own screen (the "GnoesisWork computer"). */
+export const isWorkBot = (b: Pick<Bot, 'name' | 'kind'>) => b.kind !== 'team' && b.name.trim().toLowerCase() === 'gnoesiswork';
+
+/** Sidebar entry for GnoesisWork's own computer: opens its screen, or sets it up the first time. */
+function ComputerEntry() {
+  const bots = useStore((s) => s.bots);
+  const computer = useStore((s) => s.computer);
+  const bot = bots.find(isWorkBot);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const asleep = !!bot && !!computer?.screens.find((x) => x.botId === bot.id)?.asleep;
+
+  const open = async () => {
+    setError(null);
+    let target = bot;
+    if (!target) {
+      setBusy(true);
+      try {
+        target = (await api.createBot({ name: 'GnoesisWork', avatarShape: 'sparkle', avatarColor: 'orange', avatarImage: null, mode: 'personal' })).bot;
+        await useStore.getState().loadBots().catch(() => {});
+      } catch (e) {
+        setError(e instanceof Error && e.message ? e.message : 'Could not set up the computer');
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+    }
+    useStore.getState().selectBot(target.id);
+    useStore.setState({ viewerOpen: true }); // opening the screen also wakes it if it was asleep
+  };
+
+  return (
+    <>
+      <button type="button" className="gw-nav__item" onClick={open} disabled={busy} title={bot ? 'Open GnoesisWork’s own computer' : 'Give GnoesisWork its own computer (a bot with its own screen)'}>
+        <GwIcon name="monitor" /> {busy ? 'Setting up…' : bot ? 'Computer' : 'Set up computer'}
+        {bot && <span className={`gw-nav__state${asleep ? ' is-asleep' : ''}`}>{asleep ? 'asleep' : 'ready'}</span>}
+      </button>
+      {error && <div className="gw-nav__error" role="alert">{error}</div>}
+    </>
   );
 }
 
@@ -124,6 +169,7 @@ export function GnoesisWork() {
               {!!n.count && <span className="gw-nav__count">{n.count}</span>}
             </button>
           ))}
+          <ComputerEntry />
         </nav>
 
         <div className="gw-side__label">Recents</div>
@@ -135,7 +181,7 @@ export function GnoesisWork() {
           <div className="gw-scroll">
             <div className="gw-page">
               {TITLES[tab] && <h1 className="gw-title">{TITLES[tab]}</h1>}
-              {tab === 'launch' ? <LaunchPage /> : tab === 'attention' ? <NeedsAttention /> : tab === 'all' ? <AllWork /> : tab === 'projects' ? <ProjectsPanel /> : tab === 'worktrees' ? <WorktreesPanel /> : <ArtifactsPanel />}
+              {tab === 'launch' ? <LaunchPage stay /> : tab === 'attention' ? <NeedsAttention /> : tab === 'all' ? <AllWork /> : tab === 'projects' ? <ProjectsPanel /> : tab === 'worktrees' ? <WorktreesPanel /> : <ArtifactsPanel />}
             </div>
           </div>
         )}

@@ -10,7 +10,7 @@ import { LiveSignal } from './LiveSignal';
 
 export type Tier = 'needs' | 'working' | 'idle';
 
-function tierOf(live: LiveState | undefined): Tier {
+export function tierOf(live: LiveState | undefined): Tier {
   if (isWaitingForYou(live)) return 'needs';
   return live?.isRunning ? 'working' : 'idle';
 }

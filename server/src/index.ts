@@ -24,6 +24,7 @@ import { restorePendingQuestions } from './store.js';
 import { desSelfTest } from './lib/des.js';
 import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
+import { startScreenSleeper } from './screen-sleep.js';
 import { mcpApi } from './mcp.js';
 import { initEngines } from './engine.js';
 import { startGrokBridge } from './routes-grok.js';
@@ -68,6 +69,7 @@ if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
 initProactive(enqueue);
 } else console.log('[grokbot] scheduler disabled (GROKBOT_NO_SCHEDULER=1)');
 startIdleWatcher();
+startScreenSleeper();
 initEngines();
 recoverGrokJobs();
 startGrokSweep();
