@@ -1,4 +1,4 @@
-import { Briefcase, CodeXml, LayoutDashboard, Users } from 'lucide-react';
+import { Activity, Briefcase, CodeXml, LayoutDashboard, Users } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
@@ -8,6 +8,8 @@ import { displayName, useStore } from '../store';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
 import { Menu } from './Menu';
+import { LiveSignal } from './LiveSignal';
+import { useActiveBotCount } from './HqView';
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -41,7 +43,9 @@ const BotRow = memo(function BotRow({ bot, selected, running, awaiting, onSelect
       </span>
       <span className="bot-row__text">
         <span className="bot-row__name">{displayName(bot)}</span>
-        <span className="bot-row__preview">{previewFor(bot, running, awaiting)}</span>
+        {running || awaiting
+          ? <LiveSignal botId={bot.id} />
+          : <span className="bot-row__preview">{previewFor(bot, running, awaiting)}</span>}
       </span>
     </button>
   );
@@ -63,6 +67,7 @@ export function Sidebar() {
   const [accountMenu, setAccountMenu] = useState(false);
   const logout = async () => { await api.logout().catch(() => {}); location.reload(); };
 
+  const { working, needs } = useActiveBotCount();
   const primary = bots.find((b) => b.isPrimary);
   const others = bots.filter((b) => !b.isPrimary).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
 
@@ -88,6 +93,11 @@ export function Sidebar() {
       </div>
 
       <div className="sidebar__scroll">
+        <button type="button" className={`sidebar-island${view === 'hq' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('hq')} title={needs > 0 ? `HQ activity: ${needs} need you` : 'HQ activity'} aria-pressed={view === 'hq'}>
+          <span className="sidebar-island__icon"><Activity size={18} aria-hidden /></span>
+          <span className="sidebar-island__label">HQ activity</span>
+          {working + needs > 0 && <span className="sidebar-island__count">{working + needs}</span>}
+        </button>
         <button type="button" className={`sidebar-island${view === 'code' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('code')} title="Code" aria-pressed={view === 'code'}>
           <span className="sidebar-island__icon"><CodeXml size={18} aria-hidden /></span>
           <span className="sidebar-island__label">Code</span>
@@ -113,6 +123,7 @@ export function Sidebar() {
                 {live[primary.id]?.isRunning && <span className="status-dot is-working pinned__dot" />}
               </span>
               {!collapsed && <span className="pinned__label">{displayName(primary)}</span>}
+              {!collapsed && <LiveSignal botId={primary.id} className="pinned__signal" />}
             </button>
           </div>
         )}

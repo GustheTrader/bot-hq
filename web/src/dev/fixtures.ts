@@ -8,6 +8,19 @@
 import type { LiveState, Row, RowBody, ToolCallBody } from '@shared/types';
 import { useStore } from '../store';
 
+/** Fake live state for the other bots, so the sidebar roster, team rows and the HQ board show a mix of states. */
+function injectRosterLive(selected: string, now: number) {
+  const others = useStore.getState().bots.filter((b) => b.id !== selected && b.kind !== 'team');
+  const samples: Omit<LiveState, 'botId'>[] = [
+    { isRunning: true, activity: { kind: 'searching_web', since: now - 40_000 }, awaiting: null, startedAt: now - 190_000, caption: 'Comparing the three pricing pages for seat limits', steps: 7 },
+    { isRunning: true, activity: { kind: 'waiting_for_you', since: now - 95_000 }, awaiting: { reason: 'Which inbox should I watch: Work or Personal?', since: now - 95_000 }, startedAt: now - 140_000, caption: null, steps: 3 },
+    { isRunning: true, activity: { kind: 'running_commands', since: now - 12_000 }, awaiting: null, startedAt: now - 22_000, caption: null, steps: 1 },
+  ];
+  const next: Record<string, LiveState> = {};
+  others.slice(0, samples.length).forEach((b, i) => { next[b.id] = { botId: b.id, ...samples[i] }; });
+  useStore.setState((s) => ({ live: { ...s.live, ...next } }));
+}
+
 export function injectFixtures() {
   const st = useStore.getState();
   const botId = st.selectedBotId;
@@ -63,6 +76,7 @@ export function injectFixtures() {
   st.upsertRows(botId, gen, rows);
 
   if (variant === 'idle') return;
+  injectRosterLive(botId, now);
   const live: LiveState = variant === 'waiting'
     ? { botId, isRunning: true, activity: { kind: 'waiting_for_you', since: now - 30_000 }, awaiting: { reason: 'Waiting for your OK to send the email to Alex', since: now - 30_000 }, startedAt: turnStart, caption: null, steps: 5 }
     : { botId, isRunning: true, activity: { kind: 'connecting_service', detail: 'Google Calendar', since: now - 9_000 }, awaiting: null, startedAt: turnStart, caption: 'Checking January 5 for anything that clashes with a reminder', steps: 5 };

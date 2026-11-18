@@ -13,7 +13,7 @@ import './styles/viewer.css';
 import './styles/voice.css';
 import './styles/teams.css';
 import './styles/revopt.css';
-import './styles/revopt.css';
+import './styles/hq.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
