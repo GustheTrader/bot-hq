@@ -63,6 +63,7 @@ export function ActiveCard({ bot, live, tier }: { bot: Bot; live: LiveState; tie
         <span className="hq-card__body">
           <span className="hq-card__top">
             <span className="hq-card__name">{displayName(bot)}</span>
+            {live.grokJobId && <span className="hq-card__steps">from Grok Bot</span>}
             <span className="hq-card__status">{activityStatus(live, [])}</span>
             {steps > 0 && <span className="hq-card__steps">{steps} {steps === 1 ? 'step' : 'steps'}</span>}
           </span>

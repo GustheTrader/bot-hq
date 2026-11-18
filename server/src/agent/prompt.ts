@@ -2,6 +2,7 @@ import { db } from '../db.js';
 import { getBotRow, listRoutines } from '../store.js';
 import { connectedToolkits } from '../composio.js';
 import { LIBRARY_ROOT } from './tools.js';
+import { testFlag } from '../grok-guard.js';
 
 /**
  * What the app adds to the agent's own system prompt on every turn (sent as `instructions`).
@@ -24,7 +25,7 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
   const skills = (db.prepare('SELECT name, body FROM skills WHERE bot_id=? ORDER BY created_at').all(botId) as any[]).map((s) => `### ${s.name}\n${s.body}`).join('\n\n');
   const routines = listRoutines(botId).map((r) => `- ${r.name} (${r.id}): ${r.enabled ? r.description : 'paused'}; ${r.prompt.slice(0, 120)}`).join('\n');
   let apps = '';
-  try { apps = [...(await connectedToolkits(userId))].sort().join(', '); } catch { apps = '(could not check right now)'; }
+  try { if (!testFlag('GROK_TEST_NO_SCREEN')) apps = [...(await connectedToolkits(userId))].sort().join(', '); } catch { apps = '(could not check right now)'; }
 
   const who = primaryEngine
     ? `This conversation comes from ${owner}'s team app, where you appear as "${bot.name}"${bot.label ? ` (${bot.label})` : ''}. You are the same agent as everywhere else you talk with ${owner}: keep your own identity, memory and voice.${bot.is_primary ? ` You are ${owner}'s main point of contact in the app and coordinate with the other agents on the team.` : ''}`

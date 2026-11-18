@@ -1,3 +1,5 @@
+// Must stay the first import: refuses to start on test-only switches or an unsafe bridge listener.
+import './grok-guard.js';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
@@ -24,6 +26,9 @@ import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
 import { mcpApi } from './mcp.js';
 import { initEngines } from './engine.js';
+import { startGrokBridge } from './routes-grok.js';
+import { recoverGrokJobs, startGrokSweep } from './grok-jobs.js';
+import { startGrokCallbacks } from './grok-notify.js';
 
 if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
@@ -35,6 +40,8 @@ restorePendingQuestions();
 
 const app = new Hono();
 app.get('/api/health', (c) => c.json({ ok: true, engine: 'hermes' }));
+// Integrations never live on the main (publicly forwarded) port; the Grok bridge has its own loopback listener.
+app.all('/api/integrations/*', (c) => c.json({ error: 'not found' }, 404));
 // The app's tools for the agent engines (MCP).
 app.route('/mcp', mcpApi);
 app.route('/api/checkins', checkinsApi);
@@ -52,7 +59,7 @@ if (fs.existsSync(webDist)) {
   app.get('*', (c) => c.html(fs.readFileSync(path.join(webDist, 'index.html'), 'utf8')));
 }
 
-const server = serve({ fetch: app.fetch, port: env.port }, (info) => console.log(`[grokbot] server on http://localhost:${info.port}`));
+const server = serve({ fetch: app.fetch, port: env.port, hostname: process.env.HOST || undefined }, (info) => console.log(`[grokbot] server on http://localhost:${info.port}`));
 attachVncRelay(server as unknown as Server);
 // GROKBOT_NO_SCHEDULER=1 for extra dev/test servers sharing a database copy, so routines and triggers don't fire twice.
 if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
@@ -62,3 +69,7 @@ initProactive(enqueue);
 } else console.log('[grokbot] scheduler disabled (GROKBOT_NO_SCHEDULER=1)');
 startIdleWatcher();
 initEngines();
+recoverGrokJobs();
+startGrokSweep();
+startGrokCallbacks();
+startGrokBridge();

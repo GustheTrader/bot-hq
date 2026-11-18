@@ -254,6 +254,7 @@ export type ActivityKind =
 
 export interface LiveState {
   botId: string;
+  grokJobId?: string | null;
   isRunning: boolean;
   activity: { kind: ActivityKind; detail?: string; since: number } | null;
   awaiting: { reason: string; since: number } | null;

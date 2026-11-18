@@ -6,7 +6,7 @@ import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, screenTicket, userFromCookieHeader, type AuthVars } from './lib/auth.js';
-import { allLive, appendRow, clearConversation, clearPendingQuestion, emitBot, getBot, getBotRow, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
+import { allLive, appendRow, clearConversation, clearPendingQuestion, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
@@ -19,6 +19,7 @@ import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
 import { deleteEventTrigger } from './triggers.js';
 import { dispatchRoomMessage } from './agent/rooms.js';
 import { voiceApi } from './voice.js';
+import { cancelBridgeJobForQuestion, interruptOpenJobs, resumeBridgeJob } from './grok-jobs.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
 export const api = new Hono<AuthVars>();
@@ -223,6 +224,7 @@ api.delete('/bots/:id', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   interrupt(b.id);
+  interruptOpenJobs(b.id, 'bot removed'); // bridge jobs on this bot end with a callback instead of hanging
   cancelClaudeLogin(b.id); // a sign-in left waiting must not outlive the bot's home
   retireHarness(b.id); // and no queued turn may start one again while the bot is removed
   for (const r of listRoutines(b.id)) {
@@ -274,8 +276,11 @@ api.post('/bots/:id/messages', async (c) => {
   const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text: text.trim() });
   // Group chats dispatch to their member Bots instead of running their own loop.
   if (b.kind === 'team') dispatchRoomMessage(b.id, text.trim(), enqueue);
-  // Any pending question card is answered by a free-text message.
-  else enqueue(b.id, { type: 'user', text: text.trim() });
+  // Any pending question card is answered by a free-text message. A Grok Bot job's question resumes that job.
+  else {
+    const q = getLive(b.id).question;
+    if (!(q && resumeBridgeJob(b.id, q.seq, text.trim()))) enqueue(b.id, { type: 'user', text: text.trim() });
+  }
   return c.json({ row });
 });
 
@@ -290,7 +295,11 @@ api.post('/bots/:id/fresh', (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
   interrupt(b.id);
+  interruptOpenJobs(b.id, 'conversation reset in HQ');
   clearConversation(b.id);
+  // The old conversation's question is gone with it; a stale "waiting" state would also hold back queued work.
+  const stale = getLive(b.id).question;
+  if (stale) clearPendingQuestion(b.id, stale.seq);
   emitBot(b.id);
   return c.json({ ok: true });
 });
@@ -310,7 +319,8 @@ api.post('/bots/:id/cards/:seq/answer', async (c) => {
   updateRow(b.id, row.seq, { ...row.body, status: 'answered', answer });
   appendRow(b.id, 'message', { type: 'message', role: 'user', text: answer });
   clearPendingQuestion(b.id, row.seq); // stop showing "needs you" now, not whenever the next turn starts
-  enqueue(b.id, { type: 'user', text: `[Answer to "${row.body.question}"] ${answer}` });
+  // A Grok Bot job's question resumes and completes that job; any other question is a normal user turn.
+  if (!resumeBridgeJob(b.id, row.seq, answer)) enqueue(b.id, { type: 'user', text: `[Answer to "${row.body.question}"] ${answer}` });
   return c.json({ ok: true });
 });
 
@@ -321,7 +331,10 @@ api.post('/bots/:id/cards/:seq/dismiss', (c) => {
   if (!row || row.body.type !== 'card') return c.json({ error: 'not a card' }, 400);
   const body: any = { ...row.body, status: row.body.card === 'connect' ? 'skipped' : 'dismissed' };
   updateRow(b.id, row.seq, body);
-  if (row.body.card === 'question') clearPendingQuestion(b.id, row.seq);
+  if (row.body.card === 'question') {
+    clearPendingQuestion(b.id, row.seq);
+    cancelBridgeJobForQuestion(b.id, row.seq); // a Grok Bot job waiting on it is cancelled and reported
+  }
   if (row.body.card === 'connect') enqueue(b.id, { type: 'system', text: `The user skipped connecting ${row.body.toolkitName}. Continue without it.` });
   return c.json({ ok: true });
 });
