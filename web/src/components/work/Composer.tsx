@@ -83,8 +83,14 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
 
   // Default bot: the primary one, else the first. Set once bots have loaded.
   useEffect(() => { if (!botId && bots.length) setBotId(bots.find((b) => b.isPrimary)?.id ?? bots[0].id); }, [bots, botId]);
-  // Choosing a project brings its default engine.
-  useEffect(() => { if (active) { setHarness(active.harness); setModel(active.harnessModel); } }, [active?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The engine starts as the project's, or, with no project, as the chosen bot's own, so starting work never changes
+  // a bot's engine unless the person picks a different one. Re-runs only when the bot or project changes, never on a
+  // roster refresh, so a hand-picked engine is kept.
+  useEffect(() => {
+    if (active) { setHarness(active.harness); setModel(active.harnessModel); return; }
+    const b = useStore.getState().bots.find((x) => x.id === botId);
+    if (b) { setHarness(b.harness ?? 'hermes'); setModel(b.harness && b.harness !== 'hermes' ? b.harnessModel ?? null : null); }
+  }, [active?.id, botId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Put the caret where a pick or the Skills button left it, once React has written the new text.
   useEffect(() => {
     if (pendingCaret.current !== null && taRef.current) { taRef.current.setSelectionRange(pendingCaret.current, pendingCaret.current); pendingCaret.current = null; }
