@@ -1,50 +1,39 @@
 /**
- * GTM Tools (Macro): the business-apps sub-app, embedded under the Team label.
+ * GTM Tools (Macro) — INTERIM launcher.
  *
- * Macro runs in Docker on the owner's laptop, so its address is usually
- * http://127.0.0.1:<port>. Only a browser on that same machine can reach it;
- * anywhere else the frame stays blank, so the page always offers a new-tab link
- * and says why. The address is a build constant, like VITE_T3_WORKSPACE_URL.
+ * Macro's hosted app (macro.com) blocks being embedded in an iframe
+ * (X-Frame-Options: DENY) and its sign-in server only accepts the macro.com /
+ * localhost origins, so an embedded cross-origin view cannot sign in. Until the
+ * self-hosted Macro backend is running (on the laptop's Ubuntu/WSL stack), this
+ * view just launches the hosted app in a new tab, where sign-in works normally.
+ *
+ * When the self-hosted backend is live, restore the embedded <iframe> version
+ * (see git history) and point VITE_MACRO_TEAM_URL at that origin.
  */
-function macroUrl(value: string | undefined): URL | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    if (url.username || url.password || url.search || url.hash) return null;
-    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-    return url.protocol === 'https:' || (url.protocol === 'http:' && loopback) ? url : null;
-  } catch {
-    return null;
-  }
-}
-
-const macro = macroUrl(import.meta.env.VITE_MACRO_TEAM_URL);
-const onlyThisComputer = macro ? ['localhost', '127.0.0.1', '[::1]'].includes(macro.hostname) : false;
+const LAUNCH_URL = 'https://macro.com';
 
 export function MacroView() {
   return (
     <main className="chat tasks-view macro-view">
       <header className="tasks-view__header">
         <h1 className="tasks-view__title">GTM Tools</h1>
-        {macro && (
-          <a href={macro.href} target="_blank" rel="noopener noreferrer">Open in new tab</a>
-        )}
+        <a href={LAUNCH_URL} target="_blank" rel="noopener noreferrer">Open in new tab</a>
       </header>
-      {macro ? (
-        <>
-          {onlyThisComputer && (
-            <p className="tasks-empty__sub macro-view__note">
-              GTM Tools runs on your laptop, so this only loads in a browser on that computer.
-            </p>
-          )}
-          <iframe className="macro-view__frame" src={macro.href} title="GTM Tools" />
-        </>
-      ) : (
-        <div className="tasks-empty">
-          <h2 className="tasks-empty__title">GTM Tools</h2>
-          <p className="tasks-empty__sub">GTM Tools is awaiting setup. Set VITE_MACRO_TEAM_URL and rebuild the web app.</p>
-        </div>
-      )}
+      <div className="tasks-empty">
+        <h2 className="tasks-empty__title">GTM Tools</h2>
+        <p className="tasks-empty__sub">
+          GTM Tools opens in its own tab for now — sign-in there works normally.
+          An embedded, self-hosted version is on the way.
+        </p>
+        <a
+          className="macro-view__launch"
+          href={LAUNCH_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open GTM Tools →
+        </a>
+      </div>
     </main>
   );
 }
