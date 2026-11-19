@@ -37,3 +37,17 @@ test('nothing sleeps sooner than the idle time after a restart, and asleep scree
 test('an idle time of 0 turns sleep off', () => {
   assert.deepEqual(screensToSleep([s('a', 600)], { ...base, idleMs: 0 }), []);
 });
+
+test('markSleepingScreens marks leased screens whose display is down, and leaves running ones', async () => {
+  const { db } = await import('../src/db.js');
+  const C = await import('../src/computer.js');
+  const now = Date.now();
+  db.prepare("INSERT OR IGNORE INTO users(id,email,name,created_at) VALUES ('u1','u1@test','U',?)").run(now);
+  db.prepare('INSERT OR REPLACE INTO screens(bot_id,user_id,screen_id,last_used_at) VALUES (?,?,?,?),(?,?,?,?)').run('bot_up', 'u1', 'screen-100', now, 'bot_down', 'u1', 'screen-101', now);
+  const marked = await C.markSleepingScreens(async (id) => id === 'screen-100');
+  assert.deepEqual(marked, ['bot_down']);
+  const screens = C.computerState('u1').screens;
+  assert.equal(screens.find((s) => s.botId === 'bot_down')?.asleep, true);
+  assert.equal(screens.find((s) => s.botId === 'bot_up')?.asleep, undefined);
+  assert.deepEqual(await C.markSleepingScreens(async () => false), ['bot_up']); // already-marked ones are skipped
+});

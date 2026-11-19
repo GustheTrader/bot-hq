@@ -1,5 +1,5 @@
 import { env } from './env.js';
-import { sleepBotScreen, sleepCandidates } from './computer.js';
+import { markSleepingScreens, sleepBotScreen, sleepCandidates } from './computer.js';
 import { isTurnActive } from './agent/loop.js';
 
 /**
@@ -61,6 +61,8 @@ export function startScreenSleeper(): void {
   if (env.computerProvider !== 'local') return;
   if (idleMin <= 0) { console.log('[screen-sleep] off (SCREEN_SLEEP_MIN=0)'); return; }
   const startedAt = Date.now();
+  // Screens put to sleep before this restart are still stopped: show them as asleep.
+  void markSleepingScreens().catch((e) => console.warn(`[screen-sleep] could not check screens at startup: ${e?.message ?? e}`));
   const idleMs = idleMin * 60_000;
   const inputs = (): SleepInputs => ({
     now: Date.now(), idleMs, startedAt,
