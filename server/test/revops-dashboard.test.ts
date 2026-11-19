@@ -55,7 +55,7 @@ test('memory graph calls only read endpoints, checks bank and entity ids, and ex
   const ok = async (url: string) => { urls.push(url); return { ok: true, status: 200, json: async () => (url.includes('/memories/list') ? { items: [{ id: 'm1', text: 'Grok Bot shipped', fact_type: 'world', date: '2026-11-18' }] } : url.endsWith('/stats') ? { total_nodes: 751 } : { id: 'e1', canonical_name: 'Grok Bot', mention_count: 70, nodes: [], edges: [] }) }; };
   const g = await G.memoryGraph('shared', '9999', ok as any);
   assert.equal(g.bank, 'shared');
-  assert.ok(urls.some((u) => u.endsWith('/v1/default/banks/shared/entities/graph?limit=400')));
+  assert.ok(urls.some((u) => u.endsWith('/v1/default/banks/shared/entities/graph?limit=4800')));
   const f = await G.entityFacts('shared', 'e154d581-21b1-40cf', ok as any);
   assert.equal(f.entity.name, 'Grok Bot');
   assert.equal(f.facts[0].text, 'Grok Bot shipped');
@@ -63,4 +63,12 @@ test('memory graph calls only read endpoints, checks bank and entity ids, and ex
   await assert.rejects(G.entityFacts('shared', 'a/../b', ok as any), /Unknown entity/);
   const down = async () => { throw new Error('ECONNREFUSED'); };
   await assert.rejects(G.memoryGraph('shared', 10, down as any), /not answering/);
+});
+
+test('topEntities keeps the most-mentioned entities and the links among them', () => {
+  const g = { nodes: [{ id: 'a', label: 'a', mentions: 1 }, { id: 'b', label: 'b', mentions: 9 }, { id: 'c', label: 'c', mentions: 5 }], edges: [{ source: 'a', target: 'b', weight: 1, lastAt: null }, { source: 'b', target: 'c', weight: 2, lastAt: null }], totalEntities: 3, totalEdges: 2 };
+  const t = G.topEntities(g, 2);
+  assert.deepEqual(t.nodes.map((n) => n.id), ['b', 'c']);
+  assert.deepEqual(t.edges, [{ source: 'b', target: 'c', weight: 2, lastAt: null }]);
+  assert.equal(G.topEntities(g, 5), g);
 });
