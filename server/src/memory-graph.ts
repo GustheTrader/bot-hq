@@ -43,6 +43,14 @@ export function toGraph(raw: any): { nodes: GraphNode[]; edges: GraphEdge[]; tot
   return { nodes, edges, totalEntities: Number(raw?.total_entities ?? nodes.length), totalEdges: Number(raw?.total_edges ?? edges.length) };
 }
 
+/** Keeps the `n` most-mentioned entities and only the links between them. */
+export function topEntities<T extends ReturnType<typeof toGraph>>(g: T, n: number): T {
+  if (g.nodes.length <= n) return g;
+  const nodes = [...g.nodes].sort((a, b) => b.mentions - a.mentions).slice(0, n);
+  const keep = new Set(nodes.map((x) => x.id));
+  return { ...g, nodes, edges: g.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
+}
+
 export async function listBanks(fetchFn: Fetch = fetch as unknown as Fetch): Promise<{ id: string; facts: number; lastWriteAt: string | null }[]> {
   const d = await get('/v1/default/banks', fetchFn);
   return (d?.banks ?? []).map((b: any) => ({ id: String(b.bank_id), facts: Number(b.fact_count ?? 0), lastWriteAt: b.last_write_at ?? null }));
@@ -51,13 +59,14 @@ export async function listBanks(fetchFn: Fetch = fetch as unknown as Fetch): Pro
 export async function memoryGraph(bankRaw: unknown, limitRaw: unknown, fetchFn: Fetch = fetch as unknown as Fetch) {
   const bank = checkBank(bankRaw);
   const limit = Math.min(400, Math.max(10, Number(limitRaw) || 150));
+  // Hindsight's `limit` counts links, not entities, so ask for plenty of links and keep the top entities ourselves.
   const [graph, stats] = await Promise.all([
-    get(`/v1/default/banks/${bank}/entities/graph?limit=${limit}`, fetchFn),
+    get(`/v1/default/banks/${bank}/entities/graph?limit=${Math.min(5000, limit * 12)}`, fetchFn),
     get(`/v1/default/banks/${bank}/stats`, fetchFn).catch(() => null),
   ]);
   return {
     bank,
-    ...toGraph(graph),
+    ...topEntities(toGraph(graph), limit),
     stats: stats ? { facts: Number(stats.total_nodes ?? 0), links: Number(stats.total_links ?? 0), documents: Number(stats.total_documents ?? 0), byType: stats.nodes_by_fact_type ?? {} } : null,
   };
 }
