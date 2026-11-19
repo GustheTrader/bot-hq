@@ -24,6 +24,7 @@ import { restorePendingQuestions } from './store.js';
 import { desSelfTest } from './lib/des.js';
 import { configApi } from './routes-config.js';
 import { startIdleWatcher } from './idle.js';
+import { workspaceApi } from './routes-workspace.js';
 import { startScreenSleeper } from './screen-sleep.js';
 import { mcpApi } from './mcp.js';
 import { initEngines } from './engine.js';
@@ -50,6 +51,7 @@ app.route('/api/rooms', roomsApi);
 app.route('/api/revopt', revoptApi);
 app.route('/api/projects', projectsApi);
 app.route('/api/launch', launchApi);
+app.route('/api/workspace', workspaceApi);
 app.route('/api', api);
 app.route('/api', configApi);
 

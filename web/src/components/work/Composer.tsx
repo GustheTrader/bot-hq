@@ -5,6 +5,8 @@ import { displayName, useStore } from '../../store';
 import { useConfigUI } from '../../configStore';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { EnginePicker } from './EnginePicker';
+import { FolderSetup, type FolderKind } from '../gnoesis/FolderSetup';
+import { openTerminalAgent } from '../gnoesis/github';
 import { engineLabel, errText } from './shared';
 
 /** Matches the server's limit on skills per request. */
@@ -69,6 +71,7 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
   const bots = useMemo(() => allBots.filter((b) => b.kind !== 'team'), [allBots]);
   const active = project ?? projects?.find((p) => p.id === projectChoice) ?? null;
   const folderMode = !project && projectChoice === '__folder';
+  const setupKind: FolderKind | null = project ? null : projectChoice === '__new' ? 'new' : projectChoice === '__clone' ? 'clone' : projectChoice === '__worktree' ? 'worktree' : null;
 
   const [prompt, setPrompt] = useState('');
   const [caret, setCaret] = useState(0);
@@ -86,6 +89,14 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
   const menuRef = useRef<HTMLDivElement>(null);
   const pendingCaret = useRef<number | null>(null);
   const { skills, error: libError } = useSkillLibrary(wantLibrary);
+  // A folder handed over from elsewhere (GitHub → Clone, Worktrees → New): start the next piece of work there.
+  const launchFolder = useConfigUI((s) => s.launchFolder);
+  useEffect(() => {
+    if (!launchFolder || project) return;
+    setFolder(launchFolder);
+    onProjectChoice?.('__folder');
+    useConfigUI.getState().setLaunchFolder(null);
+  }, [launchFolder]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Default bot: the primary one, else the first. Set once bots have loaded.
   // In GnoesisWork (`stay`) its own bot comes first when it exists.
@@ -251,14 +262,27 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
               <option value="">No project</option>
               {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               <option value="__folder">A folder…</option>
+              <optgroup label="Start somewhere new">
+                <option value="__new">New folder…</option>
+                <option value="__clone">Clone from GitHub…</option>
+                <option value="__worktree">New worktree…</option>
+              </optgroup>
             </select>
           </label>
         )}
         {folderMode && (
           <label className="proj-field proj-field--wide">
             <span className="proj-field__label">Folder</span>
-            <input className="text-input" value={folder} placeholder="/home/workspace/Projects/…" onChange={(e) => setFolder(e.target.value)} aria-label="Folder" />
+            <span className="workbox__folder">
+              <input className="text-input" value={folder} placeholder="/home/workspace/Projects/…" onChange={(e) => setFolder(e.target.value)} aria-label="Folder" />
+              {folder.trim() && (
+                <button type="button" className="btn btn--secondary btn--sm" title="Open OpenCode, a terminal agent, in this folder on GnoesisWork's computer" onClick={() => { setError(null); openTerminalAgent(folder.trim()).catch((e) => setError(errText(e, 'Could not open OpenCode'))); }}>OpenCode</button>
+              )}
+            </span>
           </label>
+        )}
+        {setupKind && projects && (
+          <FolderSetup kind={setupKind} projects={projects} onReady={(f) => { setFolder(f); onProjectChoice?.('__folder'); }} onCancel={() => onProjectChoice?.('')} />
         )}
         <label className="proj-field">
           <span className="proj-field__label">Bot</span>

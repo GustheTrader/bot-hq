@@ -3,6 +3,8 @@ import type { Project } from '@shared/types';
 import { configApi, type Worktree } from '../../lib/configApi';
 import { errText, t3Url } from '../work/shared';
 import { GwIcon } from './GnoesisWork';
+import { openTerminalAgent } from './github';
+import { useConfigUI } from '../../configStore';
 
 type Trees = { state: 'loading' } | { state: 'ok'; folder: string; repo: boolean; worktrees: Worktree[] } | { state: 'error'; error: string };
 
@@ -11,6 +13,17 @@ function ProjectTrees({ project }: { project: Project }) {
   const [opening, setOpening] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const code = t3Url();
+  const [branch, setBranch] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [reload, setReload] = useState(0);
+  const addTree = async () => {
+    setAdding(true); setNote(null);
+    try {
+      const r = await configApi.newWorktree(project.folder, branch.trim());
+      setNote(`Added ${r.folder}.`); setBranch(''); setReload((n) => n + 1);
+    } catch (e) { setNote(errText(e, 'Could not add the worktree')); }
+    finally { setAdding(false); }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -18,7 +31,7 @@ function ProjectTrees({ project }: { project: Project }) {
       .then((r) => { if (alive) setTrees({ state: 'ok', ...r }); })
       .catch((e) => { if (alive) setTrees({ state: 'error', error: errText(e, 'Could not read the worktrees') }); });
     return () => { alive = false; };
-  }, [project.id]);
+  }, [project.id, reload]);
 
   const openInCode = async () => {
     setOpening(true); setNote(null);
@@ -50,10 +63,18 @@ function ProjectTrees({ project }: { project: Project }) {
                 {w.main && <span className="proj-chip">main</span>}
                 <span className="gw-tree__path" title={w.path}>{w.path}</span>
                 <span className="gw-tree__head">{w.head.slice(0, 7)}</span>
+                <button type="button" className="btn btn--secondary btn--sm" title="Open OpenCode, a terminal agent, in this worktree" onClick={() => { setNote(null); openTerminalAgent(w.path).catch((e) => setNote(errText(e, 'Could not open OpenCode'))); }}>OpenCode</button>
+                <button type="button" className="btn btn--secondary btn--sm" onClick={() => { useConfigUI.getState().setLaunchFolder(w.path); useConfigUI.getState().setWorkTab('launch'); }}>Work here</button>
               </li>
             ))}
           </ul>
         )}
+      {trees.state === 'ok' && trees.repo && (
+        <form className="gw-trees__new" onSubmit={(e) => { e.preventDefault(); void addTree(); }}>
+          <input className="text-input" value={branch} placeholder="New worktree on branch… (feature/login)" onChange={(e) => setBranch(e.target.value)} aria-label="New worktree branch" />
+          <button type="submit" className="btn btn--primary btn--sm" disabled={!branch.trim() || adding}>{adding ? 'Adding…' : 'New worktree'}</button>
+        </form>
+      )}
     </section>
   );
 }

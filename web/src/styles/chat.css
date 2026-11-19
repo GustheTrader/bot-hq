@@ -248,3 +248,9 @@
   max-width: 960px; margin: 0 auto 8px; padding: 6px 12px; border-radius: 12px; background: var(--color-danger-bg); color: var(--color-danger-text);
   font-size: 13px; line-height: 18px; display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
+
+/* Links to files on the bots' computer open on the bot's screen */
+.md a.md-file-link { cursor: pointer; text-decoration-style: dashed; }
+.md a.md-file-link.is-opening { opacity: 0.6; }
+.md-file-note { font-size: 12px; color: var(--color-text-tertiary); }
+.md-file-note.is-error { color: var(--color-danger-text, #d9534f); }

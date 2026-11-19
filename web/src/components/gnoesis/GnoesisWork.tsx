@@ -14,6 +14,7 @@ import { ProjectsPanel } from '../work/ProjectsPanel';
 import { useAttention } from '../work/attention';
 import { WorktreesPanel } from './WorktreesPanel';
 import { ArtifactsPanel } from './ArtifactsPanel';
+import { GitHubPanel } from './GitHubPanel';
 
 /** Small stroke icons for the GnoesisWork sidebar (same 24px grid and 1.8 stroke throughout). */
 const PATHS: Record<string, ReactNode> = {
@@ -25,6 +26,7 @@ const PATHS: Record<string, ReactNode> = {
   folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
   branch: <><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="8" r="2" /><path d="M6 7v10M18 10c0 4-6 3-11 7" /></>,
   file: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>,
+  github: <path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21" />,
   monitor: <><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></>,
   spark: <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8" />,
 };
@@ -38,7 +40,7 @@ export function GwIcon({ name, size = 16 }: { name: keyof typeof PATHS; size?: n
 }
 
 const TITLES: Record<WorkTab, string> = {
-  launch: '', attention: 'Needs attention', all: 'All work', projects: 'Projects', worktrees: 'Worktrees', artifacts: 'Artifacts', chat: '',
+  launch: '', attention: 'Needs attention', all: 'All work', projects: 'Projects', worktrees: 'Worktrees', github: 'GitHub', artifacts: 'Artifacts', chat: '',
 };
 
 /** History: bots' conversations, most recent first, the way Claude lists recent chats. */
@@ -140,6 +142,7 @@ export function GnoesisWork() {
     { id: 'all', label: 'All work', icon: 'list' },
     { id: 'projects', label: 'Projects', icon: 'folder' },
     { id: 'worktrees', label: 'Worktrees', icon: 'branch' },
+    { id: 'github', label: 'GitHub', icon: 'github' },
     { id: 'artifacts', label: 'Artifacts', icon: 'file' },
   ];
 
@@ -181,7 +184,7 @@ export function GnoesisWork() {
           <div className="gw-scroll">
             <div className="gw-page">
               {TITLES[tab] && <h1 className="gw-title">{TITLES[tab]}</h1>}
-              {tab === 'launch' ? <LaunchPage stay /> : tab === 'attention' ? <NeedsAttention /> : tab === 'all' ? <AllWork /> : tab === 'projects' ? <ProjectsPanel /> : tab === 'worktrees' ? <WorktreesPanel /> : <ArtifactsPanel />}
+              {tab === 'launch' ? <LaunchPage stay /> : tab === 'attention' ? <NeedsAttention /> : tab === 'all' ? <AllWork /> : tab === 'projects' ? <ProjectsPanel /> : tab === 'worktrees' ? <WorktreesPanel /> : tab === 'github' ? <GitHubPanel /> : <ArtifactsPanel />}
             </div>
           </div>
         )}
