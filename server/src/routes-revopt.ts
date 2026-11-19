@@ -7,6 +7,9 @@ import { enqueue } from './agent/loop.js';
 import { teamMembers, teamBrief } from './agent/rooms.js';
 import { env } from './env.js';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './types.js';
+import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
+import { MemoryGraphError, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
+import { SupersetError, enableEmbedding, guestToken, listDashboards, supersetConfig } from './superset.js';
 
 /**
  * RevOpt Admin: the revenue-operations console. A CRM-shaped task catalog over a team.
@@ -252,3 +255,62 @@ function taskPrompt(t: RevOptTask): string {
     `Work this from the ${t.teamName} team. Report back on the team channel and, when it is done, say so plainly.`
   );
 }
+
+// ---------- dashboard and memory graph ----------
+
+/** Dashboard numbers for the last `days` (7–365): KPIs, daily throughput, and breakdowns by status, team and bot. */
+revoptApi.get('/metrics', (c) => {
+  const userId = c.get('user').id;
+  const days = Math.min(365, Math.max(7, Number(c.req.query('days')) || 30));
+  const queue = db.prepare('SELECT team_id, kind, status, priority, created_at, updated_at, due_at, NULL AS done_at FROM revopt_tasks WHERE user_id=?').all(userId) as QueueRow[];
+  const botTasks = db.prepare('SELECT t.bot_id, t.state, t.created_at, t.updated_at FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE b.user_id=?').all(userId) as BotTaskRow[];
+  const named = db.prepare('SELECT id, name, kind FROM bots WHERE user_id=?').all(userId) as { id: string; name: string; kind: string }[];
+  const names = { teams: new Map(named.filter((b) => b.kind === 'team').map((b) => [b.id, b.name])), bots: new Map(named.map((b) => [b.id, b.name])) };
+  return c.json(computeMetrics(queue, botTasks, names, now(), days));
+});
+
+const graphGuard = async (c: any, fn: () => Promise<Response>) => {
+  try { return await fn(); } catch (e) {
+    if (e instanceof MemoryGraphError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+};
+
+/** The bots' shared memory (Hindsight) as an entity graph. */
+revoptApi.get('/memory/banks', (c) => graphGuard(c, async () => c.json({ banks: await listBanks() })));
+revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => c.json(await memoryGraph(c.req.query('bank'), c.req.query('limit')))));
+revoptApi.get('/memory/entities/:id', (c) => graphGuard(c, async () => c.json(await entityFacts(c.req.query('bank'), c.req.param('id')))));
+
+// ---------- BI (Apache Superset, embedded) ----------
+
+const biGuard = async (c: any, fn: () => Promise<Response>) => {
+  try { return await fn(); } catch (e) {
+    if (e instanceof SupersetError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+};
+/** Origins allowed to frame an embedded dashboard: the web app and this server's own address. */
+const embedOrigins = () => [...new Set([env.appUrl, env.serverUrl].map((u) => { try { return new URL(u).origin; } catch { return ''; } }).filter((o) => o.startsWith('https://')))];
+
+/** Is Superset set up, its public address, and its dashboards (with embed ids). */
+revoptApi.get('/bi', (c) => biGuard(c, async () => {
+  const cfg = supersetConfig();
+  if (!cfg) return c.json({ configured: false, publicUrl: null, dashboards: [] });
+  return c.json({ configured: true, publicUrl: cfg.publicUrl, dashboards: await listDashboards(cfg) });
+}));
+
+/** Turns on embedding for one dashboard (framing allowed only from Bot HQ's own origins). */
+revoptApi.post('/bi/dashboards/:id/embed', (c) => biGuard(c, async () => {
+  const cfg = supersetConfig();
+  if (!cfg) throw new SupersetError('Superset is not set up on this computer.', 409);
+  return c.json({ embedId: await enableEmbedding(cfg, c.req.param('id'), embedOrigins()) });
+}));
+
+/** A short-lived, view-only guest token for one embedded dashboard. */
+revoptApi.post('/bi/guest-token', (c) => biGuard(c, async () => {
+  const cfg = supersetConfig();
+  if (!cfg) throw new SupersetError('Superset is not set up on this computer.', 409);
+  const { embedId } = ((await c.req.json().catch(() => ({}))) ?? {}) as { embedId?: string };
+  const user = c.get('user');
+  return c.json({ token: await guestToken(cfg, embedId, { id: user.id, name: user.name }) });
+}));

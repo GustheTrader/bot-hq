@@ -1,3 +1,4 @@
+import type { RevOpsMetrics } from '@shared/revops-metrics';
 import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
 
 export class ApiError extends Error {
@@ -84,7 +85,31 @@ export const api = {
     req<{ ok: true; task: RevOptTask }>('PATCH', `/revopt/tasks/${id}`, patch),
   deleteRevoptTask: (id: string) => req<{ ok: true }>('DELETE', `/revopt/tasks/${id}`),
   dispatchRevoptTask: (id: string) => req<{ ok: true; prompt: string; teamId: string }>('POST', `/revopt/tasks/${id}/dispatch`),
+  /** RevOps dashboard numbers for the last `days`. */
+  revoptMetrics: (days = 30) => req<RevOpsMetrics>('GET', `/revopt/metrics?days=${days}`),
+  memoryBanks: () => req<{ banks: { id: string; facts: number; lastWriteAt: string | null }[] }>('GET', '/revopt/memory/banks'),
+  memoryGraph: (bank: string, limit = 150) => req<MemoryGraph>('GET', `/revopt/memory/graph?bank=${encodeURIComponent(bank)}&limit=${limit}`),
+  biStatus: () => req<{ configured: boolean; publicUrl: string | null; dashboards: BiDashboard[] }>('GET', '/revopt/bi'),
+  biEnableEmbed: (id: number) => req<{ embedId: string }>('POST', `/revopt/bi/dashboards/${id}/embed`),
+  biGuestToken: (embedId: string) => req<{ token: string }>('POST', '/revopt/bi/guest-token', { embedId }),
+  memoryEntity: (bank: string, id: string) => req<MemoryEntity>('GET', `/revopt/memory/entities/${encodeURIComponent(id)}?bank=${encodeURIComponent(bank)}`),
 };
+
+/** A Superset dashboard; `embedId` is set once embedding is turned on for it. */
+export interface BiDashboard { id: number; title: string; embedId: string | null; url: string; changedAt: string | null }
+
+export interface MemoryGraph {
+  bank: string;
+  nodes: { id: string; label: string; mentions: number }[];
+  edges: { source: string; target: string; weight: number; lastAt: string | null }[];
+  totalEntities: number;
+  totalEdges: number;
+  stats: { facts: number; links: number; documents: number; byType: Record<string, number> } | null;
+}
+export interface MemoryEntity {
+  entity: { id: string; name: string; mentions: number; firstSeen: string | null; lastSeen: string | null };
+  facts: { id: string; text: string; type: string; date: string | null }[];
+}
 
 /** Open a Composio redirect in a centered popup. */
 export function openPopup(url: string) {
