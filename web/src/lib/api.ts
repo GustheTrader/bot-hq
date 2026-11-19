@@ -1,3 +1,4 @@
+import type { RevOpsMetrics } from '@shared/revops-metrics';
 import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
 
 export class ApiError extends Error {
@@ -84,7 +85,25 @@ export const api = {
     req<{ ok: true; task: RevOptTask }>('PATCH', `/revopt/tasks/${id}`, patch),
   deleteRevoptTask: (id: string) => req<{ ok: true }>('DELETE', `/revopt/tasks/${id}`),
   dispatchRevoptTask: (id: string) => req<{ ok: true; prompt: string; teamId: string }>('POST', `/revopt/tasks/${id}/dispatch`),
+  /** RevOps dashboard numbers for the last `days`. */
+  revoptMetrics: (days = 30) => req<RevOpsMetrics>('GET', `/revopt/metrics?days=${days}`),
+  memoryBanks: () => req<{ banks: { id: string; facts: number; lastWriteAt: string | null }[] }>('GET', '/revopt/memory/banks'),
+  memoryGraph: (bank: string, limit = 150) => req<MemoryGraph>('GET', `/revopt/memory/graph?bank=${encodeURIComponent(bank)}&limit=${limit}`),
+  memoryEntity: (bank: string, id: string) => req<MemoryEntity>('GET', `/revopt/memory/entities/${encodeURIComponent(id)}?bank=${encodeURIComponent(bank)}`),
 };
+
+export interface MemoryGraph {
+  bank: string;
+  nodes: { id: string; label: string; mentions: number }[];
+  edges: { source: string; target: string; weight: number; lastAt: string | null }[];
+  totalEntities: number;
+  totalEdges: number;
+  stats: { facts: number; links: number; documents: number; byType: Record<string, number> } | null;
+}
+export interface MemoryEntity {
+  entity: { id: string; name: string; mentions: number; firstSeen: string | null; lastSeen: string | null };
+  facts: { id: string; text: string; type: string; date: string | null }[];
+}
 
 /** Open a Composio redirect in a centered popup. */
 export function openPopup(url: string) {

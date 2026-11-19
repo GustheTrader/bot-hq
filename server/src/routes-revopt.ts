@@ -7,6 +7,8 @@ import { enqueue } from './agent/loop.js';
 import { teamMembers, teamBrief } from './agent/rooms.js';
 import { env } from './env.js';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './types.js';
+import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
+import { MemoryGraphError, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
 
 /**
  * RevOpt Admin: the revenue-operations console. A CRM-shaped task catalog over a team.
@@ -252,3 +254,28 @@ function taskPrompt(t: RevOptTask): string {
     `Work this from the ${t.teamName} team. Report back on the team channel and, when it is done, say so plainly.`
   );
 }
+
+// ---------- dashboard and memory graph ----------
+
+/** Dashboard numbers for the last `days` (7–365): KPIs, daily throughput, and breakdowns by status, team and bot. */
+revoptApi.get('/metrics', (c) => {
+  const userId = c.get('user').id;
+  const days = Math.min(365, Math.max(7, Number(c.req.query('days')) || 30));
+  const queue = db.prepare('SELECT team_id, kind, status, priority, created_at, updated_at, due_at, NULL AS done_at FROM revopt_tasks WHERE user_id=?').all(userId) as QueueRow[];
+  const botTasks = db.prepare('SELECT t.bot_id, t.state, t.created_at, t.updated_at FROM tasks t JOIN bots b ON b.id=t.bot_id WHERE b.user_id=?').all(userId) as BotTaskRow[];
+  const named = db.prepare('SELECT id, name, kind FROM bots WHERE user_id=?').all(userId) as { id: string; name: string; kind: string }[];
+  const names = { teams: new Map(named.filter((b) => b.kind === 'team').map((b) => [b.id, b.name])), bots: new Map(named.map((b) => [b.id, b.name])) };
+  return c.json(computeMetrics(queue, botTasks, names, now(), days));
+});
+
+const graphGuard = async (c: any, fn: () => Promise<Response>) => {
+  try { return await fn(); } catch (e) {
+    if (e instanceof MemoryGraphError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+};
+
+/** The bots' shared memory (Hindsight) as an entity graph. */
+revoptApi.get('/memory/banks', (c) => graphGuard(c, async () => c.json({ banks: await listBanks() })));
+revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => c.json(await memoryGraph(c.req.query('bank'), c.req.query('limit')))));
+revoptApi.get('/memory/entities/:id', (c) => graphGuard(c, async () => c.json(await entityFacts(c.req.query('bank'), c.req.param('id')))));

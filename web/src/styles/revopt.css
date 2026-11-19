@@ -2,8 +2,8 @@
    teams the rest of Bot HQ already uses. */
 
 .revopt-view { display: flex; flex-direction: column; min-width: 0; }
-.revopt-view__header { position: relative; flex-shrink: 0; padding: 18px 24px 12px; border-bottom: 0.5px solid var(--color-border-tertiary); }
-.revopt-view__heading { display: flex; flex-direction: column; gap: 2px; }
+.revopt-view__header { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; flex-shrink: 0; padding: 18px 24px 12px; border-bottom: 0.5px solid var(--color-border-tertiary); }
+.revopt-view__heading { display: flex; flex-direction: column; gap: 2px; flex: 1 1 260px; min-width: 0; }
 .revopt-view__title { font-size: 20px; font-weight: 600; line-height: 26px; letter-spacing: -0.2px; color: var(--color-ink); }
 .revopt-view__sub { font-size: 13px; line-height: 18px; color: var(--color-text-tertiary); }
 .revopt-view__scroll { flex: 1; min-height: 0; overflow-y: auto; }
@@ -74,3 +74,88 @@
 .revopt-macro__open { font-size: 12px; line-height: 16px; }
 .revopt-macro__frame { width: 100%; height: 560px; margin-top: 8px; border: 0.5px solid var(--color-border-tertiary); border-radius: 12px; background: var(--color-bg-subtle, transparent); }
 .revopt-macro__empty { padding: 14px; font-size: 12px; line-height: 18px; color: var(--color-text-tertiary); }
+
+/* ---------- RevOpt tabs, Dashboard and Memory graph ----------
+   Chart colours are the validated reference palette (categorical slots 1–2, light and dark steps), as tokens. */
+.revopt-tabs { margin-left: auto; }
+.revopt-view__inner--wide { max-width: 1200px; }
+
+.viz, .mg {
+  --viz-surface: #fcfcfb; --viz-ink: #0b0b0b; --viz-ink-2: #52514e; --viz-grid: #e1e0d9;
+  --viz-s1: #2a78d6; --viz-s2: #eb6834; --viz-critical: #d03b3b;
+}
+:root[data-theme="dark"] .viz, :root[data-theme="dark"] .mg {
+  --viz-surface: #1a1a19; --viz-ink: #f0efec; --viz-ink-2: #c3c2b7; --viz-grid: #2c2c2a;
+  --viz-s1: #3987e5; --viz-s2: #d95926; --viz-critical: #e66767;
+}
+.viz { display: flex; flex-direction: column; gap: 14px; }
+.viz-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.viz-filters .link-btn { margin-left: auto; }
+.viz-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.viz-tile { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-elevated); }
+.viz-tile__label { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+.viz-tile__value { display: flex; align-items: center; gap: 6px; font-size: 26px; font-weight: 600; line-height: 32px; letter-spacing: -0.02em; color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.viz-tile__sub { font-size: 12px; line-height: 16px; color: var(--color-text-secondary); }
+.viz-tile.is-alert { border-color: color-mix(in srgb, var(--viz-critical) 55%, transparent); }
+.viz-tile__icon { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 12px; font-weight: 700; color: #fff; background: var(--viz-critical); }
+
+.viz-card { margin: 0; padding: 14px; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-elevated); }
+.viz-card__head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.viz-card__title { font-size: 13px; font-weight: 600; color: var(--color-text-primary); }
+.viz-legend { display: flex; gap: 12px; font-size: 12px; color: var(--color-text-secondary); }
+.viz-legend__item { display: inline-flex; align-items: center; gap: 6px; }
+.viz-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 4px; vertical-align: -1px; }
+.viz-swatch.is-s1 { background: var(--viz-s1); }
+.viz-swatch.is-s2 { background: var(--viz-s2); }
+.viz-plot { position: relative; }
+.viz-plot svg { display: block; width: 100%; height: auto; }
+.viz-grid { stroke: var(--viz-grid); stroke-width: 1; }
+.viz-axis { font-size: 10px; fill: var(--color-text-tertiary); font-variant-numeric: tabular-nums; }
+.viz-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.viz-line.is-s1 { stroke: var(--viz-s1); }
+.viz-line.is-s2 { stroke: var(--viz-s2); }
+.viz-label { font-size: 11px; fill: var(--color-text-secondary); }
+.viz-crosshair { stroke: var(--color-text-tertiary); stroke-width: 1; stroke-dasharray: 3 3; }
+.viz-dot { stroke: var(--color-bg-elevated); stroke-width: 2; }
+.viz-dot.is-s1 { fill: var(--viz-s1); }
+.viz-dot.is-s2 { fill: var(--viz-s2); }
+.viz-tooltip { position: absolute; top: 4px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 2px; padding: 6px 9px; border-radius: 8px; font-size: 12px; line-height: 16px; color: var(--color-text-primary); background: var(--color-bg-elevated); border: 0.5px solid var(--color-border-secondary); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25); pointer-events: none; white-space: nowrap; }
+.viz-grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.viz-bars { display: flex; flex-direction: column; gap: 8px; }
+.viz-bar { display: grid; grid-template-columns: minmax(70px, 120px) 1fr auto; align-items: center; gap: 10px; font-size: 12px; }
+.viz-bar__label { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viz-bar__track { height: 10px; border-radius: 4px; background: color-mix(in srgb, var(--viz-grid) 60%, transparent); overflow: hidden; }
+.viz-bar__fill { display: block; height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; background: var(--viz-s1); }
+.viz-bar__value { color: var(--color-text-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.viz-bar__note { color: var(--color-text-tertiary); }
+.viz-empty { padding: 18px 4px; font-size: 13px; color: var(--color-text-tertiary); }
+.viz-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.viz-table th, .viz-table td { padding: 6px 10px; text-align: left; border-bottom: 0.5px solid var(--color-border-tertiary); color: var(--color-text-primary); }
+.viz-table th { font-weight: 500; color: var(--color-text-tertiary); }
+
+/* Memory graph */
+.mg { display: flex; flex-direction: column; gap: 10px; }
+.mg-field { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-text-tertiary); }
+.mg-search { width: 200px; }
+.mg-stats { font-size: 12px; color: var(--color-text-tertiary); }
+.mg-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; }
+.mg-canvas { position: relative; min-height: 420px; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--viz-surface); overflow: hidden; cursor: grab; }
+.mg-canvas svg { display: block; width: 100%; height: auto; touch-action: none; }
+.mg-edge { stroke: var(--color-text-tertiary); stroke-opacity: 0.22; }
+.mg-edge.is-on { stroke: var(--viz-s1); stroke-opacity: 0.9; }
+.mg-edge.is-dim { stroke-opacity: 0.06; }
+.mg-node circle { fill: var(--viz-s1); stroke: var(--viz-surface); stroke-width: 1.5; cursor: pointer; transition: opacity 120ms; }
+.mg-node text { fill: var(--viz-ink-2); pointer-events: none; paint-order: stroke; stroke: var(--viz-surface); stroke-width: 3px; }
+.mg-node.is-dim { opacity: 0.18; }
+.mg-node.is-focus circle { fill: var(--viz-s2); }
+.mg-node.is-focus text { fill: var(--viz-ink); font-weight: 600; }
+.mg-node.is-hit circle { stroke: var(--viz-ink); stroke-width: 2; }
+.mg-side { display: flex; flex-direction: column; gap: 8px; max-height: 640px; padding: 12px; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-elevated); overflow-y: auto; }
+.mg-side__empty { font-size: 13px; line-height: 19px; color: var(--color-text-tertiary); }
+.mg-side__name { font-size: 16px; font-weight: 600; color: var(--color-text-primary); }
+.mg-side__meta { font-size: 12px; color: var(--color-text-tertiary); }
+.mg-facts { display: flex; flex-direction: column; gap: 8px; }
+.mg-fact { padding: 8px 10px; border-radius: 8px; background: var(--color-bg-hover); }
+.mg-fact__text { font-size: 13px; line-height: 18px; color: var(--color-text-primary); }
+.mg-fact__meta { margin-top: 2px; font-size: 11px; color: var(--color-text-tertiary); }
+@media (max-width: 860px) { .mg-body { grid-template-columns: 1fr; } }

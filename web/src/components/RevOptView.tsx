@@ -7,6 +7,8 @@ import { useConfigUI } from '../configStore';
 import { Icon } from './Icon';
 import { Glyph } from './config/glyphs';
 import './config/ui';
+import { RevOpsDashboard } from './revopt/Dashboard';
+import { MemoryGraphView } from './revopt/MemoryGraph';
 
 /**
  * RevOpt Admin: the revenue-operations console. A team-scoped task catalog over the
@@ -33,6 +35,7 @@ export function RevOptView() {
   const [teamId, setTeamId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'open' | 'all' | RevOptStatus>('open');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [tab, setTab] = useState<'queue' | 'dashboard' | 'graph'>('queue');
 
   const loadConfig = useCallback(() => {
     api.revoptConfig()
@@ -83,14 +86,19 @@ export function RevOptView() {
           <div className="revopt-view__title">RevOpt Admin</div>
           <div className="revopt-view__sub">Revenue-operations queue · email &amp; CRM work routed to a team</div>
         </div>
+        <div className="segmented revopt-tabs" role="tablist" aria-label="RevOpt sections">
+          {([['queue', 'Queue'], ['dashboard', 'Dashboard'], ['graph', 'Memory graph']] as const).map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'is-active' : ''} onClick={() => setTab(id)}>{label}</button>
+          ))}
+        </div>
         <button type="button" className="icon-btn" title="Refresh" aria-label="Refresh" onClick={refresh}>
           <Icon name="refresh" size={16} opacity={0.6} />
         </button>
       </header>
 
       <div className="revopt-view__scroll">
-        <div className="revopt-view__inner">
-          {config === null ? (
+        <div className={`revopt-view__inner${tab !== 'queue' ? ' revopt-view__inner--wide' : ''}`}>
+          {tab === 'dashboard' ? <RevOpsDashboard /> : tab === 'graph' ? <MemoryGraphView /> : config === null ? (
             <div className="cfg-empty">Loading…</div>
           ) : config.teams.length === 0 ? (
             <div className="tasks-empty">
