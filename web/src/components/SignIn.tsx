@@ -26,7 +26,7 @@ export function SignIn() {
         <div className="signin__hero">
           <BotAvatarFor bot={{ avatarShape: 'blob', avatarColor: 'black', name: 'GnoesisBots', isPrimary: true }} size={84} />
         </div>
-        <h1 className="signin__title">GnoesisBots</h1>
+        <h1 className="signin__title">GnoesisBots + SMB Xicute</h1>
         <p className="signin__sub">AI teammates with their own computers. Hand them a task and they get it done.</p>
         <a className="btn btn--primary signin__google" href="/api/auth/google/start">
           <GoogleG /> Sign in with Google
