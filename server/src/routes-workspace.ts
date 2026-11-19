@@ -79,6 +79,9 @@ workspaceApi.post('/terminal', (c) => guard(c, async () => {
   const bot = ownBot(c.get('user').id, b.botId);
   const agent = b.agent === 'shell' ? 'shell' : 'opencode';
   const folder = resolveProjectFolder(typeof b.folder === 'string' ? b.folder : '');
+  if (agent === 'opencode' && (await box.bash('command -v opencode >/dev/null 2>&1', 10)).exit_code !== 0) {
+    throw new ProjectError('OpenCode is not installed on this computer. Install it on the Bot HQ server, then try again.', 409);
+  }
   const s = await readyScreen(c.get('user').id, bot.id);
   await openTerminal(s.screenId, terminalCommand(folder, agent, box.quote), agent === 'opencode' ? `OpenCode: ${folder.split('/').pop()}` : `Terminal: ${folder.split('/').pop()}`);
   return c.json({ ok: true, folder });

@@ -9,6 +9,7 @@ import { Icon } from './Icon';
 import { Menu } from './Menu';
 import { Transcript } from './Transcript';
 import { VoiceCallBar } from './VoiceCallBar';
+import { OpenCodeModal } from './modals/OpenCodeModal';
 
 export function ChatView() {
   const bot = useSelectedBot();
@@ -18,6 +19,7 @@ export function ChatView() {
   const set = useStore((s) => s.set);
   const [menu, setMenu] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [openCodeBot, setOpenCodeBot] = useState<NonNullable<typeof bot> | null>(null);
   const rows = useMemo(() => sortedRows(transcript), [transcript]);
 
   if (!bot) {
@@ -48,6 +50,7 @@ export function ChatView() {
               items={[
                 { label: detailsOpen ? 'Hide details' : 'Show details', hint: '⇧⌘,', onSelect: () => set({ detailsOpen: !detailsOpen }) },
                 { label: 'Open computer', onSelect: () => set({ viewerOpen: true, viewerMode: 'watch', viewerHint: null }) },
+                ...(bot.kind === 'team' ? [] : [{ label: 'OpenCode terminal', onSelect: () => setOpenCodeBot(bot) }]),
                 { label: 'New conversation', onSelect: () => api.fresh(bot.id).then(() => flash('Started a new conversation')).catch((e) => flash(e.message)) },
                 { label: 'Bot settings', onSelect: () => useConfigUI.getState().openBotSettings(bot.id) },
               ]}
@@ -64,6 +67,7 @@ export function ChatView() {
         </div>
       </header>
       {toast && <div className="toast" role="status">{toast}</div>}
+      {openCodeBot && <OpenCodeModal key={openCodeBot.id} bot={openCodeBot} onClose={() => setOpenCodeBot(null)} />}
     </main>
   );
 }
