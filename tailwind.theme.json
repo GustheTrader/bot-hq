@@ -1,0 +1,111 @@
+{
+  "theme": {
+    "extend": {
+      "colors": {
+        "primary": "#1c1c1c",
+        "secondary": "#626262",
+        "tertiary": "#1e86fc",
+        "neutral": "#fcfcfc",
+        "canvas": "#f5f5f5",
+        "surface": "#ffffff",
+        "border": "#1c1c1c1f",
+        "text-primary": "#1c1c1c",
+        "text-secondary": "#626262",
+        "success": "#00854a",
+        "warning": "#aa6300",
+        "danger": "#cd2834",
+        "bot-pink": "#c82779",
+        "bot-blue": "#1e86fc",
+        "bot-red": "#fb2b3e",
+        "bot-orange": "#c54c00",
+        "bot-yellow": "#aa6300",
+        "bot-green": "#00854a",
+        "bot-teal": "#007f70",
+        "bot-purple": "#7040cf",
+        "dark-canvas": "#121212",
+        "dark-surface": "#1f1f1f",
+        "dark-text-primary": "#f5f5f5",
+        "dark-text-secondary": "#aaaaaa"
+      },
+      "fontFamily": {
+        "h1": [
+          "-apple-system, BlinkMacSystemFont, SF Pro Display, Segoe UI, Inter, system-ui, sans-serif"
+        ],
+        "h2": [
+          "-apple-system, BlinkMacSystemFont, SF Pro Display, Segoe UI, Inter, system-ui, sans-serif"
+        ],
+        "body-md": [
+          "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, Inter, system-ui, sans-serif"
+        ],
+        "body-sm": [
+          "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, Inter, system-ui, sans-serif"
+        ],
+        "label": [
+          "-apple-system, BlinkMacSystemFont, SF Pro Text, Segoe UI, Inter, system-ui, sans-serif"
+        ],
+        "mono": [
+          "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace"
+        ]
+      },
+      "fontSize": {
+        "h1": [
+          "1.5rem",
+          {
+            "letterSpacing": "-0.01em",
+            "fontWeight": "600"
+          }
+        ],
+        "h2": [
+          "1.0625rem",
+          {
+            "letterSpacing": "0.01em",
+            "fontWeight": "500"
+          }
+        ],
+        "body-md": [
+          "0.9375rem",
+          {
+            "letterSpacing": "0.01em",
+            "fontWeight": "425"
+          }
+        ],
+        "body-sm": [
+          "0.8125rem",
+          {
+            "letterSpacing": "0.015em",
+            "fontWeight": "425"
+          }
+        ],
+        "label": [
+          "0.75rem",
+          {
+            "letterSpacing": "0.01em",
+            "fontWeight": "500"
+          }
+        ],
+        "mono": [
+          "0.8125rem",
+          {
+            "fontWeight": "400"
+          }
+        ]
+      },
+      "borderRadius": {
+        "sm": "8px",
+        "md": "12px",
+        "lg": "18px",
+        "xl": "22px",
+        "card": "24px",
+        "full": "9999px"
+      },
+      "spacing": {
+        "xs": "4px",
+        "sm": "8px",
+        "md": "12px",
+        "lg": "16px",
+        "xl": "24px",
+        "2xl": "32px"
+      }
+    }
+  }
+}
