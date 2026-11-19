@@ -88,6 +88,12 @@ export const configApi = {
   githubRepos: () => req<{ repos: { nameWithOwner: string; description: string; isPrivate: boolean; updatedAt: string }[] }>('GET', '/workspace/github/repos'),
   /** Opens GitHub's sign-in in a terminal on the bot's screen. */
   githubLogin: (botId: string) => req<{ ok: true }>('POST', '/workspace/github/login', { botId }),
+  /** Starts signing the computer in to GitHub from the app: the one-time code to confirm at `url`. */
+  githubDeviceStart: () => req<{ code: string; url: string }>('POST', '/workspace/github/device'),
+  githubDeviceStatus: () => req<{ state: 'idle' } | { state: 'waiting'; code: string; url: string } | { state: 'done'; account: string | null } | { state: 'error'; error: string }>('GET', '/workspace/github/device'),
+  githubDeviceCancel: () => req<{ ok: true }>('DELETE', '/workspace/github/device'),
+  /** The repository's folder in Projects: the existing checkout, or a fresh clone. */
+  openRepo: (repo: string) => req<{ folder: string; existing: boolean }>('POST', '/workspace/github/open', { repo }),
   newFolder: (name: string) => req<{ folder: string }>('POST', '/workspace/folder', { name }),
   cloneRepo: (repo: string, name?: string) => req<{ folder: string }>('POST', '/workspace/clone', { repo, ...(name ? { name } : {}) }),
   newWorktree: (folder: string, branch: string, base?: string) => req<{ folder: string }>('POST', '/workspace/worktree', { folder, branch, ...(base ? { base } : {}) }),

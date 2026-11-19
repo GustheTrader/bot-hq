@@ -3,6 +3,7 @@ import type { Bot } from '@shared/types';
 import { api, openPopup } from '../../lib/api';
 import { configApi } from '../../lib/configApi';
 import { useStore } from '../../store';
+import { GitHubConnect } from './GitHubConnect';
 
 /** The bot GnoesisWork works through (its own computer), else the primary bot, else any bot. */
 export function workBot(bots: Bot[]): Bot | undefined {
@@ -96,10 +97,15 @@ export function GitHubCard({ compact = false }: { compact?: boolean }) {
         </span>
         <span className="gh-card__actions">
           <button type="button" className="btn btn--secondary btn--sm" onClick={refresh}>Check again</button>
-          {status?.installed && (
-            <button type="button" className="btn btn--primary btn--sm" onClick={signIn} disabled={busy === 'login'}>{busy === 'login' ? 'Opening…' : status.signedIn ? 'Sign in again' : 'Sign in to GitHub'}</button>
+          {status?.installed && status.signedIn && (
+            <button type="button" className="btn btn--secondary btn--sm" onClick={signIn} disabled={busy === 'login'} title="Opens GitHub's sign-in in a terminal on GnoesisWork's screen">{busy === 'login' ? 'Opening…' : 'Sign in again'}</button>
           )}
         </span>
+      </div>
+      {status?.installed && !status.signedIn && (
+        <div className="gh-card__connect"><GitHubConnect onDone={refresh} label="Sign in to GitHub" /></div>
+      )}
+      <div className="gh-card__divider" aria-hidden>
       </div>
       <div className="gh-card__row">
         <span className="gh-card__mark gh-card__mark--app" aria-hidden>⇄</span>

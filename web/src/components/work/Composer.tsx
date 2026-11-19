@@ -7,6 +7,7 @@ import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { EnginePicker } from './EnginePicker';
 import { FolderSetup, type FolderKind } from '../gnoesis/FolderSetup';
 import { openTerminalAgent } from '../gnoesis/github';
+import { GitHubRepoField } from '../gnoesis/GitHubRepoField';
 import { engineLabel, errText } from './shared';
 
 /** Matches the server's limit on skills per request. */
@@ -269,6 +270,9 @@ export function Composer({ harnesses, project, projects, projectChoice = '', onP
               </optgroup>
             </select>
           </label>
+        )}
+        {!project && projects && stay && !setupKind && (
+          <GitHubRepoField onReady={(f) => { setFolder(f); onProjectChoice?.('__folder'); }} />
         )}
         {folderMode && (
           <label className="proj-field proj-field--wide">

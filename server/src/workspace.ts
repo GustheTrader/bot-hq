@@ -77,6 +77,27 @@ export async function cloneRepo(rawRepo: unknown, rawName?: unknown, run: Runner
   return target;
 }
 
+/** Does this checkout's origin point at github.com/owner/name? */
+export function originMatches(url: string, repo: { owner: string; name: string }): boolean {
+  const m = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim());
+  return !!m && m[1].toLowerCase() === repo.owner.toLowerCase() && m[2].toLowerCase() === repo.name.toLowerCase();
+}
+
+/**
+ * The repository's folder in Projects: the existing checkout when it is already there (same origin), else a fresh
+ * clone. A folder of that name holding something else is an error, never overwritten.
+ */
+export async function openOrCloneRepo(rawRepo: unknown, run: Runner = run0): Promise<{ folder: string; existing: boolean }> {
+  const repo = parseRepo(rawRepo);
+  const target = path.join(root(), checkName(repo.name));
+  if (fs.existsSync(target)) {
+    const r = await runP(run, 'git', ['-C', target, 'remote', 'get-url', 'origin'], 10_000);
+    if (r.ok && originMatches(r.out, repo)) return { folder: target, existing: true };
+    throw new ProjectError(`Projects/${path.basename(target)} already exists and is not a checkout of ${repo.owner}/${repo.name}. Clone it under another name from the GitHub page.`, 409);
+  }
+  return { folder: await cloneRepo(`${repo.owner}/${repo.name}`, undefined, run), existing: false };
+}
+
 /** A branch name git accepts, kept conservative (no spaces, no "..", no leading dash, no trailing slash or ".lock"). */
 export function checkBranch(raw: unknown): string {
   const b = typeof raw === 'string' ? raw.trim() : '';
