@@ -81,3 +81,48 @@
 .gw-nav__state { margin-left: auto; padding: 0 7px; border-radius: 999px; font-size: 11px; line-height: 18px; color: var(--color-text-secondary); background: color-mix(in srgb, var(--color-success) 18%, transparent); }
 .gw-nav__state.is-asleep { background: var(--color-bg-hover); color: var(--color-text-tertiary); }
 .gw-nav__error { padding: 2px 10px 6px 36px; font-size: 12px; line-height: 16px; color: var(--color-danger-text, #d9534f); }
+
+/* GitHub: sign-in card (also shown at the top of Connections), clone box, repositories */
+.gh-panel { display: flex; flex-direction: column; gap: 12px; }
+.gh-panel .section-label { margin-top: 8px; }
+.gh-card { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.gh-card__row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.gh-card__row + .gh-card__row { border-top: 0.5px solid var(--color-border-tertiary); }
+.gh-card__mark { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--color-bg-hover); color: var(--color-text-primary); font-size: 14px; }
+.gh-card__text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 0; min-width: 0; }
+.gh-card__title { font-size: 14px; font-weight: 500; line-height: 20px; color: var(--color-text-primary); }
+.gh-card__sub { font-size: 12px; line-height: 17px; color: var(--color-text-tertiary); }
+.gh-card__actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.gh-card__ok { font-size: 12px; color: var(--color-text-secondary); }
+.gh-card__note { padding: 10px 14px; font-size: 12px; line-height: 17px; color: var(--color-text-primary); background: color-mix(in srgb, var(--color-warn) 12%, transparent); border-top: 0.5px solid var(--color-border-tertiary); }
+.gh-card--compact .gh-card__row { padding: 10px 12px; }
+.apps-modal__github { margin-bottom: 16px; }
+.gh-clone { display: flex; gap: 8px; padding: 10px; }
+.gh-clone .text-input { flex: 1 1 0; min-width: 0; }
+.gh-filter { width: 180px; height: 28px; font-size: 13px; }
+.gh-repos { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.gh-repos__empty { padding: 12px 14px; font-size: 13px; color: var(--color-text-tertiary); }
+.gh-repo { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+.gh-repo + .gh-repo { border-top: 0.5px solid var(--color-border-tertiary); }
+.gh-repo__text { display: flex; flex-direction: column; gap: 2px; flex: 1 1 0; min-width: 0; }
+.gh-repo__name { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-repo__desc { font-size: 12px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-repo__when { flex: none; font-size: 11px; color: var(--color-text-tertiary); }
+
+/* A folder that is ready to work in */
+.folder-ready { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+.folder-ready__path { flex: 1 1 200px; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-ready__error { width: 100%; font-size: 12px; color: var(--color-danger-text, #d9534f); }
+
+/* Composer: making a folder (new / clone / worktree), and OpenCode beside a folder */
+.folder-setup { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; width: 100%; padding: 10px; border-radius: 12px; background: var(--color-bg-hover); }
+.folder-setup__hint { width: 100%; font-size: 12px; line-height: 17px; color: var(--color-text-tertiary); }
+.folder-setup__buttons { display: flex; gap: 6px; margin-left: auto; }
+.folder-setup__error { width: 100%; }
+.workbox__folder { display: flex; gap: 6px; }
+.workbox__folder .text-input { flex: 1 1 0; min-width: 0; }
+
+/* Worktrees: add one */
+.gw-trees__new { display: flex; gap: 8px; padding: 10px 14px; border-top: 0.5px solid var(--color-border-tertiary); }
+.gw-trees__new .text-input { flex: 1 1 0; min-width: 0; }
+.gw-tree .btn { flex: none; }

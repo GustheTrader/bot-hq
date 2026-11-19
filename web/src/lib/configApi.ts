@@ -83,6 +83,19 @@ export const configApi = {
   /** The git worktrees of the project's folder (read-only). `repo: false` when the folder is not a git repository. */
   projectWorktrees: (id: string) => req<{ folder: string; repo: boolean; worktrees: Worktree[] }>('GET', `/projects/${id}/worktrees`),
 
+  /** Whether the computer's GitHub command line (gh) is signed in, and as whom. */
+  githubStatus: () => req<{ installed: boolean; signedIn: boolean; account: string | null }>('GET', '/workspace/github'),
+  githubRepos: () => req<{ repos: { nameWithOwner: string; description: string; isPrivate: boolean; updatedAt: string }[] }>('GET', '/workspace/github/repos'),
+  /** Opens GitHub's sign-in in a terminal on the bot's screen. */
+  githubLogin: (botId: string) => req<{ ok: true }>('POST', '/workspace/github/login', { botId }),
+  newFolder: (name: string) => req<{ folder: string }>('POST', '/workspace/folder', { name }),
+  cloneRepo: (repo: string, name?: string) => req<{ folder: string }>('POST', '/workspace/clone', { repo, ...(name ? { name } : {}) }),
+  newWorktree: (folder: string, branch: string, base?: string) => req<{ folder: string }>('POST', '/workspace/worktree', { folder, branch, ...(base ? { base } : {}) }),
+  /** Opens a file a bot linked to (an absolute path on the computer) on that bot's screen. */
+  showOnScreen: (botId: string, path: string) => req<{ ok: true; via: 'browser' | 'terminal'; path: string }>('POST', '/workspace/show', { botId, path }),
+  /** OpenCode (a terminal agent) or a shell, in the folder, on the bot's screen. */
+  openTerminal: (botId: string, folder: string, agent: 'opencode' | 'shell' = 'opencode') => req<{ ok: true; folder: string }>('POST', '/workspace/terminal', { botId, folder, agent }),
+
   /** The skills already on the computer: Zo's and the primary Hermes agent's. Read-only. */
   skillLibrary: () => req<{ skills: LibrarySkill[] }>('GET', '/launch/skills'),
   /**

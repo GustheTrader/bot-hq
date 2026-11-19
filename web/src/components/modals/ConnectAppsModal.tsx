@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { GitHubCard } from '../gnoesis/github';
 import type { Toolkit } from '@shared/types';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { api, openPopup, type AppsResponse } from '../../lib/api';
@@ -208,7 +209,10 @@ export function ConnectAppsModal() {
           </div>
         </div>
       </div>
-      <div className={`apps-modal__body${loading ? ' is-loading' : ''}`}>{body}</div>
+      <div className={`apps-modal__body${loading ? ' is-loading' : ''}`}>
+        {!searching && view.kind === 'all' && <div className="apps-modal__github"><GitHubCard compact /></div>}
+        {body}
+      </div>
     </Modal>
   );
 }
