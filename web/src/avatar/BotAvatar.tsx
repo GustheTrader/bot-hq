@@ -1,4 +1,5 @@
 import type { AvatarColor, AvatarShape, Bot } from '@shared/types';
+import { isPortraitPreset, PORTRAIT_GROUPS, PORTRAITS } from '@shared/portraits';
 import { palette } from '../lib/colors';
 import { Icon } from '../components/Icon';
 import { useStore } from '../store';
@@ -56,10 +57,30 @@ export function BotAvatar({ shape, color, size, star, ring, className, title }: 
   );
 }
 
-export const PORTRAITS = ['Chief', 'Neon', 'Signal', 'Recon', 'Archive', 'Operations'];
+export { PORTRAITS };
 
 export function portraitSource(index: number) {
   return `/portraits/${index}.webp`;
+}
+
+function PresetPortrait({ index, size, name }: { index: number; size: number; name: string }) {
+  let offset = 0;
+  for (const group of PORTRAIT_GROUPS) {
+    const local = index - offset;
+    if (local >= 0 && local < group.names.length) {
+      if (!group.image) return <img src={portraitSource(index)} alt={name} width={size} height={size} draggable={false} />;
+      const column = local % group.columns;
+      const row = Math.floor(local / group.columns);
+      return <span className="portrait-tile" role="img" aria-label={name} style={{
+        display: 'block', width: size, height: size,
+        backgroundImage: `url("/portraits/${group.image}")`,
+        backgroundSize: `${group.columns * 100}% auto`,
+        backgroundPosition: `${column / (group.columns - 1) * 100}% ${group.rows === 1 ? 50 : row / (group.rows - 1) * 100}%`,
+      }} />;
+    }
+    offset += group.names.length;
+  }
+  return <img src={portraitSource(0)} alt={name} width={size} height={size} />;
 }
 
 type PortraitBot = Pick<Bot, 'avatarShape' | 'avatarColor' | 'name' | 'avatarImage'> & Partial<Pick<Bot, 'id' | 'kind' | 'isPrimary'>>;
@@ -70,23 +91,33 @@ export function BotAvatarFor({ bot, size, star, className }: { bot: PortraitBot;
   const index = roster.filter((member) => member.kind !== 'team' && !member.isPrimary)
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
     .findIndex((member) => member.id === bot.id);
-  const preset = bot.avatarImage?.startsWith('preset:') ? Number(bot.avatarImage.slice(7)) : null;
-  const source = preset === null ? bot.avatarImage ?? portraitSource(bot.isPrimary ? 0 : 1 + Math.max(index, 0) % 5) : portraitSource(preset);
+  const preset = isPortraitPreset(bot.avatarImage) ? Number(bot.avatarImage.slice(7)) : null;
+  const custom = bot.avatarImage?.startsWith('data:image/') ? bot.avatarImage : null;
+  const chosen = preset ?? (bot.isPrimary ? 0 : 1 + Math.max(index, 0) % 5);
   return (
     <span className={`bot-avatar bot-portrait ${bot.isPrimary ? 'bot-portrait--chief' : ''} ${className ?? ''}`} style={{ width: size, height: size }} title={bot.name}>
-      <img src={source} alt={bot.name} width={size} height={size} draggable={false} />
+      {custom ? <img src={custom} alt={bot.name} width={size} height={size} draggable={false} /> : <PresetPortrait index={chosen} size={size} name={bot.name} />}
       {star && <span className="bot-avatar__star"><Icon name="star" size={Math.round(size / 7)} color="#FFFFFF" /></span>}
     </span>
   );
 }
 
 export function PortraitPresets({ value, disabled, onSelect }: { value?: string | null; disabled?: boolean; onSelect: (value: string) => void }) {
-  return <div className="portrait-picker__presets" role="group" aria-label="Portraits">
-    {PORTRAITS.slice(1).map((name, index) => {
-      const option = `preset:${index + 1}`;
-      return <button key={name} type="button" aria-label={name} title={name} aria-pressed={value === option} disabled={disabled} onClick={() => onSelect(option)}>
-        <img src={portraitSource(index + 1)} alt="" width={48} height={48} />
-      </button>;
+  return <div className="portrait-collections">
+    {PORTRAIT_GROUPS.map((group, groupIndex) => {
+      const offset = PORTRAIT_GROUPS.slice(0, groupIndex).reduce((sum, entry) => sum + entry.names.length, 0);
+      return <fieldset key={group.name} className="portrait-collection">
+        <legend>{group.name}</legend>
+        <div className="portrait-picker__presets">
+          {group.names.map((name, index) => {
+            const id = offset + index;
+            const option = `preset:${id}`;
+            return <button key={name} type="button" aria-label={name} title={name} aria-pressed={value === option} disabled={disabled} onClick={() => onSelect(option)}>
+              <PresetPortrait index={id} size={48} name={name} />
+            </button>;
+          })}
+        </div>
+      </fieldset>;
     })}
   </div>;
 }

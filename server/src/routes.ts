@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { isPortraitPreset } from './portraits.js';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { db, now } from './db.js';
@@ -44,7 +45,7 @@ function createBot(userId: string, b: { name: string; label?: string; descriptio
   const id = newId('bot');
   const shape = SHAPES.includes(b.avatarShape as AvatarShape) ? b.avatarShape : hashPick(id, SHAPES.slice(0, 13));
   const color = COLORS.includes(b.avatarColor as AvatarColor) ? b.avatarColor : hashPick(id, COLORS.filter((c) => c !== 'black'));
-  const image = typeof b.avatarImage === 'string' && /^preset:[1-5]$/.test(b.avatarImage) ? b.avatarImage : null;
+  const image = isPortraitPreset(b.avatarImage) ? b.avatarImage : null;
   db.prepare(
     'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,avatar_image,mode,is_primary,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
   ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, image, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, now(), now());
@@ -200,7 +201,7 @@ api.patch('/bots/:id', async (c) => {
   const image = p.avatarImage;
   if (image !== undefined && image !== null &&
       (typeof image !== 'string' || image.length > 180_000 ||
-       !/^(?:preset:[1-5]|data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/]+={0,2})$/.test(image))) {
+       !(isPortraitPreset(image) || /^data:image\/jpeg;base64,\/9j\/[A-Za-z0-9+/]+={0,2}$/.test(image)))) {
     return c.json({ error: 'Choose a portrait or import a smaller image.' }, 400);
   }
   const cols: Record<string, string> = { name: 'name', label: 'label', description: 'description', instructions: 'instructions', avatarShape: 'avatar_shape', avatarColor: 'avatar_color', mode: 'mode', effort: 'effort', pinned: 'pinned', voice: 'voice', voiceSpeed: 'voice_speed', voiceLanguage: 'voice_language' };
