@@ -53,6 +53,10 @@ export function toggleMute() { current?.setMuted(!useVoice.getState().muted); }
 export function callLevels(): { out: number; mic: number } {
   return current && !current.ended ? { out: current.player.level(), mic: current.micLevel() } : { out: 0, mic: 0 };
 }
+/** The bot's voice spectrum for the orb's sound-wave ring (null while it is quiet). */
+export function callSpectrum(): Uint8Array | null {
+  return current && !current.ended ? current.player.spectrum() : null;
+}
 export const isCallActive = (s: VoiceState = useVoice.getState()) => s.status === 'connecting' || s.status === 'live';
 
 type Json = Record<string, any>;

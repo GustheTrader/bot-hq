@@ -115,6 +115,7 @@ export class PcmPlayer {
   private nextTime = 0;
   private idleWaiters: (() => void)[] = [];
   private levelBuf: Float32Array<ArrayBuffer>;
+  private freqBuf: Uint8Array<ArrayBuffer>;
   onIdle: (() => void) | null = null;
   onStart: (() => void) | null = null;
 
@@ -123,6 +124,8 @@ export class PcmPlayer {
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 512;
     this.levelBuf = new Float32Array(this.analyser.fftSize);
+    this.analyser.smoothingTimeConstant = 0.72;
+    this.freqBuf = new Uint8Array(this.analyser.frequencyBinCount);
     this.out.connect(this.analyser).connect(ctx.destination);
   }
 
@@ -175,6 +178,13 @@ export class PcmPlayer {
     let sum = 0;
     for (let i = 0; i < this.levelBuf.length; i++) sum += this.levelBuf[i] * this.levelBuf[i];
     return Math.min(1, Math.sqrt(sum / this.levelBuf.length) * 4);
+  }
+
+  /** The bot's voice as 0..255 per frequency band (speech lives in the lower half), or null when silent. */
+  spectrum(): Uint8Array | null {
+    if (!this.sources.size) return null;
+    this.analyser.getByteFrequencyData(this.freqBuf);
+    return this.freqBuf;
   }
 
   private settle() {

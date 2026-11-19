@@ -3,6 +3,10 @@ import { BotAvatarFor } from '../avatar/BotAvatar';
 import { botVars } from '../lib/colors';
 import { useStore } from '../store';
 import { callLevels, endCall, toggleMute, useVoice } from '../voice/call';
+import { VoiceOrb } from './VoiceOrb';
+
+const LS_ORB = 'grokbot.voiceOrb';
+const readOrb = () => { try { return localStorage.getItem(LS_ORB) !== 'off'; } catch { return true; } };
 
 function MicGlyph({ off }: { off?: boolean }) {
   return (
@@ -33,6 +37,8 @@ export function VoiceCallBar() {
   const bot = useStore((s) => s.bots.find((b) => b.id === v.botId));
   const [now, setNow] = useState(Date.now());
   const [expanded, setExpanded] = useState(false);
+  const [orb, setOrb] = useState(readOrb);
+  const toggleOrb = () => { const next = !orb; setOrb(next); try { localStorage.setItem(LS_ORB, next ? 'on' : 'off'); } catch { /* ignore */ } };
   const avatarRef = useRef<HTMLSpanElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const active = v.status === 'connecting' || v.status === 'live';
@@ -88,6 +94,12 @@ export function VoiceCallBar() {
       role="region"
       aria-label={`Voice call with ${bot.name}`}
     >
+      {active && orb && (
+        <div className="vcall__stage" style={{ color: bot.avatarColor === 'black' ? '#EDEDED' : 'var(--bot-fill)' }}>
+          <VoiceOrb mood={v.status === 'connecting' ? 'connecting' : v.speaking ? 'speaking' : v.muted ? 'muted' : v.thinking || working ? 'thinking' : 'listening'} />
+          <span className="vcall__stage-label" aria-hidden>{status}</span>
+        </div>
+      )}
       <div className="vcall__main">
         <span className="vcall__avatar" ref={avatarRef}>
           <span className="vcall__halo" aria-hidden />
@@ -104,6 +116,11 @@ export function VoiceCallBar() {
           </div>
         </div>
         <div className="vcall__actions">
+          {active && (
+            <button type="button" className={`vcall__btn${orb ? ' is-on' : ''}`} onClick={toggleOrb} aria-pressed={orb} aria-label={orb ? 'Hide the orb' : 'Show the orb'} title={orb ? 'Hide the orb' : 'Show the orb'}>
+              <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="5" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2" strokeLinecap="round" /></svg>
+            </button>
+          )}
           {active && (
             <button type="button" className={`vcall__btn${v.muted ? ' is-on' : ''}`} onClick={toggleMute} aria-pressed={v.muted} aria-label={v.muted ? 'Unmute' : 'Mute'} title={v.muted ? 'Unmute' : 'Mute'}>
               <MicGlyph off={v.muted} />
