@@ -303,6 +303,27 @@ export function sleepBotScreen(botId: string, stillIdle: () => boolean): Promise
   });
 }
 
+/**
+ * After a restart the list of sleeping screens is empty, though screens put to sleep before it are still stopped.
+ * This marks every leased screen whose display is down as asleep, so the app shows it truthfully. Waking needs no
+ * help: after a restart the first lease checks the screen and starts its display anyway.
+ */
+export async function markSleepingScreens(isAlive: (screenId: string) => Promise<boolean> = local.screenAlive): Promise<string[]> {
+  if (env.computerProvider !== 'local') return [];
+  const marked: string[] = [];
+  const users = new Set<string>();
+  for (const s of sleepCandidates()) {
+    if (s.asleep || leasing.has(s.botId)) continue;
+    if (await isAlive(s.screenId).catch(() => true)) continue;
+    asleep.add(s.botId);
+    marked.push(s.botId);
+    users.add(s.userId);
+  }
+  for (const u of users) hub.emit(u, { type: 'computer', state: computerState(u) });
+  if (marked.length) console.log(`[screen-sleep] ${marked.length} screen(s) were already asleep at startup`);
+  return marked;
+}
+
 /** A deleted bot leaves nothing behind on the computer: its browser profile and its Library folder go. */
 export async function forgetBotFiles(botId: string): Promise<void> {
   if (!/^bot_[\w-]+$/.test(botId)) return;

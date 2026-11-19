@@ -136,6 +136,8 @@ export const local = {
     return screen(n);
   },
   deleteScreen: async (_id: string, screenId: string) => { await stopDisplay(numFor(screenId)); },
+  /** Is this screen's display running right now? (Does not start it.) */
+  screenAlive: (screenId: string) => alive(numFor(screenId)),
 
   screenshot: async (_id: string, screenId?: string) => {
     const n = numFor(screenId);
