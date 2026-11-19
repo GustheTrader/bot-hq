@@ -99,3 +99,18 @@ test('resolveShowPath allows files in the workspace or the bot library, nothing 
   assert.throws(() => W.resolveShowPath('relative/x.md', 'bot_x'), /not a file/);
   assert.throws(() => W.resolveShowPath(path.join(projects, 'nope.md'), 'bot_x'), /not on the computer/);
 });
+
+test('openOrCloneRepo reuses a checkout of the same repo, refuses a different folder, and clones otherwise', async () => {
+  assert.equal(W.originMatches('https://github.com/GustheTrader/bot-hq.git', { owner: 'gusthetrader', name: 'Bot-HQ' }), true);
+  assert.equal(W.originMatches('git@github.com:GustheTrader/bot-hq.git', { owner: 'GustheTrader', name: 'bot-hq' }), true);
+  assert.equal(W.originMatches('https://github.com/other/bot-hq', { owner: 'GustheTrader', name: 'bot-hq' }), false);
+  fs.mkdirSync(path.join(projects, 'mine'));
+  const same: Runner = (_f, args, _o, cb) => cb(null, args.includes('get-url') ? 'https://github.com/me/mine.git\n' : '', '');
+  assert.deepEqual(await W.openOrCloneRepo('me/mine', same), { folder: path.join(projects, 'mine'), existing: true });
+  const other: Runner = (_f, _a, _o, cb) => cb(null, 'https://github.com/someone/else.git\n', '');
+  await assert.rejects(W.openOrCloneRepo('me/mine', other), /not a checkout of me\/mine/);
+  const calls: string[][] = [];
+  const clone: Runner = (f, args, _o, cb) => { calls.push([f, ...args]); cb(null, '', ''); };
+  assert.deepEqual(await W.openOrCloneRepo('me/brand-new', clone), { folder: path.join(projects, 'brand-new'), existing: false });
+  assert.equal(calls[0][1], 'repo');
+});

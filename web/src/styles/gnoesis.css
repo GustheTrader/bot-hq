@@ -126,3 +126,15 @@
 .gw-trees__new { display: flex; gap: 8px; padding: 10px 14px; border-top: 0.5px solid var(--color-border-tertiary); }
 .gw-trees__new .text-input { flex: 1 1 0; min-width: 0; }
 .gw-tree .btn { flex: none; }
+
+/* GitHub sign-in from the app (one-time code) and the composer's GitHub repo field */
+.gh-card__connect { padding: 0 14px 12px 56px; }
+.gh-card__divider { border-top: 0.5px solid var(--color-border-tertiary); }
+.gh-device { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--color-warn) 12%, transparent); font-size: 13px; color: var(--color-text-primary); }
+.gh-device__code { padding: 2px 10px; border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 16px; font-weight: 600; letter-spacing: 0.08em; color: var(--color-text-primary); background: var(--color-bg-hover); cursor: pointer; }
+.gh-device__wait { font-size: 12px; color: var(--color-text-tertiary); }
+.gh-connect { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gh-connect__error { font-size: 12px; color: var(--color-danger-text, #d9534f); }
+.gh-field { min-width: 220px; }
+.gh-field .gh-device { min-width: 0; }
+.gh-field__note { font-size: 11px; line-height: 15px; color: var(--color-text-tertiary); }

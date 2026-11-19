@@ -6,7 +6,8 @@ import { openTerminal } from './desk.js';
 import { box } from './box.js';
 import { ProjectError } from './projects.js';
 import { resolveProjectFolder } from './code-workspace.js';
-import { resolveShowPath, GITHUB_LOGIN_COMMAND, addWorktree, cloneRepo, createFolder, githubStatus, listRepos, terminalCommand } from './workspace.js';
+import { resolveShowPath, GITHUB_LOGIN_COMMAND, addWorktree, cloneRepo, createFolder, githubStatus, listRepos, openOrCloneRepo, terminalCommand } from './workspace.js';
+import { cancelDeviceLogin, deviceStatus, startDeviceLogin } from './github-device.js';
 
 /**
  * GnoesisWork's workspace: make a folder, clone from GitHub, add a worktree, see whether the computer is signed in to
@@ -48,6 +49,18 @@ workspaceApi.post('/github/login', (c) => guard(c, async () => {
 }));
 
 workspaceApi.post('/folder', (c) => guard(c, async () => c.json({ folder: createFolder((await body(c)).name) }, 201)));
+
+/** Sign the computer in to GitHub from the app: returns the one-time code to confirm on github.com. */
+workspaceApi.post('/github/device', (c) => guard(c, async () => {
+  needLocal();
+  try { return c.json(await startDeviceLogin()); }
+  catch (e: any) { throw new ProjectError(String(e?.message ?? e).slice(0, 240), 409); }
+}));
+workspaceApi.get('/github/device', (c) => c.json(deviceStatus()));
+workspaceApi.delete('/github/device', (c) => { cancelDeviceLogin(); return c.json({ ok: true }); });
+
+/** A repository's folder: the existing checkout in Projects, or a fresh clone. */
+workspaceApi.post('/github/open', (c) => guard(c, async () => c.json(await openOrCloneRepo((await body(c)).repo))));
 
 workspaceApi.post('/clone', (c) => guard(c, async () => {
   const b = await body(c);
