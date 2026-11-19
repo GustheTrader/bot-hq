@@ -9,6 +9,7 @@ import { env } from './env.js';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './types.js';
 import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
 import { MemoryGraphError, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
+import { SupersetError, enableEmbedding, guestToken, listDashboards, supersetConfig } from './superset.js';
 
 /**
  * RevOpt Admin: the revenue-operations console. A CRM-shaped task catalog over a team.
@@ -279,3 +280,37 @@ const graphGuard = async (c: any, fn: () => Promise<Response>) => {
 revoptApi.get('/memory/banks', (c) => graphGuard(c, async () => c.json({ banks: await listBanks() })));
 revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => c.json(await memoryGraph(c.req.query('bank'), c.req.query('limit')))));
 revoptApi.get('/memory/entities/:id', (c) => graphGuard(c, async () => c.json(await entityFacts(c.req.query('bank'), c.req.param('id')))));
+
+// ---------- BI (Apache Superset, embedded) ----------
+
+const biGuard = async (c: any, fn: () => Promise<Response>) => {
+  try { return await fn(); } catch (e) {
+    if (e instanceof SupersetError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+};
+/** Origins allowed to frame an embedded dashboard: the web app and this server's own address. */
+const embedOrigins = () => [...new Set([env.appUrl, env.serverUrl].map((u) => { try { return new URL(u).origin; } catch { return ''; } }).filter((o) => o.startsWith('https://')))];
+
+/** Is Superset set up, its public address, and its dashboards (with embed ids). */
+revoptApi.get('/bi', (c) => biGuard(c, async () => {
+  const cfg = supersetConfig();
+  if (!cfg) return c.json({ configured: false, publicUrl: null, dashboards: [] });
+  return c.json({ configured: true, publicUrl: cfg.publicUrl, dashboards: await listDashboards(cfg) });
+}));
+
+/** Turns on embedding for one dashboard (framing allowed only from Bot HQ's own origins). */
+revoptApi.post('/bi/dashboards/:id/embed', (c) => biGuard(c, async () => {
+  const cfg = supersetConfig();
+  if (!cfg) throw new SupersetError('Superset is not set up on this computer.', 409);
+  return c.json({ embedId: await enableEmbedding(cfg, c.req.param('id'), embedOrigins()) });
+}));
+
+/** A short-lived, view-only guest token for one embedded dashboard. */
+revoptApi.post('/bi/guest-token', (c) => biGuard(c, async () => {
+  const cfg = supersetConfig();
+  if (!cfg) throw new SupersetError('Superset is not set up on this computer.', 409);
+  const { embedId } = ((await c.req.json().catch(() => ({}))) ?? {}) as { embedId?: string };
+  const user = c.get('user');
+  return c.json({ token: await guestToken(cfg, embedId, { id: user.id, name: user.name }) });
+}));

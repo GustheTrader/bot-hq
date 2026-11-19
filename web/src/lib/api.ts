@@ -89,8 +89,14 @@ export const api = {
   revoptMetrics: (days = 30) => req<RevOpsMetrics>('GET', `/revopt/metrics?days=${days}`),
   memoryBanks: () => req<{ banks: { id: string; facts: number; lastWriteAt: string | null }[] }>('GET', '/revopt/memory/banks'),
   memoryGraph: (bank: string, limit = 150) => req<MemoryGraph>('GET', `/revopt/memory/graph?bank=${encodeURIComponent(bank)}&limit=${limit}`),
+  biStatus: () => req<{ configured: boolean; publicUrl: string | null; dashboards: BiDashboard[] }>('GET', '/revopt/bi'),
+  biEnableEmbed: (id: number) => req<{ embedId: string }>('POST', `/revopt/bi/dashboards/${id}/embed`),
+  biGuestToken: (embedId: string) => req<{ token: string }>('POST', '/revopt/bi/guest-token', { embedId }),
   memoryEntity: (bank: string, id: string) => req<MemoryEntity>('GET', `/revopt/memory/entities/${encodeURIComponent(id)}?bank=${encodeURIComponent(bank)}`),
 };
+
+/** A Superset dashboard; `embedId` is set once embedding is turned on for it. */
+export interface BiDashboard { id: number; title: string; embedId: string | null; url: string; changedAt: string | null }
 
 export interface MemoryGraph {
   bank: string;

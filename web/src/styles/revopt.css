@@ -159,3 +159,13 @@
 .mg-fact__text { font-size: 13px; line-height: 18px; color: var(--color-text-primary); }
 .mg-fact__meta { margin-top: 2px; font-size: 11px; color: var(--color-text-tertiary); }
 @media (max-width: 860px) { .mg-body { grid-template-columns: 1fr; } }
+
+/* BI (embedded Superset) */
+.bi { display: flex; flex-direction: column; gap: 12px; }
+.bi-links { display: inline-flex; gap: 6px; margin-left: auto; }
+.bi-frame { height: calc(100vh - 210px); min-height: 520px; border-radius: 12px; overflow: hidden; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-elevated); }
+.bi-frame.is-hidden { display: none; }
+.bi-frame iframe { width: 100%; height: 100%; border: 0; display: block; }
+.bi-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 18px; }
+.bi-empty__title { font-size: 14px; font-weight: 600; color: var(--color-text-primary); }
+.bi-empty__sub { font-size: 13px; line-height: 19px; color: var(--color-text-secondary); }
