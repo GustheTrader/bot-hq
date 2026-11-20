@@ -25,10 +25,14 @@ export function destroySession(c: Context) {
 
 export function userFromToken(t: string | undefined): User | null {
   if (!t) return null;
+  // A workspace member works in the owner's workspace: their session carries the owner's id (see team-members.ts).
   const r = db
-    .prepare('SELECT u.* FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires_at>?')
+    .prepare(`SELECT u.*, m.workspace_id, o.name AS owner_name FROM auth_sessions s JOIN users u ON u.id=s.user_id
+      LEFT JOIN workspace_members m ON m.user_id=u.id LEFT JOIN users o ON o.id=m.workspace_id
+      WHERE s.token=? AND s.expires_at>?`)
     .get(t, now()) as any;
-  return r ? { id: r.id, email: r.email, name: r.name, avatarUrl: r.avatar_url } : null;
+  if (!r) return null;
+  return { id: r.workspace_id ?? r.id, email: r.email, name: r.name, avatarUrl: r.avatar_url, actorId: r.id, workspaceOwner: r.workspace_id ? r.owner_name : null };
 }
 
 export function userFromCookieHeader(cookieHeader: string | undefined): User | null {

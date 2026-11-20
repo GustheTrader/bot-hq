@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import path from 'node:path';
 import { env } from './env.js';
+import { initTeamMembers } from './team-members.js';
 
 fs.mkdirSync(path.dirname(env.dbPath), { recursive: true });
 export const db = new Database(env.dbPath);
@@ -265,5 +266,6 @@ function migrateRoomsToTeams() {
   db.prepare("UPDATE bots SET kind='team' WHERE kind='room'").run();
 }
 migrateRoomsToTeams();
+initTeamMembers(db);
 
 export const now = () => Date.now();

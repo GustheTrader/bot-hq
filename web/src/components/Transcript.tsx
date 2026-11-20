@@ -38,10 +38,11 @@ function buildItems(rows: Row[]): Item[] {
     if (b.type === 'message') {
       if (!b.text && !b.streaming) continue;
       const side = b.role === 'user' && (!b.from || b.from.kind === 'voice') ? 'right' : 'left';
-      const sender = b.from ? `${b.from.kind}:${b.from.id}` : b.role;
+      const senderOf = (m: MessageBody) => (m.from ? `${m.from.kind}:${m.from.id}` : m.author ? `author:${m.author}` : m.role);
+      const sender = senderOf(b);
       const lastRow = last?.kind === 'group' ? last.rows[last.rows.length - 1] : null;
       const lastBody = lastRow?.body as MessageBody | undefined;
-      const lastSender = lastBody ? (lastBody.from ? `${lastBody.from.kind}:${lastBody.from.id}` : lastBody.role) : null;
+      const lastSender = lastBody ? senderOf(lastBody) : null;
       if (last?.kind === 'group' && lastSender === sender && row.createdAt - lastRow!.createdAt < GROUP_GAP) last.rows.push(row);
       else items.push({ kind: 'group', key: `g${row.seq}`, side, from: b.from, rows: [row] });
       continue;
@@ -61,6 +62,8 @@ function cornerClass(i: number, n: number) {
 const Bubble = memo(function Bubble({ row, side, pos }: { row: Row; side: 'left' | 'right'; pos: string }) {
   const b = row.body as MessageBody;
   return (
+    <>
+    {b.author && side === 'right' && (pos === '' || pos === ' is-first') && <div className="bubble__author">{b.author}</div>}
     <div className={`bubble-wrap is-${side}`}>
       <div className={`bubble is-${side === 'right' ? 'user' : 'agent'}${pos}${b.streaming ? ' is-streaming' : ''}`}>
         {side === 'right' ? <div className="bubble__plain">{b.text}</div> : <Markdown text={b.text || ' '} onOpenPath={(path) => showFileOnComputer(row.botId, path)} />}
@@ -76,6 +79,7 @@ const Bubble = memo(function Bubble({ row, side, pos }: { row: Row; side: 'left'
       </div>
       <span className="bubble__time">{clock(row.createdAt)}</span>
     </div>
+    </>
   );
 });
 
