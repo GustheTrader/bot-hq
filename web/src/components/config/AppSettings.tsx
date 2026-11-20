@@ -356,6 +356,73 @@ function AccountSection() {
           </div>
         </div>
       </section>
+      <TeamMembersSection />
     </>
+  );
+}
+
+/**
+ * People who share this workspace: they sign in with their own account but see and use the same bots, chats,
+ * tasks and connected apps. Only the owner adds or removes them; a member just sees whose workspace it is.
+ */
+function TeamMembersSection() {
+  const [state, setState] = useState<Awaited<ReturnType<typeof configApi.teamMembers>> | null>(null);
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ error?: string; ok?: string } | null>(null);
+  const load = () => { configApi.teamMembers().then(setState).catch(() => setState(null)); };
+  useEffect(load, []);
+  if (!state) return null;
+
+  const add = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await configApi.addTeamMember(email.trim());
+      setEmail('');
+      setMsg({ ok: `${r.member.name} joined.${r.botsMoved ? ` Their ${r.botsMoved === 1 ? 'bot' : `${r.botsMoved} bots`} moved into this workspace.` : ''}` });
+      load();
+    } catch (e) { setMsg({ error: e instanceof Error ? e.message : 'Could not add them' }); }
+    finally { setBusy(false); }
+  };
+  const remove = async (id: string, name: string) => {
+    if (!confirm(`Remove ${name} from this workspace? What they made stays here.`)) return;
+    await configApi.removeTeamMember(id).catch(() => {});
+    load();
+  };
+
+  return (
+    <section className="cfg-section">
+      <div className="cfg-section__label">Team members</div>
+      {!state.owner ? (
+        <div className="cfg-card"><div className="cfg-row"><div className="cfg-row__text">
+          <div className="cfg-row__title">You’re in {state.workspaceOwner ?? 'the owner'}’s workspace</div>
+          <div className="cfg-row__sub">You share their bots, chats, tasks and connected apps. Your messages show your name.</div>
+        </div></div></div>
+      ) : (
+        <div className="cfg-card">
+          {state.members.map((m) => (
+            <div key={m.id} className="cfg-row">
+              <div className="cfg-row__text">
+                <div className="cfg-row__title">{m.name}</div>
+                <div className="cfg-row__sub">{m.email}</div>
+              </div>
+              <button type="button" className="cfg-btn cfg-btn--secondary" onClick={() => remove(m.id, m.name)}>Remove</button>
+            </div>
+          ))}
+          <div className="cfg-row">
+            <div className="cfg-row__text">
+              <div className="cfg-row__title">Add a teammate</div>
+              <div className="cfg-row__sub">They sign in once with their own account first (their email must be allowed). Their bots then move in here and they share everything in this workspace.</div>
+              <form className="team-add" onSubmit={(e) => { e.preventDefault(); if (email.trim()) add(); }}>
+                <input className="text-input" type="email" placeholder="teammate@example.com" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Teammate's email" />
+                <button type="submit" className="cfg-btn" disabled={busy || !email.trim()}>{busy ? 'Adding…' : 'Add'}</button>
+              </form>
+              {msg?.error && <div className="card__error" role="alert">{msg.error}</div>}
+              {msg?.ok && <div className="cfg-row__sub" role="status">{msg.ok}</div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }

@@ -21,6 +21,7 @@ import { deleteEventTrigger } from './triggers.js';
 import { dispatchRoomMessage } from './agent/rooms.js';
 import { voiceApi } from './voice.js';
 import { cancelBridgeJobForQuestion, interruptOpenJobs, resumeBridgeJob } from './grok-jobs.js';
+import { TeamError, addMember, listMembers, removeMember } from './team-members.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
 export const api = new Hono<AuthVars>();
@@ -153,6 +154,33 @@ api.use('/*', async (c, next) => {
   return requireUser(c, next);
 });
 
+// ---------- workspace members ----------
+
+api.get('/team-members', (c) => {
+  const u = c.get('user');
+  return c.json({ owner: u.actorId === u.id, workspaceOwner: u.workspaceOwner ?? null, members: listMembers(db, u.id) });
+});
+
+api.post('/team-members', async (c) => {
+  const u = c.get('user');
+  if (u.actorId !== u.id) return c.json({ error: 'Only the workspace owner can add people.' }, 403);
+  const { email } = await c.req.json<{ email: string }>().catch(() => ({ email: '' }));
+  try {
+    const r = addMember(db, u.id, email);
+    hub.emit(u.id, { type: 'roster' });
+    return c.json(r);
+  } catch (e) {
+    if (e instanceof TeamError) return c.json({ error: e.message }, 400);
+    throw e;
+  }
+});
+
+api.delete('/team-members/:id', (c) => {
+  const u = c.get('user');
+  if (u.actorId !== u.id) return c.json({ error: 'Only the workspace owner can remove people.' }, 403);
+  return removeMember(db, u.id, c.req.param('id')) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404);
+});
+
 // ---------- events (SSE) ----------
 
 api.get('/events', (c) => {
@@ -274,13 +302,17 @@ api.post('/bots/:id/messages', async (c) => {
   if (!b) return c.json({ error: 'not found' }, 404);
   const { text } = await c.req.json<{ text: string }>();
   if (!text?.trim()) return c.json({ error: 'empty' }, 400);
-  const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text: text.trim() });
+  // A workspace member's message carries their name, and the bot is told who is talking.
+  const u = c.get('user');
+  const author = u.actorId && u.actorId !== u.id ? u.name : undefined;
+  const row = appendRow(b.id, 'message', { type: 'message', role: 'user', text: text.trim(), ...(author ? { author } : {}) });
+  const said = author ? `[From ${author} <${u.email}>, a teammate in ${u.workspaceOwner ?? 'the owner'}'s workspace]\n${text.trim()}` : text.trim();
   // Group chats dispatch to their member Bots instead of running their own loop.
-  if (b.kind === 'team') dispatchRoomMessage(b.id, text.trim(), enqueue);
+  if (b.kind === 'team') dispatchRoomMessage(b.id, said, enqueue);
   // Any pending question card is answered by a free-text message. A Grok Bot job's question resumes that job.
   else {
     const q = getLive(b.id).question;
-    if (!(q && resumeBridgeJob(b.id, q.seq, text.trim()))) enqueue(b.id, { type: 'user', text: text.trim() });
+    if (!(q && resumeBridgeJob(b.id, q.seq, said))) enqueue(b.id, { type: 'user', text: said });
   }
   return c.json({ row });
 });

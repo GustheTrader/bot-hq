@@ -257,7 +257,7 @@ voiceApi.post('/session', async (c) => {
   }
   const secret = (await r.json()) as { value: string; expires_at: number };
 
-  const instructions = voiceInstructions(user.id, bot, s.language);
+  const instructions = voiceInstructions(user.actorId ?? user.id, bot, s.language); // the person on the call, even a workspace member
   const session: Record<string, unknown> = {
     voice: s.voice,
     instructions,
@@ -309,7 +309,7 @@ voiceApi.post('/tool', async (c) => {
       const row = appendRow(bot.id, 'message', { type: 'message', role: 'user', text: request, from });
       enqueue(bot.id, {
         type: 'user',
-        text: `[Voice call: ${String((db.prepare('SELECT name FROM users WHERE id=?').get(user.id) as any)?.name ?? 'the user').split(/\s+/)[0]} asked for this on a live voice call with you. Do the work, then reply in plain, short text with the outcome. Your reply is read aloud on the call, so lead with the answer and skip markdown, links and IDs unless asked.]\n${request}`,
+        text: `[Voice call: ${String(user.name || 'the user').split(/\s+/)[0]} asked for this on a live voice call with you. Do the work, then reply in plain, short text with the outcome. Your reply is read aloud on the call, so lead with the answer and skip markdown, links and IDs unless asked.]\n${request}`,
       });
       call?.tasks.push(clip(request, 200));
       return c.json({ output: 'Handed off. You are working on it now; the result will arrive as a [work_landed] note. Tell the user briefly that you are on it (unless you already did), then wait.', taskSeq: row.seq });

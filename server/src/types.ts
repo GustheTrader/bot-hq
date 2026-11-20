@@ -8,7 +8,16 @@ export type AvatarShape =
 export type AvatarColor =
   | 'black' | 'brown' | 'red' | 'orange' | 'yellow' | 'green' | 'cyan' | 'blue' | 'violet' | 'magenta' | 'gray';
 
-export interface User { id: string; email: string; name: string; avatarUrl: string | null }
+/**
+ * The signed-in person. `id` is the workspace they work in (their own, or the owner's when they are a member),
+ * so every query scoped by user id sees the shared workspace; `actorId` is always the person themselves.
+ */
+export interface User {
+  id: string; email: string; name: string; avatarUrl: string | null;
+  actorId?: string;
+  /** Set for a member: the workspace owner's name. */
+  workspaceOwner?: string | null;
+}
 /** A person on the team who does not sign in yet (mirrors whatsapp/handy-man style roster entries). */
 export interface Human {
   id: string;
@@ -167,6 +176,8 @@ export interface MessageBody {
   streaming?: boolean;
   /** Set when a message came from another bot, a routine or a voice call rather than the user typing. */
   from?: { kind: 'bot' | 'routine' | 'voice'; id: string; name: string };
+  /** Who typed it, when a workspace member (not the owner) sent it. */
+  author?: string;
   citations?: { url: string; title?: string }[];
 }
 

@@ -65,6 +65,8 @@
 .cfg-page__sub { margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--color-text-tertiary); max-width: 440px; }
 .cfg-section { display: flex; flex-direction: column; gap: 14px; }
 .cfg-section__label { font-size: 12px; font-weight: 500; line-height: 16px; letter-spacing: 0.3px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.team-add { display: flex; gap: 8px; margin-top: 10px; }
+.team-add .text-input { flex: 1 1 auto; min-width: 0; }
 .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 .cfg-look { display: flex; align-items: center; gap: 16px; }

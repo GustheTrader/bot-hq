@@ -51,6 +51,9 @@ export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'ins
 
 export const configApi = {
   settings: (botId: string) => req<BotSettingsBundle>('GET', `/bots/${botId}/settings`),
+  teamMembers: () => req<{ owner: boolean; workspaceOwner: string | null; members: { id: string; email: string; name: string; addedAt: number }[] }>('GET', '/team-members'),
+  addTeamMember: (email: string) => req<{ member: { id: string; name: string }; botsMoved: number }>('POST', '/team-members', { email }),
+  removeTeamMember: (id: string) => req<{ ok: true }>('DELETE', `/team-members/${id}`),
   updateBot: (botId: string, p: BotPatch) => req<{ bot: Bot }>('PATCH', `/bots/${botId}`, p),
   deleteBot: (botId: string) => req<{ ok: true }>('DELETE', `/bots/${botId}`),
   makePrimary: (botId: string) => req<{ ok: true }>('POST', `/bots/${botId}/primary`),
