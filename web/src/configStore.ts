@@ -35,6 +35,9 @@ interface ConfigUI {
   /** A folder to start the next piece of work in (set by Clone / New worktree elsewhere; the composer picks it up). */
   launchFolder: string | null;
   setLaunchFolder(f: string | null): void;
+  /** The Build-flow page to show (a path inside it, e.g. /projects/<id>); the Build-flow view opens there. */
+  buildflowPath: string;
+  openBuildflow(path?: string): void;
   theme: Theme;
   palette: Palette;
   /** Bumped by server events (tasks, memories) so open views refetch. Keys: 'tasks', 'memories:<botId>'. */
@@ -91,6 +94,8 @@ export const useConfigUI = create<ConfigUI>((set, get) => ({
   openAppSettings: (section = 'general') => set({ appSettings: section }),
   closeAppSettings: () => set({ appSettings: null }),
   setView: (view) => set({ view }),
+  buildflowPath: '/',
+  openBuildflow: (path = '/') => set({ view: 'buildflow', buildflowPath: path.startsWith('/') ? path : `/${path}` }),
   setWorkTab: (workTab) => set({ workTab }),
   openChat: () => (get().view === 'tasks' ? set({ workTab: 'chat' }) : set({ view: 'chat' })),
   setTheme: (theme) => {

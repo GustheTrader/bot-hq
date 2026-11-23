@@ -10,6 +10,7 @@ import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './typ
 import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
 import { MemoryGraphError, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
 import { SupersetError, enableEmbedding, guestToken, listDashboards, supersetConfig } from './superset.js';
+import { bf, buildflowEnabled, jobBrief, jobByNumber, looksLikeJobNumber, type JobRef } from './buildflow.js';
 
 /**
  * RevOpt Admin: the revenue-operations console. A CRM-shaped task catalog over a team.
@@ -150,6 +151,38 @@ revoptApi.get('/tasks', (c) => {
   return c.json({ tasks: rows.map(toTask) });
 });
 
+/**
+ * Link a task to a Build-flow job when a job number is given: `payload.buildflowJobNumber` (the form's field),
+ * or a target that is just a job number ("JOB-1001", "1001"). The job is looked up and kept as
+ * `payload.buildflowJob` {number, id, name, client}. An unknown number is an error the person can fix; a target
+ * that only looks like a number but matches no job is left alone. Returns the new payload, or an error.
+ */
+async function linkBuildflowJob(payload: Record<string, unknown>, target: string | undefined, actor: string): Promise<{ payload: Record<string, unknown> } | { error: string; status: 400 | 502 }> {
+  const typed = typeof payload.buildflowJobNumber === 'string' ? payload.buildflowJobNumber.trim() : '';
+  const { buildflowJobNumber: _drop, ...rest } = payload;
+  if (typed === '' && 'buildflowJobNumber' in payload) return { payload: { ...rest, buildflowJob: undefined } }; // cleared
+  const raw = typed || (target && looksLikeJobNumber(target) ? target : '');
+  if (!raw) return { payload: rest };
+  if (!buildflowEnabled()) return typed ? { error: 'Build-flow is not connected, so job numbers can’t be looked up.', status: 400 } : { payload: rest };
+  try {
+    const s = await jobByNumber(raw, actor);
+    if (!s) return typed ? { error: `No job ${raw} in Build-flow.`, status: 400 } : { payload: rest };
+    return { payload: { ...rest, buildflowJob: { number: s.job.number, id: s.job.id, name: s.job.name, client: s.job.client || undefined } } };
+  } catch (e) {
+    return typed ? { error: e instanceof Error ? e.message : 'Build-flow is not answering.', status: 502 } : { payload: rest };
+  }
+}
+
+/** A Build-flow job at a glance, by number (the task form's preview). */
+revoptApi.get('/buildflow/jobs/:number', async (c) => {
+  if (!buildflowEnabled()) return c.json({ error: 'Build-flow is not connected.' }, 404);
+  const u = c.get('user');
+  try {
+    const s = await jobByNumber(c.req.param('number'), `${u.name} <${u.email}>`);
+    return s ? c.json(s) : c.json({ error: `No job ${c.req.param('number')} in Build-flow.` }, 404);
+  } catch (e) { return c.json({ error: e instanceof Error ? e.message : 'Build-flow is not answering.' }, 502); }
+});
+
 /** Create a task. */
 revoptApi.post('/tasks', async (c) => {
   const userId = c.get('user').id;
@@ -163,6 +196,10 @@ revoptApi.post('/tasks', async (c) => {
   if (body.status !== undefined && !STATUSES.includes(body.status as RevOptStatus)) {
     return c.json({ error: `status must be one of ${STATUSES.join(', ')}` }, 400);
   }
+  const u = c.get('user');
+  const linked = await linkBuildflowJob(body.payload ?? {}, cleaned.patch.target, `${u.name} <${u.email}>`);
+  if ('error' in linked) return c.json({ error: linked.error }, linked.status);
+  body.payload = linked.payload;
   const title = cleaned.patch.title ?? '';
   const id = newId('rev');
   const t = now();
@@ -197,7 +234,17 @@ revoptApi.patch('/tasks/:id', async (c) => {
     if (!STATUSES.includes(body.status as RevOptStatus)) return c.json({ error: `status must be one of ${STATUSES.join(', ')}` }, 400);
     sets.push('status=?'); args.push(body.status);
   }
-  if (body.payload !== undefined) { sets.push('payload=?'); args.push(JSON.stringify(body.payload)); }
+  // A new job number or a new target that is a job number re-links the task (keeping its other fields).
+  const targetChanged = cleaned.patch.target !== undefined && cleaned.patch.target !== row.target;
+  if (body.payload !== undefined || targetChanged) {
+    // A payload sent without the job link keeps the task's existing link.
+    const old = toTask(row).payload as Record<string, unknown>;
+    const base = body.payload !== undefined ? { ...(old.buildflowJob ? { buildflowJob: old.buildflowJob } : {}), ...body.payload } : old;
+    const u = c.get('user');
+    const linked = await linkBuildflowJob(base, targetChanged ? (cleaned.patch.target as string) : undefined, `${u.name} <${u.email}>`);
+    if ('error' in linked) return c.json({ error: linked.error }, linked.status);
+    sets.push('payload=?'); args.push(JSON.stringify(linked.payload)); // JSON drops a cleared (undefined) link
+  }
   if (body.dueAt !== undefined) { sets.push('due_at=?'); args.push(body.dueAt); }
   if (!sets.length) return c.json({ ok: true, task: toTask(row) });
   sets.push('updated_at=?'); args.push(now());
@@ -219,7 +266,7 @@ revoptApi.delete('/tasks/:id', (c) => {
  * Dispatch a task to its team: post it into the team channel as the user and let the lead
  * pick it up. Marks the task running and remembers the channel row so the console can jump to it.
  */
-revoptApi.post('/tasks/:id/dispatch', (c) => {
+revoptApi.post('/tasks/:id/dispatch', async (c) => {
   const userId = c.get('user').id;
   const id = c.req.param('id');
   const row = db.prepare('SELECT * FROM revopt_tasks WHERE id=? AND user_id=?').get(id, userId) as TaskRow | undefined;
@@ -229,7 +276,15 @@ revoptApi.post('/tasks/:id/dispatch', (c) => {
   const bots = teamMembers(team.id).filter((m) => m.kind === 'bot');
   if (!bots.length) return c.json({ error: 'This team has no Bots to work the task.' }, 400);
 
-  const prompt = taskPrompt(toTask(row));
+  // A task linked to a Build-flow job carries that job's current state into the brief.
+  const task = toTask(row);
+  const job = (task.payload as any).buildflowJob as JobRef | undefined;
+  let jobText = '';
+  if (job?.id && buildflowEnabled()) {
+    try { jobText = jobBrief(await bf('GET', `/jobs/${encodeURIComponent(job.id)}/summary`, `${team.name} (team)`)); }
+    catch { jobText = `Build-flow job ${job.number} "${job.name}" (job_id ${job.id}). Use the buildflow_job tool for its details.`; }
+  }
+  const prompt = taskPrompt(task, jobText);
   const posted = appendRow(team.id, 'message', { type: 'message', role: 'user', text: prompt });
   db.prepare('UPDATE bots SET unread = unread + 1 WHERE id=?').run(team.id);
   const lead = bots.find((b) => b.role === 'lead') ?? bots[0];
@@ -240,13 +295,15 @@ revoptApi.post('/tasks/:id/dispatch', (c) => {
 });
 
 /** The instruction posted to the team for a task. */
-function taskPrompt(t: RevOptTask): string {
+function taskPrompt(t: RevOptTask, jobText = ''): string {
   const brief = teamBrief(t.teamId).text;
+  const { buildflowJob: _job, ...fields } = t.payload as Record<string, unknown>;
   const bits = [
     `[RevOpt task · ${t.kind} · ${t.priority}] ${t.title}`,
     t.target ? `Target: ${t.target}` : '',
     t.detail ? `Details: ${t.detail}` : '',
-    Object.keys(t.payload).length ? `Fields: ${JSON.stringify(t.payload)}` : '',
+    jobText,
+    Object.keys(fields).length ? `Fields: ${JSON.stringify(fields)}` : '',
     t.dueAt ? `Due: ${new Date(t.dueAt).toISOString()}` : '',
   ].filter(Boolean);
   return (

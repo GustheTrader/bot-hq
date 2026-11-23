@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
+import { JobChip, JobPanel, JobPreview, jobOf } from './revopt/BuildflowJob';
 import { api, type RevOptConfig } from '../lib/api';
 import { relativeShort } from '../lib/time';
 import { useStore } from '../store';
@@ -73,6 +74,11 @@ export function RevOptView() {
     try { await api.updateRevoptTask(id, { status }); refresh(); }
     catch (e) { setError((e as Error).message); }
     finally { setBusyId(null); }
+  };
+  // Link (or, with '', unlink) a Build-flow job by number; errors come back to the panel to show.
+  const setJob = async (task: RevOptTask, number: string) => {
+    await api.updateRevoptTask(task.id, { payload: { ...task.payload, buildflowJobNumber: number } });
+    refresh();
   };
   const remove = async (id: string) => {
     setError(null);
@@ -164,6 +170,7 @@ export function RevOptView() {
                           onDispatch={() => dispatch(t.id)}
                           onStatus={(s) => setStatus(t.id, s)}
                           onDelete={() => remove(t.id)}
+                          onSetJob={(n) => setJob(t, n)}
                         />
                       ))}
                     </div>
@@ -186,19 +193,20 @@ function NewTask({ teamId, onCreated }: { teamId: string; onCreated: () => void 
   const [title, setTitle] = useState('');
   const [detail, setDetail] = useState('');
   const [target, setTarget] = useState('');
+  const [jobNumber, setJobNumber] = useState('');
   const [kind, setKind] = useState<RevOptKind>('email');
   const [priority, setPriority] = useState<RevOptPriority>('normal');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { setOpen(false); setTitle(''); setDetail(''); setTarget(''); setKind('email'); setPriority('normal'); setError(null); }, [teamId]);
+  useEffect(() => { setOpen(false); setTitle(''); setDetail(''); setTarget(''); setJobNumber(''); setKind('email'); setPriority('normal'); setError(null); }, [teamId]);
 
   const submit = async () => {
     if (!title.trim()) return;
     setBusy(true); setError(null);
     try {
-      await api.createRevoptTask({ teamId, title: title.trim(), detail: detail.trim(), target: target.trim(), kind, priority });
-      setTitle(''); setDetail(''); setTarget('');
+      await api.createRevoptTask({ teamId, title: title.trim(), detail: detail.trim(), target: target.trim(), kind, priority, ...(jobNumber.trim() ? { payload: { buildflowJobNumber: jobNumber.trim() } } : {}) });
+      setTitle(''); setDetail(''); setTarget(''); setJobNumber('');
       onCreated();
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -220,6 +228,9 @@ function NewTask({ teamId, onCreated }: { teamId: string; onCreated: () => void 
         onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submit(); }} aria-label="Task title" />
       <input className="text-input" placeholder="Target — email address, domain, or CRM record (optional)" value={target}
         onChange={(e) => setTarget(e.target.value)} aria-label="Task target" />
+      <input className="text-input" placeholder="Build-flow job # (optional), e.g. JOB-1001" value={jobNumber}
+        onChange={(e) => setJobNumber(e.target.value)} aria-label="Build-flow job number" />
+      <JobPreview number={jobNumber} />
       <textarea className="text-input revopt-new__detail" placeholder="Details — context the team should have (optional)" value={detail}
         rows={2} onChange={(e) => setDetail(e.target.value)} aria-label="Task detail" />
       <div className="revopt-new__row">
@@ -252,12 +263,13 @@ function NewTask({ teamId, onCreated }: { teamId: string; onCreated: () => void 
   );
 }
 
-function TaskCard({ task, busy, onDispatch, onStatus, onDelete }: {
+function TaskCard({ task, busy, onDispatch, onStatus, onDelete, onSetJob }: {
   task: RevOptTask;
   busy: boolean;
   onDispatch: () => void;
   onStatus: (s: RevOptStatus) => void;
   onDelete: () => void;
+  onSetJob: (number: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
   const done = task.status === 'done';
@@ -269,6 +281,7 @@ function TaskCard({ task, busy, onDispatch, onStatus, onDelete }: {
           <span className={`revopt-card__title${done ? ' is-done' : ''}`}>{task.title}</span>
           <span className="revopt-card__meta">
             <span className={`revopt-pri revopt-pri--${task.priority}`}>{PRIORITY_LABEL[task.priority]}</span>
+            {jobOf(task.payload) && <><span aria-hidden>·</span><JobChip job={jobOf(task.payload)!} /></>}
             {task.target && <><span aria-hidden>·</span><span className="revopt-card__target">{task.target}</span></>}
             <span aria-hidden>·</span>
             <span>{when(task)}</span>
@@ -304,8 +317,9 @@ function TaskCard({ task, busy, onDispatch, onStatus, onDelete }: {
             <span>Target</span><span>{task.target || '—'}</span>
             <span>Updated</span><span>{new Date(task.updatedAt).toLocaleString()}</span>
           </div>
-          {Object.keys(task.payload).length > 0 && (
-            <pre className="revopt-card__payload">{JSON.stringify(task.payload, null, 2)}</pre>
+          <JobPanel job={jobOf(task.payload)} onSet={onSetJob} />
+          {Object.keys(task.payload).filter((k) => k !== 'buildflowJob').length > 0 && (
+            <pre className="revopt-card__payload">{JSON.stringify(Object.fromEntries(Object.entries(task.payload).filter(([k]) => k !== 'buildflowJob')), null, 2)}</pre>
           )}
         </div>
       )}

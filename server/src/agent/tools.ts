@@ -177,11 +177,14 @@ const BUILDFLOW_TOOLS: ToolDef[] = [
   },
   {
     name: 'buildflow_job',
-    description: 'One job in full: schedule (with dependencies), the latest daily logs, change orders with the revised contract, and selections.',
-    parameters: obj({ job_id: { type: 'string' } }, ['job_id']),
+    description: 'One job in full: schedule (with dependencies), the latest daily logs, change orders with the revised contract, and selections. Give job_id, or job_number as people say it (JOB-1001, 1001).',
+    parameters: obj({ job_id: { type: 'string' }, job_number: { type: 'string' } }),
     activity: 'working', label: 'Reading a job',
     impl: bfTool(async (a, actor) => {
-      const id = encodeURIComponent(String(a.job_id));
+      let jobId = a.job_id ? String(a.job_id) : '';
+      if (!jobId && a.job_number) jobId = (await bf('GET', `/jobs/by-number/${encodeURIComponent(String(a.job_number))}`, actor)).job.id;
+      if (!jobId) throw new BuildflowError('Give job_id or job_number.');
+      const id = encodeURIComponent(jobId);
       const [job, sched, logs, cos, sels] = await Promise.all([bf('GET', `/projects/${id}`, actor), bf('GET', `/projects/${id}/schedule`, actor), bf('GET', `/projects/${id}/daily-logs`, actor), bf('GET', `/projects/${id}/change-orders`, actor), bf('GET', `/projects/${id}/selections`, actor)]);
       return { job: job?.data, schedule: sched.items, dailyLogs: logs.logs.slice(0, 10), changeOrders: cos.changeOrders, contract: cos.contract, selections: sels.selections };
     }, () => 'Read a job'),

@@ -43,6 +43,37 @@ export async function bf(method: string, path: string, actor: string, body?: unk
   return data;
 }
 
+// ---------- jobs by number (RevOpt) ----------
+
+/** "JOB-1001", "job 1001", "#1001", "1001" → true. Same loose rule as Build-flow's own lookup. */
+export const looksLikeJobNumber = (s: unknown) => /^\s*(?:job)?[\s#:_-]*0*\d{3,7}\s*$/i.test(String(s ?? ''));
+
+export interface JobRef { number: string; id: string; name: string; client?: string }
+
+/** A job's summary by number, or null when Build-flow has no such job. Throws when Build-flow can't be reached. */
+export async function jobByNumber(raw: string, actor: string): Promise<any | null> {
+  try { return await bf('GET', `/jobs/by-number/${encodeURIComponent(raw.trim())}`, actor); }
+  catch (e) { if (e instanceof BuildflowError && /^No job/.test(e.message)) return null; throw e; }
+}
+
+/** A short, current description of a job for a bot's brief. */
+export function jobBrief(s: any): string {
+  const money = (n: number) => `$${Math.round(Number(n) || 0).toLocaleString('en-US')}`;
+  const next = (s.schedule?.next ?? []).map((n: any) => `${n.title} (${n.startDate})`).join(', ');
+  const waiting = [
+    ...(s.waitingOnClient?.changeOrders ?? []).map((c: any) => `${c.number} ${c.title} ${money(c.total)}`),
+    ...(s.waitingOnClient?.selections ?? []).map((x: any) => `selection: ${x.title}`),
+  ].join('; ');
+  return [
+    `Build-flow job ${s.job.number} "${s.job.name}"${s.job.client ? ` for ${s.job.client}` : ''} (status ${s.job.status}; job_id ${s.job.id}).`,
+    `Contract ${money(s.contract?.revised)} (${money(s.contract?.approvedChangeOrders)} in approved change orders). Schedule ${s.schedule?.progress ?? 0}% done${s.schedule?.late?.length ? `, ${s.schedule.late.length} late` : ''}.`,
+    next ? `Next: ${next}.` : '',
+    waiting ? `Waiting on the client: ${waiting}.` : '',
+    s.lastDailyLog ? `Last daily log ${s.lastDailyLog.date}: ${String(s.lastDailyLog.workPerformed).slice(0, 200)}` : '',
+    'Use the buildflow_job tool with this job_id for the full job, and the other buildflow_ tools to update it.',
+  ].filter(Boolean).join('\n');
+}
+
 // ---------- /buildflow/* pass-through ----------
 
 const SIGN_IN_FIRST = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Build-flow</title><body style="font:15px system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#111"><p>Sign in to Bot HQ first, then open Build-flow from its sidebar. <a href="/" target="_top">Go to Bot HQ</a></p></body>';

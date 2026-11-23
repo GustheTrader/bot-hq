@@ -84,6 +84,7 @@ export const api = {
   updateRevoptTask: (id: string, patch: { status?: RevOptStatus; priority?: RevOptPriority; title?: string; detail?: string; target?: string; payload?: Record<string, unknown> }) =>
     req<{ ok: true; task: RevOptTask }>('PATCH', `/revopt/tasks/${id}`, patch),
   deleteRevoptTask: (id: string) => req<{ ok: true }>('DELETE', `/revopt/tasks/${id}`),
+  revoptBuildflowJob: (number: string) => req<BuildflowJobSummary>('GET', `/revopt/buildflow/jobs/${encodeURIComponent(number)}`),
   dispatchRevoptTask: (id: string) => req<{ ok: true; prompt: string; teamId: string }>('POST', `/revopt/tasks/${id}/dispatch`),
   /** RevOps dashboard numbers for the last `days`. */
   revoptMetrics: (days = 30) => req<RevOpsMetrics>('GET', `/revopt/metrics?days=${days}`),
@@ -117,4 +118,13 @@ export function openPopup(url: string) {
   const left = window.screenX + (window.outerWidth - w) / 2;
   const top = window.screenY + (window.outerHeight - h) / 2;
   return window.open(url, 'grokbot-connect', `width=${w},height=${h},left=${left},top=${top}`);
+}
+
+/** A Build-flow job at a glance (Build-flow's /jobs/:id/summary). */
+export interface BuildflowJobSummary {
+  job: { id: string; number: string; name: string; client?: string; status: string };
+  contract: { original: number; approvedChangeOrders: number; pendingChangeOrders: number; revised: number };
+  schedule: { items: number; complete: number; progress: number; late: { id: string; title: string; endDate: string }[]; next: { id: string; title: string; startDate: string; endDate: string; status: string }[] };
+  waitingOnClient: { changeOrders: { id: string; number: string; title: string; total: number }[]; selections: { id: string; title: string; dueDate?: string }[] };
+  lastDailyLog: { date: string; author: string; workPerformed: string } | null;
 }
