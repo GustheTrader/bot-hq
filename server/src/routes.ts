@@ -23,6 +23,8 @@ import { voiceApi } from './voice.js';
 import { cancelBridgeJobForQuestion, interruptOpenJobs, resumeBridgeJob } from './grok-jobs.js';
 import { TeamError, addMember, listMembers, removeMember } from './team-members.js';
 import { cancelMacroLogin, finishMacroLogin, macroStatus, startMacroLogin } from './macro.js';
+import { MacroError } from './macro-client.js';
+import { gtmCompany, gtmOverview, gtmThread } from './macro-gtm.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
 export const api = new Hono<AuthVars>();
@@ -202,6 +204,17 @@ api.post('/macro/login/finish', async (c) => {
 });
 
 api.delete('/macro/login', (c) => { cancelMacroLogin(); return c.json({ ok: true }); });
+
+// GTM view: the Macro workspace (CRM when on, else email-derived companies and contacts), read-only.
+const macroGuard = async (c: any, fn: () => Promise<Response>) => {
+  try { return await fn(); } catch (e) {
+    if (e instanceof MacroError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+};
+api.get('/macro/gtm', (c) => macroGuard(c, async () => c.json(await gtmOverview(c.req.query('q'), c.req.query('fresh') === '1'))));
+api.get('/macro/gtm/thread/:id', (c) => macroGuard(c, async () => c.json(await gtmThread(c.req.param('id')))));
+api.get('/macro/gtm/company', (c) => macroGuard(c, async () => c.json(await gtmCompany(c.req.query('id'), c.req.query('domain')))));
 
 // ---------- events (SSE) ----------
 
