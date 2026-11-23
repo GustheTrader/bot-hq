@@ -1,3 +1,7 @@
+/* ---------- Build-flow, edge to edge (components/BuildflowView.tsx) ---------- */
+.buildflow-view { min-width: 0; background: var(--color-bg-pane); }
+.buildflow-view__frame { flex: 1 1 0; width: 100%; min-height: 0; border: 0; background: #f9fafb; }
+
 /* ---------- GTM: the Macro workspace, edge to edge (components/MacroView.tsx) ---------- */
 .gtm { min-width: 0; background: var(--color-bg-pane); }
 .gtm__bar {

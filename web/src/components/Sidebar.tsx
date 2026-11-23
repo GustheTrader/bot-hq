@@ -1,4 +1,4 @@
-import { Activity, Briefcase, CodeXml, LayoutDashboard, Users } from 'lucide-react';
+import { Activity, Briefcase, CodeXml, HardHat, LayoutDashboard, Users } from 'lucide-react';
 import { memo, useCallback, useState } from 'react';
 import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
@@ -114,6 +114,10 @@ export function Sidebar() {
         <button type="button" className={`sidebar-island${view === 'macro' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('macro')} title="GTM Tools" aria-pressed={view === 'macro'}>
           <span className="sidebar-island__icon"><LayoutDashboard size={18} aria-hidden /></span>
           <span className="sidebar-island__label">GTM Tools</span>
+        </button>
+        <button type="button" className={`sidebar-island${view === 'buildflow' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('buildflow')} title="Build-flow" aria-pressed={view === 'buildflow'}>
+          <span className="sidebar-island__icon"><HardHat size={18} aria-hidden /></span>
+          <span className="sidebar-island__label">Build-flow</span>
         </button>
         {primary && (
           <div className="pinned">

@@ -6,6 +6,8 @@
   "outputDirectory": "web/dist",
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://bot-hq-herb.zocomputer.io/api/:path*" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/buildflow", "destination": "https://bot-hq-herb.zocomputer.io/buildflow/" },
+    { "source": "/buildflow/:path*", "destination": "https://bot-hq-herb.zocomputer.io/buildflow/:path*" },
+    { "source": "/((?!api/|buildflow).*)", "destination": "/index.html" }
   ]
 }

@@ -31,6 +31,7 @@ import { initEngines } from './engine.js';
 import { startGrokBridge } from './routes-grok.js';
 import { recoverGrokJobs, startGrokSweep } from './grok-jobs.js';
 import { startGrokCallbacks } from './grok-notify.js';
+import { proxyBuildflow } from './buildflow.js';
 
 if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
@@ -45,6 +46,9 @@ app.get('/api/health', (c) => c.json({ ok: true, engine: 'hermes' }));
 // Integrations never live on the main (publicly forwarded) port; the Grok bridge has its own loopback listener.
 app.all('/api/integrations/*', (c) => c.json({ error: 'not found' }, 404));
 // The app's tools for the agent engines (MCP).
+// Build-flow (internal construction app), behind Bot HQ's sign-in except its public client portal.
+app.all('/buildflow', (c) => c.redirect('/buildflow/'));
+app.all('/buildflow/*', (c) => proxyBuildflow(c));
 app.route('/mcp', mcpApi);
 app.route('/api/checkins', checkinsApi);
 app.route('/api/rooms', roomsApi);
