@@ -12,6 +12,7 @@ import { createRoom, postToRoom } from './rooms.js';
 import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
 import { dataGrep, dataList, dataRead, dataSearch, DataError, defaultConfig, warmCatalog } from '../dataplane/fs.js';
+import { bf, BuildflowError, buildflowEnabled } from '../buildflow.js';
 
 export interface ToolCtx {
   userId: string;
@@ -153,6 +154,92 @@ const DATA_TOOLS: ToolDef[] = [
     activity: 'working',
     label: 'Searching files',
     impl: dataTool((a) => dataGrep(dataCfg, a), (a) => `Grepped for "${String(a.pattern).slice(0, 40)}"`),
+  },
+];
+
+/** Build-flow (the internal construction app). Each call acts as this bot (x-actor), so the job history shows who did it. */
+const bfTool = (fn: (a: any, actor: string) => Promise<unknown>, summary: (a: any) => string): Impl => async (a, ctx) => {
+  try {
+    return { output: JSON.stringify(await fn(a, `${getBotName(ctx.botId)} (bot)`)).slice(0, 60000), summary: summary(a) };
+  } catch (e: any) {
+    if (e instanceof BuildflowError) return { output: JSON.stringify({ error: e.message }), summary: 'Build-flow request refused' };
+    throw e;
+  }
+};
+const crewList = (v: unknown) => (Array.isArray(v) ? v : []).map((c: any) => (typeof c === 'string' ? { name: c } : c));
+const BUILDFLOW_TOOLS: ToolDef[] = [
+  {
+    name: 'buildflow_jobs',
+    description: 'List the construction jobs in Build-flow (the team\'s internal Buildertrend-style app): id, name, client, status, dates, budget.',
+    parameters: obj({ status: { type: 'string', description: 'Optional: planning, active, on_hold, completed, cancelled.' } }),
+    activity: 'working', label: 'Checking jobs',
+    impl: bfTool(async (a, actor) => ((await bf('GET', `/projects${a.status ? `?status=${encodeURIComponent(a.status)}` : ''}`, actor))?.data ?? []).map((p: any) => ({ id: p.id, name: p.name, client: p.clientName, status: p.status, startDate: p.startDate, endDate: p.endDate, budget: p.budget })), () => 'Listed jobs'),
+  },
+  {
+    name: 'buildflow_job',
+    description: 'One job in full: schedule (with dependencies), the latest daily logs, change orders with the revised contract, and selections.',
+    parameters: obj({ job_id: { type: 'string' } }, ['job_id']),
+    activity: 'working', label: 'Reading a job',
+    impl: bfTool(async (a, actor) => {
+      const id = encodeURIComponent(String(a.job_id));
+      const [job, sched, logs, cos, sels] = await Promise.all([bf('GET', `/projects/${id}`, actor), bf('GET', `/projects/${id}/schedule`, actor), bf('GET', `/projects/${id}/daily-logs`, actor), bf('GET', `/projects/${id}/change-orders`, actor), bf('GET', `/projects/${id}/selections`, actor)]);
+      return { job: job?.data, schedule: sched.items, dailyLogs: logs.logs.slice(0, 10), changeOrders: cos.changeOrders, contract: cos.contract, selections: sels.selections };
+    }, () => 'Read a job'),
+  },
+  {
+    name: 'buildflow_add_daily_log',
+    description: 'Add a daily log to a job: work performed, and optionally date (YYYY-MM-DD, default today), weather, crew, delays, safety notes, and whether the client can see it.',
+    parameters: obj({
+      job_id: { type: 'string' }, work_performed: { type: 'string' }, date: { type: 'string' },
+      weather: { type: 'object', properties: { conditions: { type: 'string' }, highF: { type: 'number' }, lowF: { type: 'number' }, delay: { type: 'boolean' } } },
+      crew: { type: 'array', items: { type: 'object', properties: { name: { type: 'string' }, company: { type: 'string' }, hours: { type: 'number' } } } },
+      delays: { type: 'string' }, safety: { type: 'string' }, visible_to_client: { type: 'boolean' },
+    }, ['job_id', 'work_performed']),
+    activity: 'working', label: 'Writing a daily log',
+    impl: bfTool((a, actor) => bf('POST', `/projects/${encodeURIComponent(String(a.job_id))}/daily-logs`, actor, { workPerformed: a.work_performed, date: a.date, weather: a.weather, crew: crewList(a.crew), delays: a.delays, safety: a.safety, visibleToClient: !!a.visible_to_client }), () => 'Added a daily log'),
+  },
+  {
+    name: 'buildflow_add_schedule_item',
+    description: 'Add an item to a job\'s schedule. Use starts_after (item ids) to make it follow other items: it then starts the day after they finish, and later items move when they slip.',
+    parameters: obj({ job_id: { type: 'string' }, title: { type: 'string' }, start_date: { type: 'string', description: 'YYYY-MM-DD' }, end_date: { type: 'string', description: 'YYYY-MM-DD, default = start' }, starts_after: { type: 'array', items: { type: 'string' } }, assignees: { type: 'array', items: { type: 'string' } } }, ['job_id', 'title', 'start_date']),
+    activity: 'working', label: 'Updating the schedule',
+    impl: bfTool((a, actor) => bf('POST', `/projects/${encodeURIComponent(String(a.job_id))}/schedule`, actor, { title: a.title, startDate: a.start_date, endDate: a.end_date, predecessorIds: a.starts_after ?? [], assignees: a.assignees ?? [] }), (a) => `Scheduled "${String(a.title).slice(0, 40)}"`),
+  },
+  {
+    name: 'buildflow_update_schedule_item',
+    description: 'Change a schedule item: dates, status (not_started, in_progress, complete), progress 0-100, predecessors. Later dependent items move automatically; the reply lists what moved.',
+    parameters: obj({ item_id: { type: 'string' }, start_date: { type: 'string' }, end_date: { type: 'string' }, status: { type: 'string' }, progress: { type: 'number' }, starts_after: { type: 'array', items: { type: 'string' } } }, ['item_id']),
+    activity: 'working', label: 'Updating the schedule',
+    impl: bfTool((a, actor) => bf('PATCH', `/schedule/${encodeURIComponent(String(a.item_id))}`, actor, { startDate: a.start_date, endDate: a.end_date, status: a.status, progress: a.progress, predecessorIds: a.starts_after }), () => 'Updated the schedule'),
+  },
+  {
+    name: 'buildflow_draft_change_order',
+    description: 'Draft a change order on a job (priced lines with markup, schedule impact). It stays a draft: a person sends it to the client from Build-flow.',
+    parameters: obj({
+      job_id: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' }, schedule_impact_days: { type: 'number' },
+      lines: { type: 'array', items: { type: 'object', properties: { description: { type: 'string' }, quantity: { type: 'number' }, unitCost: { type: 'number' }, markupPct: { type: 'number' } }, required: ['description', 'quantity', 'unitCost'] } },
+    }, ['job_id', 'title', 'lines']),
+    activity: 'working', label: 'Drafting a change order',
+    impl: bfTool((a, actor) => bf('POST', `/projects/${encodeURIComponent(String(a.job_id))}/change-orders`, actor, { title: a.title, description: a.description, scheduleImpactDays: a.schedule_impact_days ?? 0, lines: (a.lines ?? []).map((l: any) => ({ markupPct: 20, ...l })) }), (a) => `Drafted change order "${String(a.title).slice(0, 40)}"`),
+  },
+  {
+    name: 'buildflow_leads',
+    description: 'The sales pipeline in Build-flow: every lead with stage, value and contact, plus totals per stage.',
+    parameters: obj({}),
+    activity: 'working', label: 'Checking leads',
+    impl: bfTool(async (_a, actor) => { const r = await bf('GET', '/leads', actor); return { pipeline: r.pipeline, leads: r.leads.map((l: any) => ({ id: l.id, name: l.name, contact: l.contactName, email: l.email, stage: l.stage, value: l.estimatedValue, confidence: l.confidence, projectId: l.projectId, lastActivity: l.activities?.at(-1) })) }; }, () => 'Read the pipeline'),
+  },
+  {
+    name: 'buildflow_update_lead',
+    description: 'Create a lead (no lead_id) or update one: stage (new, contacted, site_visit, estimating, proposal_sent, won, lost), value, confidence, contact details, and/or add a note to its history.',
+    parameters: obj({ lead_id: { type: 'string' }, name: { type: 'string' }, contact_name: { type: 'string' }, email: { type: 'string' }, phone: { type: 'string' }, source: { type: 'string' }, stage: { type: 'string' }, estimated_value: { type: 'number' }, confidence: { type: 'number' }, note: { type: 'string' } }),
+    activity: 'working', label: 'Updating a lead',
+    impl: bfTool(async (a, actor) => {
+      const fields = { name: a.name, contactName: a.contact_name, email: a.email, phone: a.phone, source: a.source, stage: a.stage, estimatedValue: a.estimated_value, confidence: a.confidence };
+      let lead = a.lead_id ? (await bf('PATCH', `/leads/${encodeURIComponent(a.lead_id)}`, actor, fields)).lead : (await bf('POST', '/leads', actor, fields)).lead;
+      if (a.note) lead = (await bf('POST', `/leads/${encodeURIComponent(lead.id)}/activities`, actor, { note: a.note })).lead;
+      return { id: lead.id, name: lead.name, stage: lead.stage };
+    }, (a) => (a.lead_id ? 'Updated a lead' : 'Added a lead')),
   },
 ];
 
@@ -394,6 +481,7 @@ export const TOOLS: ToolDef[] = [
     },
   },
   ...DATA_TOOLS,
+  ...(buildflowEnabled() ? BUILDFLOW_TOOLS : []),
 ];
 
 export const toolMap = new Map(TOOLS.map((t) => [t.name, t]));

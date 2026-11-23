@@ -3,6 +3,7 @@ import { startEvents } from './lib/events';
 import { useStore } from './store';
 import { CodeView } from './components/CodeView';
 import { MacroView } from './components/MacroView';
+import { BuildflowView } from './components/BuildflowView';
 import { HqView, useActiveBotCount } from './components/HqView';
 import { ChatView } from './components/ChatView';
 import { ComputerViewer } from './components/ComputerViewer';
@@ -83,7 +84,7 @@ function Shell() {
   return (
     <div className={`app${collapsed ? ' is-sidebar-collapsed' : ''}${detailsOpen && hasBot && view === 'chat' ? ' has-details' : ''}`}>
       <Sidebar />
-      {view === 'code' ? <CodeView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'hq' ? <HqView /> : <ChatView />}
+      {view === 'code' ? <CodeView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'buildflow' ? <BuildflowView /> :view === 'hq' ? <HqView /> : <ChatView />}
       {detailsOpen && hasBot && view === 'chat' && <DetailsPanel />}
       {modal === 'create' && <CreateBotModal />}
       {modal === 'group' && <CreateGroupModal />}
