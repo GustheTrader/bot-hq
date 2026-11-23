@@ -7,6 +7,7 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://bot-hq-herb.zocomputer.io/api/:path*" },
     { "source": "/buildflow", "destination": "https://bot-hq-herb.zocomputer.io/buildflow/" },
+    { "source": "/buildflow/", "destination": "https://bot-hq-herb.zocomputer.io/buildflow/" },
     { "source": "/buildflow/:path*", "destination": "https://bot-hq-herb.zocomputer.io/buildflow/:path*" },
     { "source": "/((?!api/|buildflow).*)", "destination": "/index.html" }
   ]

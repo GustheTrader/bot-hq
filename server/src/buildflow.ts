@@ -45,6 +45,7 @@ export async function bf(method: string, path: string, actor: string, body?: unk
 
 // ---------- /buildflow/* pass-through ----------
 
+const SIGN_IN_FIRST = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Build-flow</title><body style="font:15px system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#111"><p>Sign in to Bot HQ first, then open Build-flow from its sidebar. <a href="/" target="_top">Go to Bot HQ</a></p></body>';
 const PUBLIC = /^\/(assets\/|portal\/|api\/v1\/portal\/|favicon|use\.txt$)/;
 const DROP_REQ = new Set(['host', 'cookie', 'authorization', 'x-api-key', 'x-actor', 'connection', 'content-length', 'accept-encoding']);
 const DROP_RES = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'set-cookie']);
@@ -57,7 +58,9 @@ export async function proxyBuildflow(c: Context): Promise<Response> {
   c.req.raw.headers.forEach((v, k) => { if (!DROP_REQ.has(k.toLowerCase())) headers.set(k, v); });
   if (!PUBLIC.test(path)) {
     const user = userFromCookieHeader(c.req.header('cookie'));
-    if (!user) return path.startsWith('/api/') ? c.json({ error: 'unauthenticated' }, 401) : c.redirect('/');
+    // No redirect: behind Vercel's rewrite a relative Location comes back as Zo's address. A page with a link
+    // back to Bot HQ (relative, so it stays on whichever address the person used) works everywhere.
+    if (!user) return path.startsWith('/api/') ? c.json({ error: 'unauthenticated' }, 401) : c.html(SIGN_IN_FIRST, 401);
     headers.set('x-api-key', serviceKey());
     headers.set('x-actor', `${user.name} <${user.email}>`.slice(0, 120));
   }

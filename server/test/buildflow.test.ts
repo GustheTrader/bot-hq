@@ -39,8 +39,9 @@ test('everything else needs a Bot HQ session: API answers 401, pages go to sign-
   const api = await app.request('/buildflow/api/v1/leads');
   assert.equal(api.status, 401);
   const page = await app.request('/buildflow/leads');
-  assert.equal(page.status, 302);
-  assert.equal(page.headers.get('location'), '/');
+  assert.equal(page.status, 401);
+  assert.equal(page.headers.get('location'), null, 'no redirect (Vercel would turn it into Zo’s address)');
+  assert.match(await page.text(), /Sign in to Bot HQ first/);
   assert.equal(seen.length, before, 'nothing reached Build-flow');
 });
 
