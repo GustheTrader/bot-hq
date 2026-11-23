@@ -22,6 +22,7 @@ import { dispatchRoomMessage } from './agent/rooms.js';
 import { voiceApi } from './voice.js';
 import { cancelBridgeJobForQuestion, interruptOpenJobs, resumeBridgeJob } from './grok-jobs.js';
 import { TeamError, addMember, listMembers, removeMember } from './team-members.js';
+import { cancelMacroLogin, finishMacroLogin, macroStatus, startMacroLogin } from './macro.js';
 import type { AvatarColor, AvatarShape, Toolkit } from './types.js';
 
 export const api = new Hono<AuthVars>();
@@ -180,6 +181,27 @@ api.delete('/team-members/:id', (c) => {
   if (u.actorId !== u.id) return c.json({ error: 'Only the workspace owner can remove people.' }, 403);
   return removeMember(db, u.id, c.req.param('id')) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404);
 });
+
+// ---------- Macro (macro.com) for every bot ----------
+
+api.get('/macro', (c) => c.json(macroStatus()));
+
+api.post('/macro/login', async (c) => {
+  const u = c.get('user');
+  if (u.actorId !== u.id) return c.json({ error: 'Only the workspace owner can sign in to Macro.' }, 403);
+  try { return c.json({ url: await startMacroLogin() }); }
+  catch (e) { return c.json({ error: e instanceof Error ? e.message : 'Could not start the Macro sign-in' }, 400); }
+});
+
+api.post('/macro/login/finish', async (c) => {
+  const u = c.get('user');
+  if (u.actorId !== u.id) return c.json({ error: 'Only the workspace owner can sign in to Macro.' }, 403);
+  const { redirect } = await c.req.json<{ redirect: string }>().catch(() => ({ redirect: '' }));
+  try { return c.json(await finishMacroLogin(redirect)); }
+  catch (e) { return c.json({ error: e instanceof Error ? e.message : 'Macro sign-in did not finish' }, 400); }
+});
+
+api.delete('/macro/login', (c) => { cancelMacroLogin(); return c.json({ ok: true }); });
 
 // ---------- events (SSE) ----------
 

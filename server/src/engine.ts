@@ -8,6 +8,7 @@ import { cdpUrlFor, screenFor } from './computer.js';
 import { db } from './db.js';
 import { env } from './env.js';
 import type { EngineInfo, EngineProvider } from './types.js';
+import { MACRO_SERVER, linkMacroTokens, macroEnabled, macroServerConfig } from './macro.js';
 
 /**
  * Every bot is run by a Hermes agent.
@@ -182,6 +183,9 @@ async function writeHome(botId: string): Promise<{ home: string; key: string; di
     ...extraMcpServers(),
     hq: { url: `${env.mcpBaseUrl}/mcp/${botId}`, headers: { Authorization: `Bearer ${mcpToken(botId)}` }, timeout: 1800, connect_timeout: 30 },
   };
+  // Macro (macro.com) through its own MCP server, on the one shared sign-in (see macro.ts).
+  if (macroEnabled() && linkMacroTokens(home)) cfg.mcp_servers[MACRO_SERVER] = macroServerConfig();
+  else delete cfg.mcp_servers[MACRO_SERVER];
   writePrivate(cfgFile, YAML.stringify(cfg));
 
   if (!fs.existsSync(path.join(home, 'SOUL.md'))) fs.writeFileSync(path.join(home, 'SOUL.md'), soul(b));
