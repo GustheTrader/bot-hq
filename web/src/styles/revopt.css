@@ -48,6 +48,29 @@
 .revopt-card__title.is-done { text-decoration: line-through; color: var(--color-text-tertiary); }
 .revopt-card__detail { font-size: 13px; line-height: 19px; color: var(--color-text-secondary); white-space: pre-wrap; }
 .revopt-card__target { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+
+/* Build-flow job links on tasks (components/revopt/BuildflowJob.tsx) */
+.bf-job-chip {
+  display: inline-flex; align-items: center; padding: 0 6px; border-radius: 4px; height: 18px;
+  font: 500 11px/18px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.02em;
+  color: var(--color-text-primary); background: var(--color-bg-subtle); border: 0.5px solid var(--color-border-secondary);
+}
+.bf-job-chip.is-link { cursor: pointer; }
+.bf-job-chip.is-link:hover { border-color: var(--color-border-primary); }
+.bf-job-preview { margin-top: -2px; font-size: 12px; line-height: 17px; color: var(--color-text-tertiary); }
+.bf-job-preview.is-found { color: var(--color-text-secondary); }
+.bf-job-preview.is-error { color: var(--color-danger-text); }
+.bf-job-panel { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding: 10px 12px; border-radius: 8px; border: 0.5px solid var(--color-border-tertiary); background: var(--color-bg-subtle); }
+.bf-job-panel__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bf-job-panel__label { font-size: 11px; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; color: var(--color-text-tertiary); }
+.bf-job-panel__actions { display: flex; gap: 10px; }
+.bf-job-panel__title { font-size: 13px; color: var(--color-text-primary); }
+.bf-job-panel__muted { font-size: 12px; line-height: 17px; color: var(--color-text-tertiary); }
+.bf-job-panel__stats { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--color-text-secondary); }
+.bf-job-panel__stats b { font-weight: 600; color: var(--color-text-primary); font-variant-numeric: tabular-nums; }
+.bf-job-panel__stats .is-alert b { color: var(--color-danger-text); }
+.bf-job-panel__edit { display: flex; gap: 8px; }
+.bf-job-panel__edit .text-input { flex: 1 1 auto; min-width: 0; }
 .revopt-card__meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; line-height: 16px; color: var(--color-text-tertiary); }
 .revopt-card__muted { opacity: 0.8; }
 .revopt-card__kv { display: inline-flex; gap: 4px; }
