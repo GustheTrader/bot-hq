@@ -107,17 +107,17 @@ export function Sidebar() {
           <span className="sidebar-island__icon"><Users size={18} aria-hidden /></span>
           <span className="sidebar-island__label">Teams</span>
         </button>
-        <button type="button" className={`sidebar-island${view === 'revopt' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('revopt')} title="RevOpt Admin" aria-pressed={view === 'revopt'}>
-          <span className="sidebar-island__icon"><Briefcase size={18} aria-hidden /></span>
-          <span className="sidebar-island__label">RevOpt Admin</span>
+        <button type="button" className={`sidebar-island${view === 'buildflow' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('buildflow')} title="Build-flow" aria-pressed={view === 'buildflow'}>
+          <span className="sidebar-island__icon"><HardHat size={18} aria-hidden /></span>
+          <span className="sidebar-island__label">Build-flow</span>
         </button>
         <button type="button" className={`sidebar-island${view === 'macro' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('macro')} title="GTM Tools" aria-pressed={view === 'macro'}>
           <span className="sidebar-island__icon"><LayoutDashboard size={18} aria-hidden /></span>
           <span className="sidebar-island__label">GTM Tools</span>
         </button>
-        <button type="button" className={`sidebar-island${view === 'buildflow' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('buildflow')} title="Build-flow" aria-pressed={view === 'buildflow'}>
-          <span className="sidebar-island__icon"><HardHat size={18} aria-hidden /></span>
-          <span className="sidebar-island__label">Build-flow</span>
+        <button type="button" className={`sidebar-island${view === 'revopt' ? ' is-active' : ''}`} onClick={() => useConfigUI.getState().setView('revopt')} title="RevOpt Admin" aria-pressed={view === 'revopt'}>
+          <span className="sidebar-island__icon"><Briefcase size={18} aria-hidden /></span>
+          <span className="sidebar-island__label">RevOpt Admin</span>
         </button>
         {primary && (
           <div className="pinned">
