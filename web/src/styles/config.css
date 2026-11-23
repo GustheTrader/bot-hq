@@ -67,6 +67,8 @@
 .cfg-section__label { font-size: 12px; font-weight: 500; line-height: 16px; letter-spacing: 0.3px; text-transform: uppercase; color: var(--color-text-tertiary); }
 .team-add { display: flex; gap: 8px; margin-top: 10px; }
 .team-add .text-input { flex: 1 1 auto; min-width: 0; }
+.macro-open { display: inline-flex; margin: 8px 0 14px; text-decoration: none; }
+.macro-step { margin-top: 2px; }
 .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 .cfg-look { display: flex; align-items: center; gap: 16px; }

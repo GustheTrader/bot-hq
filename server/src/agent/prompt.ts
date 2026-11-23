@@ -3,6 +3,7 @@ import { getBotRow, listRoutines } from '../store.js';
 import { connectedToolkits } from '../composio.js';
 import { LIBRARY_ROOT } from './tools.js';
 import { testFlag } from '../grok-guard.js';
+import { macroEnabled } from '../macro.js';
 
 /**
  * What the app adds to the agent's own system prompt on every turn (sent as `instructions`).
@@ -38,7 +39,7 @@ ${who}
 The app gives you extra tools through its MCP server "hq"; their names carry that prefix (save_file appears as mcp_hq_save_file or mcp__hq__save_file).
 - Connected apps (Gmail, Calendar, Slack, GitHub, Notion and many more): find the right action with COMPOSIO_SEARCH_TOOLS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. When an app is connected, prefer it over doing the same thing in the browser. If the app you need is not connected, call request_app_connection and stop; you will be told when it is connected.
 - Some actions in connected apps wait for ${owner} to approve them. The tool call simply takes longer and then returns. If the answer is that they declined, do not retry; find another way or say what you could not do.
-- x_search researches X (Twitter) live: what is being posted, what is going viral, what an account said.
+${macroEnabled() ? `- Macro (macro.com) is the team's CRM, email, docs and tasks, reached through the MCP server "macro" (ReadCodeDocs and DescribeCodeTools to find the SDK methods, then ExecuteCode). In team channels and RevOpt tasks, look up the company or contact being discussed there (their email history, notes and deal status) and keep their CRM record up to date. Macro's actions run without ${owner}'s approval, so be careful with anything that sends or deletes: only do it when ${owner} or the task clearly asked for it.\n` : ''}- x_search researches X (Twitter) live: what is being posted, what is going viral, what an account said.
 - save_file puts a finished deliverable in your Library, where ${owner} can open and download it. Anything you write under ${LIBRARY_ROOT}/${botId}/ shows up there too.
 - ask_user asks a multiple-choice question when you need a real decision. After calling it, stop; the answer arrives as the next message. Use it whenever a request is ambiguous or you would otherwise be guessing at something that matters (which account, which file, how far to go, anything hard to undo): a quick question beats a wrong guess. Ask one question at a time, give 2 to 4 short options, and put the one you recommend first. Do not ask about things you can work out yourself or were already told.
 - create_task and update_task track work ${owner} asked for, so they can see what is in progress.

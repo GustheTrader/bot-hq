@@ -329,7 +329,70 @@ function AppsSection() {
           ))}
         </div>
       </section>
+      <MacroSection />
     </>
+  );
+}
+
+/**
+ * Macro (macro.com) for every bot, through Macro's own MCP server. One sign-in is shared by all bots. Macro's
+ * sign-in ends on a 127.0.0.1 address the browser cannot open; the person pastes that address back here.
+ */
+function MacroSection() {
+  const [st, setSt] = useState<Awaited<ReturnType<typeof configApi.macroStatus>> | null>(null);
+  const [link, setLink] = useState<string | null>(null);
+  const [pasted, setPasted] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => { configApi.macroStatus().then(setSt).catch(() => setSt(null)); };
+  useEffect(load, []);
+  if (!st?.enabled) return null;
+
+  const start = async () => {
+    setBusy(true); setError(null); setPasted('');
+    try { setLink((await configApi.macroLogin()).url); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not start the Macro sign-in'); }
+    finally { setBusy(false); }
+  };
+  const finish = async () => {
+    setBusy(true); setError(null);
+    try { setSt(await configApi.macroLoginFinish(pasted.trim())); setLink(null); setPasted(''); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Macro sign-in did not finish'); }
+    finally { setBusy(false); }
+  };
+  const cancel = () => { configApi.macroLoginCancel().catch(() => {}); setLink(null); setPasted(''); setError(null); };
+
+  return (
+    <section className="cfg-section">
+      <div className="cfg-section__label">Macro</div>
+      <div className="cfg-card">
+        <div className="cfg-row">
+          <div className="cfg-row__text">
+            <div className="cfg-row__title">Macro CRM, email and docs</div>
+            <div className="cfg-row__sub">Every bot uses your macro.com workspace through Macro’s own connector, with one shared sign-in. Macro’s actions run without approval cards.</div>
+          </div>
+          {st.signedIn && !link ? <span className="cfg-chip">Connected</span> : null}
+          {!link && <button type="button" className="cfg-btn cfg-btn--secondary" disabled={busy} onClick={start}>{busy ? 'Starting…' : st.signedIn ? 'Sign in again' : 'Sign in to Macro'}</button>}
+        </div>
+        {link && (
+          <div className="cfg-row">
+            <div className="cfg-row__text">
+              <div className="cfg-row__title">1. Approve in Macro</div>
+              <div className="cfg-row__sub">Open this in the browser where you’re signed in to macro.com, then approve.</div>
+              <a className="cfg-btn cfg-btn--primary macro-open" href={link} target="_blank" rel="noreferrer noopener">Open Macro sign-in</a>
+              <div className="cfg-row__title macro-step">2. Paste the address you land on</div>
+              <div className="cfg-row__sub">Your browser shows “can’t connect” at an address starting with http://127.0.0.1:…/callback?code=. That’s expected: copy the whole address and paste it here (within 30 minutes).</div>
+              <form className="team-add" onSubmit={(e) => { e.preventDefault(); if (pasted.trim()) finish(); }}>
+                <input className="text-input" placeholder="http://127.0.0.1:…/callback?code=…" value={pasted} onChange={(e) => setPasted(e.target.value)} aria-label="Address from Macro sign-in" />
+                <button type="submit" className="cfg-btn" disabled={busy || !pasted.trim()}>{busy ? 'Finishing…' : 'Finish'}</button>
+                <button type="button" className="cfg-btn cfg-btn--secondary" onClick={cancel}>Cancel</button>
+              </form>
+            </div>
+          </div>
+        )}
+        {error && <div className="cfg-row"><div className="card__error" role="alert">{error}</div></div>}
+      </div>
+    </section>
   );
 }
 

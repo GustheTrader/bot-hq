@@ -51,6 +51,10 @@ export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'ins
 
 export const configApi = {
   settings: (botId: string) => req<BotSettingsBundle>('GET', `/bots/${botId}/settings`),
+  macroStatus: () => req<{ enabled: boolean; signedIn: boolean; expiresAt: number | null; signingIn: boolean }>('GET', '/macro'),
+  macroLogin: () => req<{ url: string }>('POST', '/macro/login'),
+  macroLoginFinish: (redirect: string) => req<{ enabled: boolean; signedIn: boolean; expiresAt: number | null; signingIn: boolean }>('POST', '/macro/login/finish', { redirect }),
+  macroLoginCancel: () => req<{ ok: true }>('DELETE', '/macro/login'),
   teamMembers: () => req<{ owner: boolean; workspaceOwner: string | null; members: { id: string; email: string; name: string; addedAt: number }[] }>('GET', '/team-members'),
   addTeamMember: (email: string) => req<{ member: { id: string; name: string }; botsMoved: number }>('POST', '/team-members', { email }),
   removeTeamMember: (id: string) => req<{ ok: true }>('DELETE', `/team-members/${id}`),

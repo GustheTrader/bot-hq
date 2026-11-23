@@ -51,6 +51,10 @@ export const env = {
   hermesKey: process.env.HERMES_KEY ?? '',
   /** Where each extra bot's own Hermes home lives. Must be outside ~/.hermes so it is a separate tenant. */
   enginesDir: process.env.ENGINES_DIR ?? new URL('../../data/engines', import.meta.url).pathname,
+  /** Macro (macro.com) MCP server every bot gets, e.g. https://mcp-server.macro.com/mcp. Empty = off. */
+  macroMcpUrl: process.env.MACRO_MCP_URL ?? '',
+  /** The Hermes home that holds the one shared Macro sign-in (its mcp-tokens/ is linked into every bot's home). */
+  macroAuthHome: process.env.MACRO_AUTH_HOME ?? new URL('../../data/macro-auth', import.meta.url).pathname,
   enginePortBase: Number(process.env.ENGINE_PORT_BASE ?? 8650),
   /** URL the Hermes gateways use to reach this server's MCP endpoint. */
   mcpBaseUrl: (process.env.MCP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 8787}`).replace(/\/+$/, ''),
