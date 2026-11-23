@@ -47,13 +47,24 @@ export interface ComputerDetails {
   hibernation: { idleMinutes: number; viewers: number; dryRun: boolean };
 }
 
-export type BotPatch = Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode'>>;
+/** The GTM view's Macro data (server/src/macro-gtm.ts). Companies/contacts come from Macro's CRM when it is on, else from email. */
+export interface GtmPerson { name: string | null; email: string }
+export interface GtmThread { id: string; subject: string; from: GtmPerson | null; participants: GtmPerson[]; at: string | null; read: boolean; count: number }
+export interface GtmCompanyRow { id: string | null; name: string | null; domain: string | null; threads: number; people: number; lastAt: string | null; source: 'crm' | 'email' }
+export interface GtmContactRow { id: string | null; name: string | null; email: string | null; company: string | null; lastAt: string | null; source: 'crm' | 'email' }
+export interface GtmOverview { crm: boolean; me: string | null; companies: GtmCompanyRow[]; contacts: GtmContactRow[]; threads: GtmThread[] }
+export interface GtmCompany { id: string | null; name: string | null; domain: string | null; domains: string[]; description: string | null; contacts: { id: string; name: string | null; email: string | null; lastAt: string | null }[]; threads: GtmThread[] }
+
+export type BotPatch =Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode'>>;
 
 export const configApi = {
   settings: (botId: string) => req<BotSettingsBundle>('GET', `/bots/${botId}/settings`),
   macroStatus: () => req<{ enabled: boolean; signedIn: boolean; expiresAt: number | null; signingIn: boolean }>('GET', '/macro'),
   macroLogin: () => req<{ url: string }>('POST', '/macro/login'),
   macroLoginFinish: (redirect: string) => req<{ enabled: boolean; signedIn: boolean; expiresAt: number | null; signingIn: boolean }>('POST', '/macro/login/finish', { redirect }),
+  gtmOverview: (q: string, fresh = false) => req<GtmOverview>('GET', `/macro/gtm?q=${encodeURIComponent(q)}${fresh ? '&fresh=1' : ''}`),
+  gtmThread: (id: string) => req<{ id: string; messages: { id: string; from: GtmPerson | null; at: string | null; subject: string; body: string }[] }>('GET', `/macro/gtm/thread/${encodeURIComponent(id)}`),
+  gtmCompany: (p: { id?: string | null; domain?: string | null }) => req<GtmCompany>('GET', `/macro/gtm/company?${p.id ? `id=${encodeURIComponent(p.id)}` : `domain=${encodeURIComponent(p.domain ?? '')}`}`),
   macroLoginCancel: () => req<{ ok: true }>('DELETE', '/macro/login'),
   teamMembers: () => req<{ owner: boolean; workspaceOwner: string | null; members: { id: string; email: string; name: string; addedAt: number }[] }>('GET', '/team-members'),
   addTeamMember: (email: string) => req<{ member: { id: string; name: string }; botsMoved: number }>('POST', '/team-members', { email }),
