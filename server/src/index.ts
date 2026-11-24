@@ -31,7 +31,7 @@ import { initEngines } from './engine.js';
 import { startGrokBridge } from './routes-grok.js';
 import { recoverGrokJobs, startGrokSweep } from './grok-jobs.js';
 import { startGrokCallbacks } from './grok-notify.js';
-import { proxyBuildflow } from './buildflow.js';
+import { proxyBuildflow, proxyField } from './buildflow.js';
 
 if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
@@ -49,6 +49,9 @@ app.all('/api/integrations/*', (c) => c.json({ error: 'not found' }, 404));
 // Build-flow (internal construction app), behind Bot HQ's sign-in except its public client portal.
 app.all('/buildflow', (c) => c.redirect('/buildflow/'));
 app.all('/buildflow/*', (c) => proxyBuildflow(c));
+// The crew's phone app: public, signs in to Build-flow itself (see buildflow.ts).
+app.all('/field', (c) => proxyField(c));
+app.all('/field/*', (c) => proxyField(c));
 app.route('/mcp', mcpApi);
 app.route('/api/checkins', checkinsApi);
 app.route('/api/rooms', roomsApi);
