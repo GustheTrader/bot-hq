@@ -6,12 +6,16 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "test:a2ui": "tsx --test test/a2ui.test.ts"
   },
   "devDependencies": {
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.2.1",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "playwright": "^1.65.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.6"

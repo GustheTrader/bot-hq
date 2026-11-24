@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://a2ui.org/specification/v1_0/catalog.json",
+  "protocolVersion": "1.0",
+  "title": "bot-HQ trading catalog (renderer test copy)",
+  "description": "OrderTicket + submitOrder per docs/a2ui/CONTRACT.md. The $id is the v1_0 catalog.json URL so the official schemas' catalog.json#/$defs/anyComponent and anyFunction refs resolve here (the catalog substitution trick).",
+  "catalogId": "bothq.trading.v0",
+  "components": {
+    "OrderTicket": {
+      "type": "object",
+      "description": "A paper order ticket for one Kalshi YES contract. Account/position values are bound server-side via @path.",
+      "allowedParents": ["Surface"],
+      "properties": {
+        "component": { "const": "OrderTicket" },
+        "symbol": { "$ref": "common_types.json#/$defs/DynamicString" },
+        "side": { "$ref": "common_types.json#/$defs/DynamicString" },
+        "quantity": { "$ref": "common_types.json#/$defs/DynamicNumber" },
+        "limitPrice": { "$ref": "common_types.json#/$defs/DynamicNumber" },
+        "livePrice": { "$ref": "common_types.json#/$defs/DynamicNumber" },
+        "buyingPower": { "$ref": "common_types.json#/$defs/DynamicNumber" },
+        "position": { "$ref": "common_types.json#/$defs/DynamicNumber" },
+        "status": { "$ref": "common_types.json#/$defs/DynamicValue" },
+        "submit": { "$ref": "common_types.json#/$defs/Action" }
+      },
+      "required": ["component", "symbol", "side", "quantity", "limitPrice", "livePrice", "buyingPower", "position", "status", "submit"]
+    }
+  },
+  "functions": {
+    "submitOrder": {
+      "type": "object",
+      "description": "Place a paper limit order for the ticket. The agent derives the idempotency key; the renderer never sends one.",
+      "returnType": "object",
+      "allowedCallers": "rendererOnly",
+      "requiresUserActivation": true,
+      "properties": {
+        "@call": { "const": "submitOrder" },
+        "args": {
+          "type": "object",
+          "properties": {
+            "symbol": { "oneOf": [{ "type": "string", "minLength": 1 }, { "$ref": "common_types.json#/$defs/DataBinding" }] },
+            "side": { "oneOf": [{ "enum": ["buy", "sell"] }, { "$ref": "common_types.json#/$defs/DataBinding" }] },
+            "quantity": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "$ref": "common_types.json#/$defs/DataBinding" }] },
+            "limitPrice": { "oneOf": [{ "type": "number", "minimum": 0.01, "maximum": 0.99 }, { "$ref": "common_types.json#/$defs/DataBinding" }] }
+          },
+          "required": ["symbol", "side", "quantity", "limitPrice"],
+          "unevaluatedProperties": false
+        }
+      },
+      "required": ["@call", "args"]
+    }
+  },
+  "$defs": {
+    "anyComponent": {
+      "oneOf": [{ "$ref": "#/components/OrderTicket" }]
+    },
+    "anyFunction": {
+      "oneOf": [{ "$ref": "#/functions/submitOrder" }]
+    }
+  }
+}
