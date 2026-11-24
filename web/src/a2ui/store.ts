@@ -53,7 +53,7 @@ export function pruneCalls(calls: Record<string, CallRecord>): Record<string, Ca
     if (!n || c.startedAt >= n.startedAt) newest.set(c.surfaceId, c);
   }
   let evicted = false;
-  const out: Record<string, CallRecord> = {};
+  const out: Record<string, CallRecord> = Object.create(null); // ids stay plain keys ("__proto__")
   for (const [id, c] of Object.entries(calls)) {
     if (c.state !== 'done' || newest.get(c.surfaceId) === c) out[id] = c;
     else evicted = true;

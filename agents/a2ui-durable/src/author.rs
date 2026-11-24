@@ -114,6 +114,10 @@ pub fn set_pointer(root: &mut Value, path: &str, value: Value) -> Result<(), Str
             None => break,
         }
     }
+    if value.is_null() && probe.is_none() {
+        // Deleting under a missing parent changes nothing (matches the web renderer's no-op).
+        return Ok(());
+    }
     if probe.is_some_and(|p| !p.is_object()) {
         return Err(format!("data-model path {path:?}: the parent of {last:?} is not an object"));
     }

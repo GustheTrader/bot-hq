@@ -143,7 +143,9 @@ async fn client(socket: WebSocket, app: App) {
     }
     // Deregister so the agent stops queueing for this client, then drop both
     // socket halves, which closes the connection.
-    let _ = app.events.send(Event::Disconnect { client }).await;
+    // try_send: a full queue must not keep this socket alive; if the Disconnect is
+    // lost, the agent prunes this client's closed sender on its next send.
+    let _ = app.events.try_send(Event::Disconnect { client });
     if !writer_done {
         writer.abort();
     }

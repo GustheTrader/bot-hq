@@ -34,7 +34,8 @@ function config(): RelayConfig {
   return {
     agentUrl: (process.env.BOTHQ_A2UI_AGENT_URL || 'http://127.0.0.1:8790').replace(/\/$/, ''),
     token: process.env.BOTHQ_A2UI_TOKEN || undefined,
-    owner: process.env.BOTHQ_A2UI_OWNER?.trim() || undefined,
+    // '' is NOT unset: a blank owner fails closed (nobody admitted) rather than opening to everyone.
+    owner: process.env.BOTHQ_A2UI_OWNER === undefined ? undefined : process.env.BOTHQ_A2UI_OWNER.trim(),
   };
 }
 
@@ -42,9 +43,11 @@ const tokenHeaders = (token: string | undefined): Record<string, string> => (tok
 
 /** The workspace id BOTHQ_A2UI_OWNER names: an id as-is, an email resolved to its user's workspace. */
 function ownerWorkspaceId(owner: string): string | null {
-  if (!owner.includes('@')) return owner;
-  const r = db.prepare('SELECT id FROM users WHERE lower(email)=lower(?)').get(owner) as { id: string } | undefined;
-  if (!r) return null;
+  if (!owner) return null;
+  const r = (owner.includes('@')
+    ? db.prepare('SELECT id FROM users WHERE lower(email)=lower(?)').get(owner)
+    : db.prepare('SELECT id FROM users WHERE id=?').get(owner)) as { id: string } | undefined;
+  if (!r) return owner.includes('@') ? null : owner;
   // The named person may themselves be a member of someone else's workspace.
   const m = db.prepare('SELECT workspace_id FROM workspace_members WHERE user_id=?').get(r.id) as { workspace_id: string } | undefined;
   return m?.workspace_id ?? r.id;
@@ -52,7 +55,7 @@ function ownerWorkspaceId(owner: string): string | null {
 
 /** Whether this signed-in user's workspace may use the (single, global) agent. */
 export function a2uiAllowed(user: User, owner = config().owner): boolean {
-  if (!owner) return true;
+  if (owner === undefined) return true;
   const ws = ownerWorkspaceId(owner);
   return ws !== null && user.id === ws;
 }
@@ -116,7 +119,7 @@ export interface A2uiRelayOptions {
 
 export function attachA2uiRelay(server: Server, opts: A2uiRelayOptions = {}) {
   const revalidateMs = opts.revalidateMs ?? 60_000;
-  if (!config().owner) {
+  if (config().owner === undefined) {
     console.warn('[a2ui] BOTHQ_A2UI_OWNER is unset: every signed-in Bot HQ user shares the one A2UI agent session (MVP limitation, docs/a2ui/CONTRACT.md).');
   }
   const wss = new WebSocketServer({ noServer: true });
@@ -156,7 +159,7 @@ export function attachA2uiRelay(server: Server, opts: A2uiRelayOptions = {}) {
 
 function relay(client: WebSocket, cookie: string | undefined, revalidateMs: number) {
   const { agentUrl, token } = config();
-  const upstream = new WebSocket(`${agentUrl.replace(/^http/, 'ws')}/a2ui/ws`, { headers: tokenHeaders(token) });
+  const upstream = new WebSocket(`${agentUrl.replace(/^http/, 'ws')}/a2ui/ws`, { headers: tokenHeaders(token), handshakeTimeout: 5000 });
   const pending: string[] = [];
   let pendingBytes = 0;
   let closed = false;

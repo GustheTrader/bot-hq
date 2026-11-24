@@ -585,6 +585,9 @@ fn edits_and_pointers() {
     assert_eq!(v, json!({"x": 1}));
     set_pointer(&mut v, "", json!({"y": 1})).unwrap();
     assert_eq!(v, json!({"y": 1}));
+    // Deleting under a missing parent is a no-op (no phantom parents), like the web renderer.
+    set_pointer(&mut v, "/nope/deeper", Value::Null).unwrap();
+    assert_eq!(v, json!({"y": 1}));
 }
 
 // ---------------------------------------------------------------- review fixes

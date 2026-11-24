@@ -113,6 +113,10 @@ test('BOTHQ_A2UI_OWNER admits only that workspace (incl. its members): others ge
   }
   process.env.BOTHQ_A2UI_OWNER = 'nobody@x.com'; // names no user: nobody is admitted
   assert.equal(statusOf(await connect({ cookie: 'grokbot_session=tok_owner' })), 403);
+  for (const blank of ['', '   ']) { // blank is set-but-empty: fail closed, never "open to everyone"
+    process.env.BOTHQ_A2UI_OWNER = blank;
+    assert.equal(statusOf(await connect({ cookie: 'grokbot_session=tok_owner' })), 403, JSON.stringify(blank));
+  }
   delete process.env.BOTHQ_A2UI_OWNER;
 });
 

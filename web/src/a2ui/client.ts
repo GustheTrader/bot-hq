@@ -228,7 +228,9 @@ export class A2uiClient {
   /**
    * Ask again about an 'unconfirmed' call: re-send its byte-identical frame (same functionCallId). The agent
    * dedups on the id before any other check, so this returns the original answer and can never place a second
-   * order; if the agent never received it, the stale userActivation is rejected and nothing is placed either.
+   * order. If the agent never received the original, this IS its first delivery: within the 120 s activation
+   * window it places that one order (the order the user clicked for), after it the stale userActivation is
+   * rejected and nothing is placed. Either way at most one order exists per functionCallId.
    */
   recheckCall(functionCallId: string): void {
     if (!this.connected) throw new Error('Not connected to the agent');

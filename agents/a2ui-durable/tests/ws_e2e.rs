@@ -29,7 +29,7 @@ struct Agent {
 
 fn agent_cmd() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_bothq-a2ui-agent"));
-    for v in ["BOTHQ_A2UI_PAUSE_AT", "BOTHQ_A2UI_TOKEN", "BOTHQ_A2UI_LISTEN", "BOTHQ_A2UI_DB", "BOTHQ_A2UI_FEED", "BOTHQ_A2UI_POLL_MS"] {
+    for v in ["BOTHQ_A2UI_PAUSE_AT", "BOTHQ_A2UI_TOKEN", "BOTHQ_A2UI_LISTEN", "BOTHQ_A2UI_DB", "BOTHQ_A2UI_FEED", "BOTHQ_A2UI_POLL_MS", "BOTHQ_A2UI_SYMBOL", "BOTHQ_A2UI_PAUSE_SECS"] {
         cmd.env_remove(v);
     }
     cmd.env("RUST_LOG", "info");
