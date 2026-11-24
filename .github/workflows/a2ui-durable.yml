@@ -4,29 +4,38 @@ name: a2ui-durable
 #   Valid        -> cargo test (jsonschema crate) + the E2E validates every wire frame with ajv (--require-schema)
 #   Render/Update/Submit -> web typecheck + web a2ui renderer test
 #   Crash-resume -> scripts/a2ui-crash-e2e.mjs against the release binary (3 kill points, <= 5 s, zero dup orders)
+#   Production relay -> server typecheck + server/test/a2ui-relay.test.ts (auth, Origin, owner, token, framing)
 
 on:
   push:
     paths:
       - 'agents/a2ui-durable/**'
-      - 'web/src/a2ui/**'
-      - 'web/src/components/TradingView.tsx'
-      - 'web/src/styles/a2ui.css'
+      - 'web/src/**'
+      - 'web/tsconfig.json'
+      - 'web/vite.config.ts'
       - 'package-lock.json'
       - 'web/test/**'
       - 'web/package.json'
+      - 'server/src/**'
+      - 'server/test/a2ui-relay.test.ts'
+      - 'server/package.json'
+      - 'server/tsconfig.json'
       - 'scripts/a2ui-*'
       - 'docs/a2ui/**'
       - '.github/workflows/a2ui-durable.yml'
   pull_request:
     paths:
       - 'agents/a2ui-durable/**'
-      - 'web/src/a2ui/**'
-      - 'web/src/components/TradingView.tsx'
-      - 'web/src/styles/a2ui.css'
+      - 'web/src/**'
+      - 'web/tsconfig.json'
+      - 'web/vite.config.ts'
       - 'package-lock.json'
       - 'web/test/**'
       - 'web/package.json'
+      - 'server/src/**'
+      - 'server/test/a2ui-relay.test.ts'
+      - 'server/package.json'
+      - 'server/tsconfig.json'
       - 'scripts/a2ui-*'
       - 'docs/a2ui/**'
       - '.github/workflows/a2ui-durable.yml'
@@ -74,11 +83,23 @@ jobs:
       - name: npm ci
         run: npm ci --ignore-scripts
 
+      # The relay test opens the server's SQLite store; install scripts were skipped above, so fetch the
+      # better-sqlite3 native binding for this package only.
+      - name: Build better-sqlite3 native binding
+        run: npm rebuild better-sqlite3
+
       - name: Web typecheck
         run: npm run typecheck -w web
 
       - name: Web A2UI renderer test
         run: npm run test:a2ui -w web
+
+      - name: Server typecheck
+        run: npm run typecheck -w server
+
+      - name: Relay test (server/src/a2ui-relay.ts)
+        working-directory: server
+        run: npx tsx --test test/a2ui-relay.test.ts
 
       - name: Crash E2E (3 kill points) + latency report
         run: node scripts/a2ui-crash-e2e.mjs --bin agents/a2ui-durable/target/release/bothq-a2ui-agent --require-schema --keep

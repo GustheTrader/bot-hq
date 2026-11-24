@@ -40,7 +40,9 @@ node scripts/a2ui-latency.mjs --samples 100 --submits 50
 | | `A2UI_AGENT_ARGS` | extra agent flags, for example `--symbol KX...` |
 
 Each run starts the agent with `--feed replay --replay-file <fixture> --db <fresh temp sqlite>
---listen 127.0.0.1:<free port>`, so it needs no network access and no Kalshi key. Exit code:
+--listen 127.0.0.1:<free port>`, so it needs no network access and no Kalshi key. It removes
+`BOTHQ_A2UI_TOKEN` from the agent's environment: a loopback agent needs no token, and the script
+talks to the agent directly, not through the relay. Exit code:
 0 if every check passes, 1 if any crash check fails, 2 for a usage or setup error (for example,
 no binary). The latency numbers never affect the exit code.
 
@@ -104,9 +106,18 @@ summary with the resume time for each kill point.
 
 | Kill point | Where the process dies | What survival proves |
 |---|---|---|
-| `after_render` | The surface is committed and rendered. The user has done nothing. | The surface store is persisted with the frame. Resume replays a complete snapshot (components and the current data model) onto a new socket. A fresh session can still take exactly one order. |
+| `after_render` | The surface is committed and rendered. The user has done nothing. | The surface store is persisted with the frame. Resume replays a complete snapshot (components and the current data model) onto a new socket. The resumed session (same `sessionId`, `resumed=true`) can still take exactly one order. |
 | `mid_edit` | A `ticketEdited` frame is committed, but the echo or next step has not happened. | User input is durable once the agent has committed it. The resumed ticket shows the user's values, not the defaults. |
 | `after_order_placed` | The paper adapter has placed the order, but the `agentFunctionResponse` has not been sent. This is the most dangerous window. | FR-6: the renderer re-sends the call, which maps to the original frame, which maps to the same idempotency key. The UNIQUE key in the paper adapter returns the existing order. The user gets an answer, and `orders` stays at 1. |
+
+## Relay test (Node server)
+
+`server/src/a2ui-relay.ts` (production path) has its own test, run in CI:
+`cd server && npx tsx --test test/a2ui-relay.test.ts`. Against an in-test upstream it checks: a malformed
+session cookie gets 401 and the process stays up, no cookie gets 401, a cross-site `Origin` is rejected,
+`BOTHQ_A2UI_OWNER` admits only that workspace (403 otherwise), frames relay both ways with the
+`x-bothq-a2ui-token` header forwarded, a revoked session closes the open socket, and the
+pre-upstream queue is bounded.
 
 ## Mapping to the PRD success criteria (section 3)
 

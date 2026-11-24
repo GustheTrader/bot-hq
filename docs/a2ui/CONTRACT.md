@@ -16,9 +16,31 @@ React renderer (`web/src/a2ui/`). Change it only by editing this file first.
   No custom envelope. Invalid inbound frames get an A2UI `error` back is NOT possible
   (error is renderer→agent only), so the agent logs and drops them.
 - Health: `GET /a2ui/health` → `{"sessionId","head","surfaces":[ids],"orders":n,"resumed":bool}`.
-- Vite dev proxy: `/a2ui/` → `http://127.0.0.1:8790` (ws: true).
+- Agent token (`BOTHQ_A2UI_TOKEN` / `--token`): when set, the agent requires the header
+  `x-bothq-a2ui-token: <token>` on both `/a2ui/ws` and `/a2ui/health` (HTTP 401 before any upgrade
+  otherwise) and refuses to listen on a non-loopback address without one. The relay and the Vite proxy
+  read the same env var and add the header; the browser never holds the token.
+- Vite dev proxy (`web/vite.config.ts`): `/a2ui/` → `BOTHQ_A2UI_AGENT_URL` (old name `BOTHQ_A2UI_URL`,
+  default `http://127.0.0.1:8790`), ws: true, plus the token header when `BOTHQ_A2UI_TOKEN` is set. Read
+  from the shell or the `BOTHQ_A2UI_*` lines of the repo-root `.env`.
 - Production: the Node server (`server/src/a2ui-relay.ts`) relays `/a2ui/ws` and `/a2ui/health` to
-  `BOTHQ_A2UI_AGENT_URL` (default `http://127.0.0.1:8790`), verbatim, and only for signed-in users (401 otherwise).
+  `BOTHQ_A2UI_AGENT_URL` (default `http://127.0.0.1:8790`), frames verbatim, with these checks:
+  - **Sign-in:** a valid Bot HQ session (the same `requireUser` session as `/api`), else 401. A
+    malformed session cookie counts as signed out (401), never an error.
+  - **Origin (cross-site WebSocket hijacking):** a browser `Origin` must equal the app's origin
+    (`APP_URL`) or match the request `Host`, else 403. A handshake *without* `Origin` is allowed:
+    browsers always send it on WebSocket handshakes, so its absence means a non-browser client, which
+    cannot ride a victim's cookie and still needs a valid session.
+  - **Workspace (`BOTHQ_A2UI_OWNER`):** a Bot HQ user id or email. Only that workspace is admitted
+    (its members too, since their sessions carry the owner's id); anyone else gets 403.
+  - **Re-validation:** an open relay re-checks the session every 60 s and closes the socket
+    (code 4401) once it is signed out, expired, or no longer in the owner's workspace.
+  - **Back-pressure:** at most 64 frames / 1 MiB are queued while the upstream socket opens; beyond
+    that the browser socket is closed (1013) and the renderer reconnects.
+  - **MVP limitation (multi-client isolation deferred by the PRD):** the agent holds ONE global session,
+    surface and paper account. Every admitted browser sees the same ticket and its broadcasts. If
+    `BOTHQ_A2UI_OWNER` is unset, every signed-in user is admitted to that one session; the server logs a
+    warning at startup. Set it for any shared deployment.
 
 ## Reconnect / snapshot replay (FR-5)
 - On every new socket the agent sends, per live surface: one `createSurface`
@@ -67,24 +89,37 @@ owns those paths and the renderer never writes them.
 the quote was observed (in replay: when it was recorded, not when it was replayed).
 
 ## Renderer → agent
-- Field edits (mid-edit durability): debounced 150 ms `action`
-  `{"name":"ticketEdited","surfaceId","sourceComponentId":"root","timestamp","context":{"side","quantity","limitPrice"}}`.
+- Connected: a socket counts as connected only after the agent's first frame arrives, or after it
+  has stayed open 2 s. The single automatic re-send of an unanswered call (below) waits for that, so
+  it never goes to a socket that is about to drop.
+- Field edits (mid-edit durability): debounced 150 ms `action`, a complete renderer→agent frame:
+  `{"version":"1.0","action":{"name":"ticketEdited","surfaceId":"…","sourceComponentId":"root","timestamp":"RFC3339","context":{"side":"buy","quantity":1,"limitPrice":0.5}}}`.
   The agent commits a journal frame, then echoes `updateDataModel` on `/ticket`.
 - Submit: only from a real click (user activation):
   `{"version":"1.0","callAgentFunction":{"surfaceId","functionCallId":"<uuid v4>","callFunction":{"@call":"submitOrder","args":{…resolved values…,"userActivation":{…}}}}}`.
-  **User-activation evidence (required, agent-enforced).** The agent cannot observe a click over a
+  **User-activation evidence (required, client-supplied, NOT proof).** The agent cannot observe a click over a
   WebSocket, and the v1.0 schemas leave no other field for it (`callAgentFunction` and `FunctionCall`
   are closed), so the catalog's `submitOrder.args` defines an optional `userActivation` object that the
   renderer fills from the trusted DOM event of the click: `{"type":"click","isTrusted":true,"timestamp":"RFC3339"}`
   (`type` is one of `click|keydown|pointerup|touchend`). It is not one of the component's bound args.
   The agent rejects a new call without it, with `isTrusted` not `true`, or with a timestamp more than
-  120 s old (or 30 s in the future): `error.code = "USER_ACTIVATION_REQUIRED"`. A re-sent
+  120 s old (or 30 s in the future): `error.code = "USER_ACTIVATION_REQUIRED"`. These are self-reported
+  JSON fields: this check catches a renderer bug or an accidental programmatic submit, but any client that
+  can open `/a2ui/ws` can forge them. The access controls are the relay's sign-in, Origin and workspace
+  checks plus the agent token, not this field. A re-sent
   `functionCallId` is deduplicated *before* this check, so the once-after-reconnect re-send still gets
   its original answer. Other agent-side error codes: `CALLER_NOT_ALLOWED` (rendererOnly; the agent never
   invokes it), `UNKNOWN_SURFACE`, `SYMBOL_MISMATCH`, `INVALID_ARGS` (args must be resolved literals),
-  `CATALOG_MISMATCH`, `UNKNOWN_FUNCTION`.
+  `CATALOG_MISMATCH`, `UNKNOWN_FUNCTION`, and `ORDER_IN_FLIGHT`: one order at a time per ticket, so a
+  NEW `functionCallId` on a surface whose earlier accepted call is still unanswered is rejected (a re-send
+  of the SAME id is deduplicated first and never gets this). It does not change `/ticket/status`.
   If the socket drops before a response, the renderer re-sends the SAME functionCallId
-  once after reconnect (the agent dedups).
+  once after reconnect, once the new socket counts as connected (the agent dedups).
+  If that call still ends unanswered (`unconfirmed`), Submit becomes a "Check status" button that
+  re-sends the byte-identical frame with the same `functionCallId`. The agent deduplicates it before the
+  activation check, so it returns the original answer and cannot place a second order.
+  Error answers (including `ORDER_IN_FLIGHT` and `USER_ACTIVATION_REQUIRED`) are shown on the ticket
+  until the user edits it.
 - Agent reply: `{"version":"1.0","agentFunctionResponse":{"functionCallId","value":{"orderId","state","filledQty","avgPrice","idempotencyKey","duplicate":bool,"message"}}}`
   (`state` = `filled|partially_filled|rejected`, the paper fill decision; `message` = its reason;
   `/ticket/status.state` becomes `filled` when `filledQty > 0`, else `rejected`)

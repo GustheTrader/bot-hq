@@ -68,8 +68,9 @@ behind `trait A2uiAuthoring`, so a crate can replace them later without touching
 Correctness comes from validating 100% of the messages in tests against the official schemas. This
 covers both directions, with `bothq.trading.v0` registered at
 `https://a2ui.org/specification/v1_0/catalog.json`, the URI the envelope's relative `catalog.json` ref
-resolves to. At runtime every outbound message is validated before its frame is committed: a
-failure is a `debug_assert!` and an `error` log in release builds. Every inbound frame is validated,
+resolves to. At runtime every outbound message is validated before its frame is committed, in every
+build (not a `debug_assert!`): a failure makes `Agent::commit` refuse the whole frame, so nothing is
+journaled or sent, the error is returned to the caller and logged. Every inbound frame is validated,
 and invalid ones are logged and dropped.
 
 ## Schemas checked against upstream

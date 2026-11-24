@@ -269,6 +269,9 @@ class Agent {
     const env = { ...process.env, RUST_LOG: process.env.RUST_LOG ?? 'info' };
     delete env.BOTHQ_A2UI_PAUSE_AT;
     delete env.BOTHQ_A2UI_DB; delete env.BOTHQ_A2UI_LISTEN; delete env.BOTHQ_A2UI_FEED;
+    // The test agent listens on loopback, where no token is required; a BOTHQ_A2UI_TOKEN left in the shell would
+    // otherwise make it 401 this script's tokenless health checks and sockets.
+    delete env.BOTHQ_A2UI_TOKEN;
     if (this.pauseAt) env.BOTHQ_A2UI_PAUSE_AT = this.pauseAt;
     this.cmd = `${this.pauseAt ? `BOTHQ_A2UI_PAUSE_AT=${this.pauseAt} ` : ''}${this.bin} ${args.join(' ')}`;
     const log = fs.createWriteStream(this.logPath, { flags: 'a' });
@@ -456,7 +459,9 @@ async function crashCase(point, ctx) {
       r1 = await new Renderer(wsUrl).open();
       if (point === 'after_render') {
         // The pause may fire before or after the createSurface frame reaches us; either is a valid kill point.
-        await Promise.race([r1.waitFor(isCreate, 5000, 0, 'createSurface').catch(() => null), a1.waitPause(point, 5000).catch(() => null)]);
+        const got = await Promise.race([r1.waitFor(isCreate, 5000, 0, 'createSurface').catch(() => null), a1.waitPause(point, 5000).catch(() => null)]);
+        // Record the pre-crash surfaceId when run 1 delivered one (the race may resolve on the pause first).
+        surfaceId = (got && typeof got === 'object' ? got.m?.createSurface?.surfaceId : undefined) ?? r1.msgs.find((x) => isCreate(x.m))?.m.createSurface.surfaceId;
       } else {
         const cs = (await r1.waitFor(isCreate, 5000, 0, 'createSurface (run 1)')).m.createSurface;
         surfaceId = cs.surfaceId;
@@ -494,10 +499,19 @@ async function crashCase(point, ctx) {
     const ot = checkOrderTicket(cs2);
     c.ok('replayed createSurface is a full OrderTicket snapshot', !ot, ot ?? 'catalogId, root OrderTicket, @path bindings, dataModel');
     c.ok('one createSurface per surface on the new socket', r2.msgs.filter((x) => isCreate(x.m) && x.m.createSurface.surfaceId === cs2.surfaceId).length === 1, '');
-    if (surfaceId) c.ok('same surfaceId after restart', cs2.surfaceId === surfaceId, `${surfaceId} -> ${cs2.surfaceId}`);
+    // Late check for after_render: the pause can land before the createSurface frame reached run 1.
+    if (!surfaceId && r1) surfaceId = r1.msgs.find((x) => isCreate(x.m))?.m.createSurface.surfaceId;
+    const preSurfaceId = surfaceId;
     surfaceId = cs2.surfaceId;
 
     const h1 = await a2.health();
+    if (preSurfaceId) c.ok('same surfaceId after restart', cs2.surfaceId === preSurfaceId, `${preSurfaceId} -> ${cs2.surfaceId}`);
+    else {
+      // Run 1 never delivered a createSurface, so its id is only in the journal: the replayed surface must be the one
+      // journaled surface (health lists exactly it), not a newly minted one.
+      const only = Array.isArray(h1.surfaces) && h1.surfaces.length === 1 && h1.surfaces[0] === cs2.surfaceId;
+      c.ok('same surfaceId after restart (journaled surface, none delivered pre-crash)', only, `health ${JSON.stringify(h1.surfaces)} vs replayed ${cs2.surfaceId}`);
+    }
     c.ok('health after restart: resumed=true', h1.resumed === true, `resumed=${h1.resumed}`);
     if (preSessionId) c.ok('same sessionId after restart', h1.sessionId === preSessionId, `${preSessionId} -> ${h1.sessionId}`);
     c.ok('health lists the surface', Array.isArray(h1.surfaces) && h1.surfaces.includes(surfaceId), JSON.stringify(h1.surfaces));

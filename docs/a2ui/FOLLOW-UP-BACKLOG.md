@@ -160,12 +160,13 @@ The MVP pipeline pieces referred to below:
 
 ## B13. Live-trading readiness review (gate before real order routing)
 - **Reuses:**
-  - the compile-time `live` feature flag (off)
+  - the compile-time `live-routing` feature flag (off)
   - FR-6 idempotency
-  - the paper adapter interface, so the live adapter implements the same trait with the same
-    UNIQUE key semantics
+  - the paper adapter's UNIQUE key semantics
   - the crash E2E as the acceptance test
 - **New work:**
+  - extract a trait from `PaperBroker` (a concrete struct today, there is no adapter trait yet),
+    so the live adapter implements the same interface with the same UNIQUE key semantics
   - a written review covering:
     - the venue order-id reconciliation on resume (query the venue by client order id =
       idempotency key before re-placing anything)
@@ -173,4 +174,4 @@ The MVP pipeline pieces referred to below:
     - how credentials stay server-side
     - a testnet or demo-account run of all three kill points
 - **Done when:** the review is signed off and the E2E passes against a venue demo
-  environment. Until then the `live` feature stays off.
+  environment. Until then the `live-routing` feature stays off.
