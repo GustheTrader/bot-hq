@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "protocolVersion": "1.0",
+  "catalogId": "bothq.trading.v0",
+  "title": "bot-Hq trading catalog v0",
+  "description": "One-component catalog for the A2UI 1.0 OrderTicket MVP (paper trading only). It has no $id on purpose: like the upstream conformance catalogs, it is registered in place of the envelope's sibling catalog.json, so its relative common_types.json references resolve to the official v1.0 common types.",
+  "instructions": "OrderTicket is always the surface root (id 'root'). Account and position values are owned by the agent and bound with @path into /account; the renderer never writes /account. Field edits are reported to the agent as an action named 'ticketEdited' (sourceComponentId 'root', context {side, quantity, limitPrice}). The submit property must only fire from a real user click.",
+  "components": {
+    "OrderTicket": {
+      "type": "object",
+      "description": "Limit order ticket for one YES-contract market. side is 'buy' or 'sell'; quantity is whole contracts; prices are dollars in 0.01..0.99.",
+      "allowedParents": [
+        "Surface"
+      ],
+      "allowedChildren": [],
+      "properties": {
+        "component": {
+          "const": "OrderTicket"
+        },
+        "symbol": {
+          "$ref": "common_types.json#/$defs/DynamicString",
+          "description": "Market ticker."
+        },
+        "side": {
+          "$ref": "#/$defs/Side"
+        },
+        "quantity": {
+          "$ref": "#/$defs/Quantity"
+        },
+        "limitPrice": {
+          "$ref": "#/$defs/Price"
+        },
+        "livePrice": {
+          "$ref": "common_types.json#/$defs/DynamicNumber",
+          "description": "Live YES price in dollars, pushed by the agent."
+        },
+        "buyingPower": {
+          "$ref": "common_types.json#/$defs/DynamicNumber",
+          "description": "Server-side paper buying power (display only)."
+        },
+        "position": {
+          "$ref": "common_types.json#/$defs/DynamicNumber",
+          "description": "Server-side net YES position in contracts (display only)."
+        },
+        "status": {
+          "$ref": "common_types.json#/$defs/DataBinding",
+          "description": "Binding to the ticket status object {state, message, orderId}."
+        },
+        "submit": {
+          "$ref": "common_types.json#/$defs/Action",
+          "description": "Must be a functionCall of submitOrder."
+        }
+      },
+      "required": [
+        "component",
+        "symbol",
+        "side",
+        "quantity",
+        "limitPrice",
+        "livePrice",
+        "buyingPower",
+        "position",
+        "status",
+        "submit"
+      ]
+    }
+  },
+  "functions": {
+    "submitOrder": {
+      "type": "object",
+      "description": "Places one PAPER limit order for the ticket. Executed by the agent; the agent derives the idempotency key, so the renderer never sends one. requiresUserActivation is evidenced by args.userActivation, which the renderer fills from the trusted DOM event of the click that fired the call (it is not part of the component's bound args).",
+      "returnType": "object",
+      "allowedCallers": "rendererOnly",
+      "requiresUserActivation": true,
+      "properties": {
+        "@call": {
+          "const": "submitOrder"
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "symbol": {
+              "$ref": "common_types.json#/$defs/DynamicString"
+            },
+            "side": {
+              "$ref": "#/$defs/Side"
+            },
+            "quantity": {
+              "$ref": "#/$defs/Quantity"
+            },
+            "limitPrice": {
+              "$ref": "#/$defs/Price"
+            },
+            "userActivation": {
+              "$ref": "#/$defs/UserActivation"
+            }
+          },
+          "required": [
+            "symbol",
+            "side",
+            "quantity",
+            "limitPrice"
+          ],
+          "unevaluatedProperties": false
+        }
+      },
+      "required": [
+        "@call",
+        "args"
+      ]
+    }
+  },
+  "$defs": {
+    "anyComponent": {
+      "oneOf": [
+        {
+          "$ref": "#/components/OrderTicket"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "component"
+      }
+    },
+    "anyFunction": {
+      "oneOf": [
+        {
+          "$ref": "#/functions/submitOrder"
+        }
+      ]
+    },
+    "Side": {
+      "description": "Order side: a literal 'buy' | 'sell', or a data binding to one.",
+      "oneOf": [
+        {
+          "enum": [
+            "buy",
+            "sell"
+          ]
+        },
+        {
+          "$ref": "common_types.json#/$defs/DataBinding"
+        }
+      ]
+    },
+    "Quantity": {
+      "description": "Whole contracts (1..10000), or a data binding to them.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        {
+          "$ref": "common_types.json#/$defs/DataBinding"
+        }
+      ]
+    },
+    "Price": {
+      "description": "Dollars per YES contract (0.01..0.99), or a data binding to it.",
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 0.99
+        },
+        {
+          "$ref": "common_types.json#/$defs/DataBinding"
+        }
+      ]
+    },
+    "UserActivation": {
+      "type": "object",
+      "description": "Evidence of the user activation that triggered a call: the DOM event type, its isTrusted flag and when it happened. Required by the agent for functions with requiresUserActivation:true; the agent rejects missing, untrusted or stale (>120 s) evidence.",
+      "properties": {
+        "type": {
+          "enum": [
+            "click",
+            "keydown",
+            "pointerup",
+            "touchend"
+          ]
+        },
+        "isTrusted": {
+          "type": "boolean"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "type",
+        "isTrusted",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
