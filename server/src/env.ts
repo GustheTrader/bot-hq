@@ -58,6 +58,10 @@ export const env = {
   enginePortBase: Number(process.env.ENGINE_PORT_BASE ?? 8650),
   /** URL the Hermes gateways use to reach this server's MCP endpoint. */
   mcpBaseUrl: (process.env.MCP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 8787}`).replace(/\/+$/, ''),
+  /** 9Router on the bots' computer (Settings > Models): its URL, dashboard password file, and the client key the bots use. Empty URL = not set up. */
+  ninerouterUrl: (process.env.NINEROUTER_URL ?? '').replace(/\/+$/, ''),
+  ninerouterPasswordFile: process.env.NINEROUTER_PASSWORD_FILE ?? '',
+  ninerouterKeyFile: process.env.NINEROUTER_KEY_FILE ?? '',
   /** Extra MCP servers every managed bot gets, as a JSON object of Hermes `mcp_servers` entries (e.g. X's XMCP). */
   extraMcpServers: process.env.EXTRA_MCP_SERVERS ?? '',
   primaryBotName: process.env.PRIMARY_BOT_NAME ?? 'Doug',
