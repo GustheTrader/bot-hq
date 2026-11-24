@@ -90,8 +90,9 @@ export function reduce(s: CoreState, msg: AgentMessage): Reduced {
     if (!m || typeof m.surfaceId !== 'string') return { state: s, problems: [], ignored: 'createSurface without surfaceId' };
     const comps = m.components ?? [];
     if (!validComponents(comps)) return { state: s, problems: [], ignored: 'createSurface with malformed components' };
-    const components: Record<string, WireComponent> = {};
-    const problems: Record<string, Problem> = {};
+    // Null-prototype maps: component ids are agent-supplied, so "__proto__" must stay an ordinary key.
+    const components: Record<string, WireComponent> = Object.create(null);
+    const problems: Record<string, Problem> = Object.create(null);
     if (!isKnownCatalog(m.catalogId) && comps.length === 0) {
       problems.$surface = { path: '/catalogId', message: m.catalogId ? `Unknown catalog "${m.catalogId}".` : 'Surface has no catalogId.' };
     }
@@ -113,8 +114,8 @@ export function reduce(s: CoreState, msg: AgentMessage): Reduced {
     const cur = m ? own(s.surfaces, m.surfaceId) : undefined;
     if (!cur) return { state: s, problems: [], ignored: 'updateComponents for an unknown surface' };
     if (!validComponents(m.components)) return { state: s, problems: [], ignored: 'updateComponents with malformed components' };
-    const components = { ...cur.components };
-    const problems = { ...cur.problems };
+    const components: Record<string, WireComponent> = Object.assign(Object.create(null), cur.components);
+    const problems: Record<string, Problem> = Object.assign(Object.create(null), cur.problems);
     delete problems.$surface;
     const fresh: Array<Problem & { surfaceId: string }> = [];
     m.components.forEach((c, i) => {
