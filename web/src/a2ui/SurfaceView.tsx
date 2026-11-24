@@ -19,6 +19,8 @@ export function SurfaceView({ surface, client }: { surface: Surface; client: A2u
   if (surfaceProblem) return <A2uiErrorBox title={`Surface ${surface.surfaceId} cannot render`} message={surfaceProblem.message} path={surfaceProblem.path} />;
 
   const root = surface.components.root;
+  const firstProblem = Object.values(surface.problems)[0];
+  if (!root && firstProblem) return <A2uiErrorBox title={`Surface ${surface.surfaceId} cannot render`} message={firstProblem.message} path={firstProblem.path} />;
   if (!root) return <div className="cfg-empty">Surface {surface.surfaceId} is waiting for its components.</div>;
 
   const problem = surface.problems.root;

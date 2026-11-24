@@ -1,7 +1,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla';
 import { applyAt } from './pointer';
 import { isKnownCatalog, isKnownComponent } from './registry';
-import { isObject, type AgentMessage, type FunctionResponse, type JsonObject, type Json, type WireComponent } from './types';
+import { isObject, own, type AgentMessage, type FunctionResponse, type JsonObject, type Json, type WireComponent } from './types';
 
 /**
  * The A2UI surface store. `reduce` is a pure function over {surfaces, calls} so the node tests drive exactly the
@@ -41,6 +41,25 @@ export interface CoreState {
 export interface Reduced { state: CoreState; problems: Array<Problem & { surfaceId: string }>; ignored?: string }
 
 export const emptyCore = (): CoreState => ({ surfaces: {}, calls: {} });
+
+/**
+ * Bound the call map: every call that is not 'done' (pending / unconfirmed: the ticket must keep blocking on those)
+ * is kept, plus only the newest record per surface (the one the ticket shows). Older completed calls are evicted.
+ */
+export function pruneCalls(calls: Record<string, CallRecord>): Record<string, CallRecord> {
+  const newest = new Map<string, CallRecord>();
+  for (const c of Object.values(calls)) {
+    const n = newest.get(c.surfaceId);
+    if (!n || c.startedAt >= n.startedAt) newest.set(c.surfaceId, c);
+  }
+  let evicted = false;
+  const out: Record<string, CallRecord> = {};
+  for (const [id, c] of Object.entries(calls)) {
+    if (c.state !== 'done' || newest.get(c.surfaceId) === c) out[id] = c;
+    else evicted = true;
+  }
+  return evicted ? out : calls;
+}
 
 function checkComponent(surfaceCatalog: string | undefined, c: WireComponent, index: number): Problem | null {
   const own = typeof c['@catalogId'] === 'string' ? (c['@catalogId'] as string) : undefined;
@@ -91,7 +110,7 @@ export function reduce(s: CoreState, msg: AgentMessage): Reduced {
 
   if ('updateComponents' in msg) {
     const m = msg.updateComponents;
-    const cur = m && s.surfaces[m.surfaceId];
+    const cur = m ? own(s.surfaces, m.surfaceId) : undefined;
     if (!cur) return { state: s, problems: [], ignored: 'updateComponents for an unknown surface' };
     if (!validComponents(m.components)) return { state: s, problems: [], ignored: 'updateComponents with malformed components' };
     const components = { ...cur.components };
@@ -109,7 +128,7 @@ export function reduce(s: CoreState, msg: AgentMessage): Reduced {
 
   if ('updateDataModel' in msg) {
     const m = msg.updateDataModel;
-    const cur = m && s.surfaces[m.surfaceId];
+    const cur = m ? own(s.surfaces, m.surfaceId) : undefined;
     if (!cur) return { state: s, problems: [], ignored: 'updateDataModel for an unknown surface' };
     if (!('value' in m)) return { state: s, problems: [], ignored: 'updateDataModel without value' };
     let dataModel: JsonObject;
@@ -120,7 +139,7 @@ export function reduce(s: CoreState, msg: AgentMessage): Reduced {
 
   if ('deleteSurface' in msg) {
     const id = msg.deleteSurface?.surfaceId;
-    if (!id || !s.surfaces[id]) return { state: s, problems: [], ignored: 'deleteSurface for an unknown surface' };
+    if (!id || !own(s.surfaces, id)) return { state: s, problems: [], ignored: 'deleteSurface for an unknown surface' };
     const surfaces = { ...s.surfaces };
     delete surfaces[id];
     return { state: { ...s, surfaces }, problems: [] };
@@ -129,11 +148,11 @@ export function reduce(s: CoreState, msg: AgentMessage): Reduced {
   if ('agentFunctionResponse' in msg) {
     const r = msg.agentFunctionResponse;
     if (!r || typeof r.functionCallId !== 'string') return { state: s, problems: [], ignored: 'agentFunctionResponse without functionCallId' };
-    const prev = s.calls[r.functionCallId];
+    const prev = own(s.calls, r.functionCallId);
     const rec: CallRecord = prev
       ? { ...prev, state: 'done', response: r }
       : { functionCallId: r.functionCallId, surfaceId: '', frame: '', state: 'done', sentEpoch: 0, resends: 0, response: r, startedAt: Date.now() };
-    return { state: { ...s, calls: { ...s.calls, [r.functionCallId]: rec } }, problems: [] };
+    return { state: { ...s, calls: pruneCalls({ ...s.calls, [r.functionCallId]: rec }) }, problems: [] };
   }
 
   return { state: s, problems: [], ignored: 'unsupported message type' };
@@ -149,13 +168,15 @@ export interface A2uiState extends CoreState {
   epoch: number;
   /** Consecutive failed attempts since the last good connection. */
   attempts: number;
+  /** When the last good connection was lost (ms epoch); null while connected or before the first one. */
+  lostAt: number | null;
   apply: (msg: AgentMessage) => Reduced;
   /** Drop every surface: run on each (re)connect, before the new socket's snapshot is applied. */
   dropSurfaces: () => void;
   /** Renderer-local data-model write (field edits), same set/delete semantics as updateDataModel. */
   setLocal: (surfaceId: string, path: string, value: Json) => void;
   putCall: (rec: CallRecord) => void;
-  setConn: (p: Partial<Pick<A2uiState, 'conn' | 'epoch' | 'attempts'>>) => void;
+  setConn: (p: Partial<Pick<A2uiState, 'conn' | 'epoch' | 'attempts' | 'lostAt'>>) => void;
 }
 
 export type A2uiStore = StoreApi<A2uiState>;
@@ -166,6 +187,7 @@ export function createA2uiStore(): A2uiStore {
     conn: 'idle',
     epoch: 0,
     attempts: 0,
+    lostAt: null,
     apply: (msg) => {
       const { surfaces, calls } = get();
       const r = reduce({ surfaces, calls }, msg);
@@ -174,11 +196,11 @@ export function createA2uiStore(): A2uiStore {
     },
     dropSurfaces: () => set({ surfaces: {} }),
     setLocal: (surfaceId, path, value) => {
-      const cur = get().surfaces[surfaceId];
+      const cur = own(get().surfaces, surfaceId);
       if (!cur) return;
       set({ surfaces: { ...get().surfaces, [surfaceId]: { ...cur, dataModel: applyAt(cur.dataModel, path, value) } } });
     },
-    putCall: (rec) => set({ calls: { ...get().calls, [rec.functionCallId]: rec } }),
+    putCall: (rec) => set({ calls: pruneCalls({ ...get().calls, [rec.functionCallId]: rec }) }),
     setConn: (p) => set(p),
   }));
 }

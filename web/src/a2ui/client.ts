@@ -4,14 +4,23 @@ import type { AgentMessage, FunctionCall, JsonObject, RendererMessage } from './
 
 /**
  * WebSocket client for the durable A2UI agent (docs/a2ui/CONTRACT.md): one A2UI message per text frame, no
- * envelope. Reconnects forever with 250 ms -> 2 s backoff. On every open it drops all surfaces first, so the
- * agent's snapshot replay (createSurface per live surface) can never duplicate a ticket, then re-sends any
- * function call still waiting for a response, once, with the same functionCallId (the agent dedups on it).
+ * envelope. Reconnects forever with 250 ms -> 2 s backoff.
+ *
+ * A socket only counts as a good connection once the agent is proven reachable: its first frame arrives, or it
+ * has stayed open for STABLE_OPEN_MS. (The server relay accepts the browser upgrade before dialling the agent and
+ * closes it when that fails, so "open" alone proves nothing.) Only then does the client drop all surfaces (so the
+ * agent's snapshot replay can never duplicate a ticket, and a flapping relay never blanks the last ticket), reset
+ * the backoff, and re-send any function call still waiting for a response, once, with the same functionCallId
+ * (the agent dedups on it).
  */
 
 export const BACKOFF_MIN_MS = 250;
 export const BACKOFF_MAX_MS = 2000;
 export const EDIT_DEBOUNCE_MS = 150;
+/** An open socket with no agent frame yet counts as good after this long. */
+export const STABLE_OPEN_MS = 2000;
+/** How many outbound frames `sent` keeps (debug / tests); older ones are dropped. */
+export const SENT_HISTORY = 100;
 
 export interface SocketLike {
   readyState: number;
@@ -46,13 +55,16 @@ export class A2uiClient {
   private running = false;
   private backoff = BACKOFF_MIN_MS;
   private retryTimer: unknown = null;
+  private stableTimer: unknown = null;
+  /** The current socket has been proven to reach the agent (see the class comment). */
+  private healthy = false;
   private edits = new Map<string, { timer: unknown; msg: () => RendererMessage }>();
   private readonly url: () => string;
   private readonly socket: SocketFactory;
   private readonly setTimer: (fn: () => void, ms: number) => unknown;
   private readonly clearTimer: (h: unknown) => void;
   private readonly log: (...a: unknown[]) => void;
-  /** Every frame actually written to a socket (tests read this). */
+  /** The last SENT_HISTORY frames actually written to a socket (debugging; bounded). */
   readonly sent: string[] = [];
 
   constructor(o: ClientOptions = {}) {
@@ -64,7 +76,7 @@ export class A2uiClient {
     this.log = o.log ?? ((...a) => console.warn('[a2ui]', ...a));
   }
 
-  get connected(): boolean { return this.ws?.readyState === OPEN && this.store.getState().conn === 'connected'; }
+  get connected(): boolean { return this.healthy && this.ws?.readyState === OPEN && this.store.getState().conn === 'connected'; }
 
   start(): void {
     if (this.running) return;
@@ -76,6 +88,8 @@ export class A2uiClient {
   stop(): void {
     this.running = false;
     if (this.retryTimer) { this.clearTimer(this.retryTimer); this.retryTimer = null; }
+    this.clearStable();
+    this.healthy = false;
     for (const e of this.edits.values()) this.clearTimer(e.timer);
     this.edits.clear();
     const ws = this.ws;
@@ -100,12 +114,26 @@ export class A2uiClient {
     };
   }
 
+  private clearStable(): void {
+    if (this.stableTimer) { this.clearTimer(this.stableTimer); this.stableTimer = null; }
+  }
+
+  /** Socket open: not yet a good connection. Wait for the agent's first frame, or STABLE_OPEN_MS of staying open. */
   private handleOpen(): void {
+    this.healthy = false;
+    this.clearStable();
+    this.stableTimer = this.setTimer(() => { this.stableTimer = null; this.markHealthy(); }, STABLE_OPEN_MS);
+  }
+
+  /** The socket reaches the agent: drop surfaces before its snapshot, reset backoff, re-send unanswered calls. */
+  private markHealthy(): void {
+    if (this.healthy || !this.ws || this.ws.readyState !== OPEN) return;
+    this.healthy = true;
+    this.clearStable();
     const st = this.store.getState();
     const epoch = st.epoch + 1;
-    // Replay safety: forget every surface before the new socket's snapshot arrives.
     st.dropSurfaces();
-    st.setConn({ conn: 'connected', epoch, attempts: 0 });
+    st.setConn({ conn: 'connected', epoch, attempts: 0, lostAt: null });
     this.backoff = BACKOFF_MIN_MS;
     // A function call that never got its response: re-send it once, same functionCallId, on this new socket.
     for (const rec of Object.values(this.store.getState().calls)) {
@@ -120,12 +148,15 @@ export class A2uiClient {
   }
 
   private handleClose(): void {
+    const wasHealthy = this.healthy;
+    this.healthy = false;
+    this.clearStable();
     // Edits typed into a dead socket are not sent: the fresh snapshot after reconnect is authoritative.
     for (const e of this.edits.values()) this.clearTimer(e.timer);
     this.edits.clear();
     if (!this.running) return;
     const st = this.store.getState();
-    st.setConn({ conn: 'reconnecting', attempts: st.attempts + 1 });
+    st.setConn({ conn: 'reconnecting', attempts: st.attempts + 1, lostAt: wasHealthy ? Date.now() : st.lostAt });
     this.scheduleReconnect();
   }
 
@@ -142,6 +173,7 @@ export class A2uiClient {
     let msg: AgentMessage;
     try { msg = JSON.parse(data) as AgentMessage; }
     catch { this.log('dropping non-JSON frame'); return; }
+    this.markHealthy();
     const r = this.store.getState().apply(msg);
     if (r.ignored) this.log('ignored message:', r.ignored);
     for (const p of r.problems) this.send(validationErrorMessage(p.surfaceId, p.path, p.message));
@@ -152,6 +184,7 @@ export class A2uiClient {
     if (!ws || ws.readyState !== OPEN) return false;
     ws.send(frame);
     this.sent.push(frame);
+    if (this.sent.length > SENT_HISTORY) this.sent.splice(0, this.sent.length - SENT_HISTORY);
     return true;
   }
 
@@ -162,7 +195,8 @@ export class A2uiClient {
     const key = `${surfaceId}\u0000${name}`;
     const prev = this.edits.get(key);
     if (prev) this.clearTimer(prev.timer);
-    const msg = () => actionMessage({ name, surfaceId, sourceComponentId, context });
+    const at = new Date(); // the time of the edit, not of the debounced flush
+    const msg = () => actionMessage({ name, surfaceId, sourceComponentId, context, at });
     const timer = this.setTimer(() => { this.edits.delete(key); this.send(msg()); }, EDIT_DEBOUNCE_MS);
     this.edits.set(key, { timer, msg });
   }
@@ -189,6 +223,19 @@ export class A2uiClient {
     const epoch = this.store.getState().epoch;
     this.store.getState().putCall({ functionCallId, surfaceId, frame, state: 'pending', sentEpoch: epoch, resends: 0, startedAt: Date.now() });
     return functionCallId;
+  }
+
+  /**
+   * Ask again about an 'unconfirmed' call: re-send its byte-identical frame (same functionCallId). The agent
+   * dedups on the id before any other check, so this returns the original answer and can never place a second
+   * order; if the agent never received it, the stale userActivation is rejected and nothing is placed either.
+   */
+  recheckCall(functionCallId: string): void {
+    if (!this.connected) throw new Error('Not connected to the agent');
+    const rec = Object.prototype.hasOwnProperty.call(this.store.getState().calls, functionCallId) ? this.store.getState().calls[functionCallId] : undefined;
+    if (!rec || rec.state !== 'unconfirmed') return;
+    if (!this.write(rec.frame)) throw new Error('Not connected to the agent');
+    this.store.getState().putCall({ ...rec, state: 'pending', resends: rec.resends + 1, sentEpoch: this.store.getState().epoch });
   }
 }
 

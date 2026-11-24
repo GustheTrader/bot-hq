@@ -10,12 +10,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import Ajv2020Import from 'ajv/dist/2020.js';
 import addFormatsImport from 'ajv-formats';
-import { A2uiClient, BACKOFF_MAX_MS, BACKOFF_MIN_MS, EDIT_DEBOUNCE_MS, type SocketLike } from '../src/a2ui/client';
-import { actionFunctionCall, resolveFunctionCall } from '../src/a2ui/bindings';
+import { A2uiClient, BACKOFF_MAX_MS, BACKOFF_MIN_MS, EDIT_DEBOUNCE_MS, SENT_HISTORY, STABLE_OPEN_MS, type SocketLike } from '../src/a2ui/client';
+import { actionFunctionCall, resolveFunctionCall, resolveValue } from '../src/a2ui/bindings';
 import { actionMessage, callAgentFunctionMessage, uuidv4, validationErrorMessage } from '../src/a2ui/messages';
 import { applyAt, getAt } from '../src/a2ui/pointer';
-import { createA2uiStore, emptyCore, reduce } from '../src/a2ui/store';
-import type { AgentMessage, JsonObject, WireComponent } from '../src/a2ui/types';
+import { KNOWN_COMPONENTS, TRADING_CATALOG_ID } from '../src/a2ui/registry';
+import { createA2uiStore, emptyCore, pruneCalls, reduce, type CallRecord } from '../src/a2ui/store';
+import { isFunctionCall, type AgentMessage, type FunctionCall, type JsonObject, type WireComponent } from '../src/a2ui/types';
 
 /* ---------- schemas ---------- */
 
@@ -23,14 +24,15 @@ const SCHEMA_DIR = new URL('../../agents/a2ui-durable/schemas/v1_0/', import.met
 const readJson = (u: URL) => JSON.parse(readFileSync(fileURLToPath(u), 'utf8'));
 const schema = (name: string) => readJson(new URL(name, SCHEMA_DIR));
 // The official schemas reference catalog.json#/$defs/anyComponent|anyFunction. Substitute a catalog that defines
-// OrderTicket + submitOrder, registered under the v1_0 catalog.json URL (the catalog substitution trick). Every
-// check runs against each catalog found: the agent's own (agents/a2ui-durable/catalog/, the source of truth once
-// it exists), this renderer's contract fixture, and A2UI_TEST_CATALOG=<path> if set.
+// OrderTicket + submitOrder, registered under the v1_0 catalog.json URL (the catalog substitution trick). The
+// catalog is the agent's canonical one (agents/a2ui-durable/catalog/), loaded directly so the renderer tests can
+// never drift from what the agent enforces; A2UI_TEST_CATALOG=<path> adds another to check against.
 const CATALOG_ID_URL = 'https://a2ui.org/specification/v1_0/catalog.json';
 const catalogSources: Array<{ label: string; json: Record<string, unknown> }> = [];
 const agentCatalog = new URL('../../agents/a2ui-durable/catalog/bothq.trading.v0.json', import.meta.url);
-if (existsSync(fileURLToPath(agentCatalog))) catalogSources.push({ label: 'agent catalog', json: readJson(agentCatalog) });
-catalogSources.push({ label: 'renderer fixture catalog', json: readJson(new URL('./fixtures/bothq.trading.v0.catalog.json', import.meta.url)) });
+assert.ok(existsSync(fileURLToPath(agentCatalog)), `canonical catalog missing: ${fileURLToPath(agentCatalog)}`);
+const canonicalCatalog = readJson(agentCatalog) as Record<string, unknown>;
+catalogSources.push({ label: 'agent catalog', json: canonicalCatalog });
 if (process.env.A2UI_TEST_CATALOG) catalogSources.push({ label: process.env.A2UI_TEST_CATALOG, json: JSON.parse(readFileSync(process.env.A2UI_TEST_CATALOG, 'utf8')) });
 
 type ValidateFn = ((d: unknown) => boolean) & { errors?: unknown };
@@ -98,6 +100,16 @@ const createSurface = (dm: JsonObject = dataModel()): AgentMessage =>
   ({ version: '1.0', createSurface: { surfaceId: SURFACE, catalogId: 'bothq.trading.v0', components: [ticketComponent()], dataModel: dm } }) as AgentMessage;
 const updateDataModel = (path: string | undefined, value: unknown): AgentMessage =>
   ({ version: '1.0', updateDataModel: { surfaceId: SURFACE, ...(path === undefined ? {} : { path }), value } }) as AgentMessage;
+
+/** What OrderTicket.onSubmit adds to every submit from the trusted click (CONTRACT.md). */
+const ACTIVATION = { type: 'click', isTrusted: true, timestamp: '2026-11-24T10:00:05.000Z' };
+/** The submit call exactly as OrderTicket builds it: bound args resolved, then userActivation attached. */
+function submitWithActivation(client: A2uiClient): FunctionCall {
+  const s = client.store.getState().surfaces[SURFACE];
+  const call = resolveFunctionCall(actionFunctionCall(s.components.root.submit)!, s.dataModel);
+  call.args = { ...call.args, userActivation: ACTIVATION };
+  return call;
+}
 
 /* ---------- fake socket + timers ---------- */
 
@@ -238,7 +250,9 @@ test('reconnect drops surfaces before the replay: exactly one ticket, with the r
   assert.equal(Object.keys(h.client.store.getState().surfaces).length, 1, 'last state stays visible while offline');
   h.runTimers();
   h.last().open();
-  assert.equal(Object.keys(h.client.store.getState().surfaces).length, 0, 'dropped on reconnect, before any replay');
+  // Open alone proves nothing (the relay accepts before dialling the agent): the stale ticket stays.
+  assert.equal(Object.keys(h.client.store.getState().surfaces).length, 1, 'kept until the agent is proven reachable');
+  assert.notEqual(h.client.store.getState().conn, 'connected');
   h.last().deliver(createSurface(dataModel({ lastPrice: 0.6, frame: 20, resumed: true })));
   const st = h.client.store.getState();
   assert.equal(Object.keys(st.surfaces).length, 1);
@@ -258,10 +272,29 @@ test('reconnect backoff starts at 250 ms, doubles, caps at 2 s, and retries fore
   for (let i = 0; i < 7; i++) { h.last().drop(); delays.push(...h.runTimers()); }
   assert.deepEqual(delays, [BACKOFF_MIN_MS, 500, 1000, BACKOFF_MAX_MS, 2000, 2000, 2000]);
   assert.equal(h.sockets.length, 8);
-  // A good connection resets the backoff.
+  // A good connection (the agent's first frame) resets the backoff.
   h.last().open();
+  h.last().deliver(createSurface());
   h.last().drop();
   assert.deepEqual(h.runTimers(), [BACKOFF_MIN_MS]);
+  // So does a socket that stays open STABLE_OPEN_MS without a frame.
+  for (let i = 0; i < 3; i++) { h.last().drop(); h.runTimers(); }
+  h.last().open();
+  assert.deepEqual(h.runTimers(), [STABLE_OPEN_MS]);
+  assert.equal(h.client.store.getState().conn, 'connected');
+  h.last().drop();
+  assert.deepEqual(h.runTimers(), [BACKOFF_MIN_MS]);
+  h.client.stop();
+});
+
+test('open-then-immediately-close (relay up, agent down) does NOT reset the backoff', () => {
+  const h = harness();
+  h.client.start();
+  const delays: number[] = [];
+  for (let i = 0; i < 6; i++) { h.last().open(); h.last().drop(); delays.push(...h.runTimers()); }
+  assert.deepEqual(delays, [BACKOFF_MIN_MS, 500, 1000, BACKOFF_MAX_MS, 2000, 2000]);
+  assert.equal(h.client.store.getState().attempts, 6, 'attempts keep counting');
+  assert.notEqual(h.client.store.getState().conn, 'connected');
   h.client.stop();
 });
 
@@ -277,28 +310,41 @@ test('functionCall args resolve from the data model (local edits included)', () 
   assert.throws(() => resolveFunctionCall(fc, applyAt(model, '/ticket/limitPrice', null)), /limitPrice/);
 });
 
-test('submit: uuid v4 id, pending until response, re-sent ONCE with the same id after a drop', () => {
+test('submit: uuid v4 id, userActivation carried, pending until response, re-sent ONCE with the same id after a drop', () => {
   const h = harness();
   h.client.start();
   h.last().open();
   h.last().deliver(createSurface());
-  const s = h.client.store.getState().surfaces[SURFACE];
-  const fc = resolveFunctionCall(actionFunctionCall(s.components.root.submit)!, s.dataModel);
+  const fc = submitWithActivation(h.client);
   const id = h.client.callAgentFunction(SURFACE, fc);
   assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(h.client.store.getState().calls[id].state, 'pending');
   const first = h.last().sent.at(-1)!;
-  assertRendererToAgent(JSON.parse(first), 'callAgentFunction');
+  const firstMsg = JSON.parse(first);
+  assertRendererToAgent(firstMsg, 'callAgentFunction');
+  assert.deepEqual(firstMsg.callAgentFunction.callFunction.args.userActivation, ACTIVATION, 'initial send carries userActivation');
+
+  // A socket that opens and dies at once (relay up, agent down) must not burn the one re-send.
+  h.last().drop(); h.runTimers(); h.last().open();
+  assert.deepEqual(h.last().sent, [], 'nothing re-sent before the agent is reachable');
+  h.last().drop(); h.runTimers();
+  assert.equal(h.client.store.getState().calls[id].resends, 0);
 
   // Socket drops before the response: the same frame (same functionCallId) goes out once on the new socket.
-  h.last().drop(); h.runTimers(); h.last().open();
-  assert.deepEqual(h.last().sent, [first]);
+  h.last().open(); h.last().deliver(createSurface());
+  assert.deepEqual(h.last().sent, [first], 'byte-identical re-send');
+  assert.deepEqual(JSON.parse(h.last().sent[0]).callAgentFunction.callFunction.args.userActivation, ACTIVATION, 'resend preserves userActivation');
   assert.equal(h.client.store.getState().calls[id].resends, 1);
 
   // Drops again: not re-sent a second time; the call is marked unconfirmed instead.
-  h.last().drop(); h.runTimers(); h.last().open();
+  h.last().drop(); h.runTimers(); h.last().open(); h.last().deliver(createSurface());
   assert.deepEqual(h.last().sent, []);
   assert.equal(h.client.store.getState().calls[id].state, 'unconfirmed');
+
+  // Check status: the user re-asks; the byte-identical frame (same id, so the agent dedups) goes out once more.
+  h.client.recheckCall(id);
+  assert.deepEqual(h.last().sent, [first]);
+  assert.equal(h.client.store.getState().calls[id].state, 'pending');
   h.client.stop();
 });
 
@@ -307,12 +353,26 @@ test('submit: a response clears pending and nothing is re-sent after reconnect',
   h.client.start();
   h.last().open();
   h.last().deliver(createSurface());
-  const s = h.client.store.getState().surfaces[SURFACE];
-  const id = h.client.callAgentFunction(SURFACE, resolveFunctionCall(actionFunctionCall(s.components.root.submit)!, s.dataModel));
+  const id = h.client.callAgentFunction(SURFACE, submitWithActivation(h.client));
   h.last().deliver({ version: '1.0', agentFunctionResponse: { functionCallId: id, value: { orderId: 'p-1', state: 'filled', filledQty: 1, avgPrice: 0.5, idempotencyKey: 'sess-1:13', duplicate: false } } });
   assert.equal(h.client.store.getState().calls[id].state, 'done');
-  h.last().drop(); h.runTimers(); h.last().open();
+  h.last().drop(); h.runTimers(); h.last().open(); h.last().deliver(createSurface());
   assert.deepEqual(h.last().sent, []);
+  h.client.stop();
+});
+
+test('ORDER_IN_FLIGHT (server rejects a second call while one is in flight) is recorded as an error answer', () => {
+  const h = harness();
+  h.client.start();
+  h.last().open();
+  h.last().deliver(createSurface());
+  const id = h.client.callAgentFunction(SURFACE, submitWithActivation(h.client));
+  const resp = { version: '1.0', agentFunctionResponse: { functionCallId: id, error: { code: 'ORDER_IN_FLIGHT', message: 'an order for this surface is in flight' } } };
+  assertAgentToRenderer(resp, 'ORDER_IN_FLIGHT response');
+  h.last().deliver(resp);
+  const rec = h.client.store.getState().calls[id];
+  assert.equal(rec.state, 'done');
+  assert.equal(rec.response?.error?.code, 'ORDER_IN_FLIGHT');
   h.client.stop();
 });
 
@@ -372,6 +432,7 @@ test('unknown component / unknown catalog: problems recorded and VALIDATION_FAIL
 test('every builder output is a valid renderer_to_agent message', () => {
   assertRendererToAgent(actionMessage({ name: 'ticketEdited', surfaceId: SURFACE, sourceComponentId: 'root', context: { side: 'buy', quantity: 1, limitPrice: 0.5 } }));
   assertRendererToAgent(callAgentFunctionMessage(SURFACE, uuidv4(), { '@call': 'submitOrder', args: { symbol: 'KX', side: 'sell', quantity: 2, limitPrice: 0.99 } }));
+  assertRendererToAgent(callAgentFunctionMessage(SURFACE, uuidv4(), { '@call': 'submitOrder', args: { symbol: 'KX', side: 'sell', quantity: 2, limitPrice: 0.99, userActivation: ACTIVATION } }), 'submit with userActivation');
   assertRendererToAgent(validationErrorMessage(SURFACE, '/components/0/component', 'Unknown component.'));
   // And the schema really is strict about the shapes we rely on.
   for (const { ajv } of instances) {
@@ -389,4 +450,127 @@ test('store wrapper: apply / setLocal / dropSurfaces', () => {
   assert.equal(getAt(store.getState().surfaces[SURFACE].dataModel, '/ticket/limitPrice'), 0.42);
   store.getState().dropSurfaces();
   assert.deepEqual(store.getState().surfaces, {});
+});
+
+test('the canonical catalog constrains what the renderer may accept (Side / Quantity / Price / userActivation)', () => {
+  const bad = (patch: Record<string, unknown>) =>
+    ({ version: '1.0', createSurface: { surfaceId: SURFACE, catalogId: 'bothq.trading.v0', components: [{ ...ticketComponent(), ...patch }] } });
+  for (const { ajv, label } of instances) {
+    const a2r = ajv.getSchema(`${V1}agent_to_renderer.json`)!;
+    assert.equal(a2r(bad({ side: 'hold' })), false, `side enum (${label})`);
+    assert.equal(a2r(bad({ quantity: 0 })), false, `quantity >= 1 (${label})`);
+    assert.equal(a2r(bad({ quantity: 1.5 })), false, `quantity integer (${label})`);
+    assert.equal(a2r(bad({ limitPrice: 1.5 })), false, `price <= 0.99 (${label})`);
+    const r2a = ajv.getSchema(`${V1}renderer_to_agent.json`)!;
+    const call = (args: JsonObject) => ({ version: '1.0', callAgentFunction: { surfaceId: SURFACE, functionCallId: uuidv4(), callFunction: { '@call': 'submitOrder', args } } });
+    const ok = { symbol: 'KX', side: 'buy', quantity: 1, limitPrice: 0.5 };
+    assert.equal(r2a(call({ ...ok, userActivation: ACTIVATION })), true, `userActivation accepted (${label})`);
+    assert.equal(r2a(call({ ...ok, userActivation: { type: 'hover', isTrusted: true, timestamp: ACTIVATION.timestamp } })), false, `activation type enum (${label})`);
+    assert.equal(r2a(call({ ...ok, idempotencyKey: 'x' })), false, `no extra args (${label})`);
+  }
+});
+
+test('registry.ts, catalogs.tsx and the canonical catalog name the same components', async () => {
+  const { CATALOGS } = await import('../src/a2ui/catalogs');
+  assert.deepEqual(Object.keys(CATALOGS).sort(), Object.keys(KNOWN_COMPONENTS).sort());
+  for (const [id, names] of Object.entries(KNOWN_COMPONENTS)) assert.deepEqual(Object.keys(CATALOGS[id]).sort(), [...names].sort(), id);
+  assert.equal(canonicalCatalog.catalogId, TRADING_CATALOG_ID);
+  assert.deepEqual(Object.keys(canonicalCatalog.components as object).sort(), [...KNOWN_COMPONENTS[TRADING_CATALOG_ID]].sort());
+});
+
+test('pointer: past-the-end indexes are not addressable; deleting under a missing element is a no-op', () => {
+  const m = { xs: [1, 2] };
+  assert.equal(applyAt(m, '/xs/5', 9), m, 'no null padding');
+  assert.equal(applyAt(m, '/xs/99999999', 9), m, 'no huge sparse array');
+  assert.deepEqual(applyAt(m, '/xs/2', 3), { xs: [1, 2, 3] }, 'index == length appends');
+  assert.equal(applyAt(m, '/xs/2/a', null), m, 'no phantom {} on delete');
+  assert.equal(applyAt(m, '/xs/7/a/b', null), m);
+  assert.deepEqual(applyAt({ xs: [{ a: 1, b: 2 }] }, '/xs/0/a', null), { xs: [{ b: 2 }] });
+});
+
+test('nested function calls in data props resolve to undefined (no render crash), and submit rejects them', () => {
+  const nested = { '@call': 'formatCurrency', args: { v: 1 } };
+  assert.equal(resolveValue(nested, {}), undefined);
+  assert.deepEqual(resolveValue({ a: nested, b: 1 }, {}), { b: 1 });
+  assert.throws(() => resolveFunctionCall({ '@call': 'submitOrder', args: { symbol: nested } }, {}), /symbol/);
+});
+
+test('isFunctionCall checks args and catalogId shapes', () => {
+  assert.equal(isFunctionCall({ '@call': 'f' }), true);
+  assert.equal(isFunctionCall({ '@call': 'f', args: {}, catalogId: 'c' }), true);
+  assert.equal(isFunctionCall({ '@call': 'f', args: 'x' }), false);
+  assert.equal(isFunctionCall({ '@call': 'f', args: [1] }), false);
+  assert.equal(isFunctionCall({ '@call': 'f', catalogId: 3 }), false);
+});
+
+test('surface / call ids naming Object.prototype members are unknown, not inherited', () => {
+  const s0 = reduce(emptyCore(), createSurface()).state;
+  for (const id of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+    const r = reduce(s0, { version: '1.0', updateDataModel: { surfaceId: id, path: '/x', value: 1 } } as AgentMessage);
+    assert.ok(r.ignored, id);
+    assert.equal(r.state, s0);
+    assert.ok(reduce(s0, { version: '1.0', updateComponents: { surfaceId: id, components: [] } } as AgentMessage).ignored, id);
+    assert.ok(reduce(s0, { version: '1.0', deleteSurface: { surfaceId: id } } as AgentMessage).ignored, id);
+  }
+  const r = reduce(s0, { version: '1.0', agentFunctionResponse: { functionCallId: 'constructor', value: 1 } } as AgentMessage);
+  const rec = Object.getOwnPropertyDescriptor(r.state.calls, 'constructor')?.value as CallRecord;
+  assert.equal(rec.state, 'done');
+  assert.equal(rec.surfaceId, '');
+});
+
+test('call records are bounded: only unfinished calls plus the newest per surface are kept', () => {
+  const rec = (id: string, surfaceId: string, state: CallRecord['state'], startedAt: number): CallRecord =>
+    ({ functionCallId: id, surfaceId, frame: '', state, sentEpoch: 1, resends: 0, startedAt });
+  const calls = { a: rec('a', 'S', 'done', 1), b: rec('b', 'S', 'unconfirmed', 2), c: rec('c', 'S', 'done', 3), d: rec('d', 'T', 'done', 1) };
+  assert.deepEqual(Object.keys(pruneCalls(calls)).sort(), ['b', 'c', 'd']);
+  const kept = { b: calls.b, c: calls.c };
+  assert.equal(pruneCalls(kept), kept, 'identity kept when nothing is evicted');
+  // Through the client: 50 answered submits leave one record behind.
+  const h = harness();
+  h.client.start(); h.last().open(); h.last().deliver(createSurface());
+  let last = '';
+  for (let i = 0; i < 50; i++) {
+    last = h.client.callAgentFunction(SURFACE, submitWithActivation(h.client));
+    h.last().deliver({ version: '1.0', agentFunctionResponse: { functionCallId: last, value: { orderId: `p-${i}` } } });
+  }
+  assert.deepEqual(Object.keys(h.client.store.getState().calls), [last]);
+  h.client.stop();
+});
+
+test('outbound history is bounded', () => {
+  const h = harness();
+  h.client.start(); h.last().open(); h.last().deliver(createSurface());
+  for (let i = 0; i < SENT_HISTORY * 3; i++) h.client.send(validationErrorMessage(SURFACE, '/x', `m${i}`));
+  assert.equal(h.client.sent.length, SENT_HISTORY);
+  assert.equal(JSON.parse(h.client.sent.at(-1)!).error.message, `m${SENT_HISTORY * 3 - 1}`);
+  h.client.stop();
+});
+
+test('lostAt lives in the shared store: set when a good connection drops, kept across flaps, cleared on reconnect', () => {
+  const h = harness();
+  h.client.start();
+  assert.equal(h.client.store.getState().lostAt, null);
+  h.last().open(); h.last().deliver(createSurface());
+  const before = Date.now();
+  h.last().drop();
+  const lost = h.client.store.getState().lostAt;
+  assert.ok(lost !== null && lost >= before);
+  h.runTimers(); h.last().open(); h.last().drop();
+  assert.equal(h.client.store.getState().lostAt, lost, 'a failed open does not move it');
+  h.runTimers(); h.last().open(); h.last().deliver(createSurface());
+  assert.equal(h.client.store.getState().lostAt, null);
+  h.client.stop();
+});
+
+test('a debounced edit is timestamped when it happened, not when it is flushed', () => {
+  const h = harness();
+  h.client.start(); h.last().open(); h.last().deliver(createSurface());
+  const t0 = Date.now();
+  h.client.queueAction(SURFACE, 'ticketEdited', 'root', { side: 'buy', quantity: 1, limitPrice: 0.5 });
+  const t1 = Date.now();
+  while (Date.now() < t1 + 25) { /* the flush happens visibly later */ }
+  h.runTimers();
+  const ts = Date.parse(JSON.parse(h.last().sent.at(-1)!).action.timestamp);
+  assert.ok(ts >= t0 && ts <= t1, `timestamp ${ts} is the edit time [${t0}, ${t1}]`);
+  h.client.stop();
 });

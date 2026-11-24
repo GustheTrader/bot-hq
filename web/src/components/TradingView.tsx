@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { acquireA2uiClient, sharedA2uiClient } from '../a2ui/client';
 import { getAt } from '../a2ui/pointer';
 import { useA2ui } from '../a2ui/react';
@@ -22,9 +22,8 @@ export function TradingView() {
   const resumed = surfaces.some((s) => getAt(s.dataModel, '/session/resumed') === true);
   const sessionId = surfaces.map((s) => getAt(s.dataModel, '/session/id')).find((v): v is string => typeof v === 'string');
 
-  // Remember when the socket went away, so a stale ticket says how old it is.
-  const [lostAt, setLostAt] = useState<number | null>(null);
-  useEffect(() => { setLostAt(conn === 'connected' ? null : (t) => t ?? Date.now()); }, [conn]);
+  // When the last good connection was lost (kept in the shared store, so it survives this view remounting).
+  const lostAt = useA2ui(client, (s) => s.lostAt);
 
   const connected = conn === 'connected';
   const pill = connected

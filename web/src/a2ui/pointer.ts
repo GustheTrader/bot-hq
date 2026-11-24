@@ -42,14 +42,17 @@ function writeAt(node: Json | undefined, toks: string[], i: number, value: Json)
   const last = i === toks.length - 1;
   if (Array.isArray(node)) {
     const idx = tok === '-' ? node.length : /^(0|[1-9]\d*)$/.test(tok) ? Number(tok) : -1;
-    if (idx < 0) return node; // not addressable: leave untouched
+    // Not addressable (non-numeric, or past the end, which would pad holes / build a huge sparse array).
+    if (idx < 0 || idx > node.length) return node;
     const next = node.slice();
     if (last) {
       if (value === null) { if (idx < next.length) next.splice(idx, 1); }
       else next[idx] = value;
       return next;
     }
-    next[idx] = writeAt(node[idx], toks, i + 1, value) ?? {};
+    const child = writeAt(node[idx], toks, i + 1, value);
+    if (child === undefined) return node; // deleting below a missing element: no-op, no phantom {}
+    next[idx] = child;
     return next;
   }
   if (value === null && !isObject(node)) return node; // deleting under a missing branch is a no-op
@@ -59,7 +62,9 @@ function writeAt(node: Json | undefined, toks: string[], i: number, value: Json)
     else obj[tok] = value;
     return obj;
   }
-  const child = writeAt(obj[tok], toks, i + 1, value);
+  const prev = Object.prototype.hasOwnProperty.call(obj, tok) ? obj[tok] : undefined;
+  const child = writeAt(prev, toks, i + 1, value);
+  if (isObject(node) && child === prev) return node; // nothing changed below: keep identity
   if (child === undefined) delete obj[tok];
   else obj[tok] = child;
   return obj;

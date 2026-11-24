@@ -4,12 +4,13 @@ import { isBinding, isFunctionCall, isObject, type FunctionCall, type Json, type
 /**
  * Resolve a dynamic value against a surface data model: {"@path": "/x"} reads the model, literals pass through,
  * arrays and plain objects resolve element-wise. Nested function calls are not evaluated renderer-side in this
- * MVP (the one catalog has no renderer functions), so they are an error rather than a silent pass-through.
+ * MVP (the one catalog has no renderer functions): they resolve to undefined, so a display prop shows "—" (render
+ * never throws) and resolveFunctionCall rejects the call as having a hole.
  */
 export function resolveValue(v: Json | undefined, model: JsonObject): Json | undefined {
   if (v === undefined || v === null || typeof v !== 'object') return v;
   if (isBinding(v)) return getAt(model, v['@path']);
-  if (isFunctionCall(v)) throw new Error(`Nested function call "${v['@call']}" is not supported in this renderer`);
+  if (isFunctionCall(v)) return undefined;
   if (Array.isArray(v)) return v.map((x) => resolveValue(x, model) ?? null);
   const out: JsonObject = {};
   for (const [k, x] of Object.entries(v)) {

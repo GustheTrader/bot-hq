@@ -32,11 +32,10 @@ export interface UpdateComponentsMessage { version: '1.0'; updateComponents: { s
 export interface UpdateDataModelMessage { version: '1.0'; updateDataModel: { surfaceId: string; path?: string; value: Json } }
 export interface DeleteSurfaceMessage { version: '1.0'; deleteSurface: { surfaceId: string } }
 
-export interface FunctionResponse {
-  functionCallId: string;
-  value?: Json;
-  error?: { code: string; message: string };
-}
+/** Exactly one of `value` / `error` (agent_to_renderer.json), modelled as a union so neither / both cannot type-check. */
+export type FunctionResponse =
+  | { functionCallId: string; value: Json; error?: never }
+  | { functionCallId: string; error: { code: string; message: string }; value?: never };
 export interface AgentFunctionResponseMessage { version: '1.0'; agentFunctionResponse: FunctionResponse }
 
 export type AgentMessage =
@@ -75,4 +74,11 @@ export const isObject = (v: unknown): v is { [k: string]: unknown } =>
 export const isBinding = (v: unknown): v is DataBinding =>
   isObject(v) && typeof v['@path'] === 'string' && Object.keys(v).length === 1;
 
-export const isFunctionCall = (v: unknown): v is FunctionCall => isObject(v) && typeof v['@call'] === 'string';
+export const isFunctionCall = (v: unknown): v is FunctionCall =>
+  isObject(v) && typeof v['@call'] === 'string'
+  && (v.catalogId === undefined || typeof v.catalogId === 'string')
+  && (v.args === undefined || isObject(v.args));
+
+/** Own-property lookup, so ids like "constructor" or "__proto__" never hit Object.prototype. */
+export const own = <T>(m: Record<string, T>, k: string | undefined): T | undefined =>
+  k !== undefined && Object.prototype.hasOwnProperty.call(m, k) ? m[k] : undefined;

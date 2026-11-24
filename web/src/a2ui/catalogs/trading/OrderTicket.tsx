@@ -108,15 +108,19 @@ export function OrderTicket({ surface, component, client }: { surface: Surface; 
   const mine = useMemo(() => Object.values(calls).filter((c) => c.surfaceId === surface.surfaceId).sort((a, b) => b.startedAt - a.startedAt), [calls, surface.surfaceId]);
   const pending: CallRecord | undefined = mine.find((c) => c.state === 'pending');
   const latest: CallRecord | undefined = mine[0];
+  // An unconfirmed call may already have placed an order: block until it is confirmed (Check status re-asks).
+  const unconfirmed: CallRecord | undefined = !pending && latest?.state === 'unconfirmed' ? latest : undefined;
   const [localError, setLocalError] = useState<string | null>(null);
+  const [editedAt, setEditedAt] = useState(0);
 
   const submitCall = actionFunctionCall(component.submit);
-  const editable = connected && !pending;
+  const editable = connected && !pending && !unconfirmed;
 
   /** Write one bound field locally, then queue the debounced ticketEdited action with the resolved values. */
   const edit = (path: string | null, value: Json) => {
     if (!path) return;
     setLocalError(null);
+    setEditedAt(Date.now());
     client.store.getState().setLocal(surface.surfaceId, path, value);
     const s = client.store.getState().surfaces[surface.surfaceId];
     if (!s) return;
@@ -147,20 +151,28 @@ export function OrderTicket({ surface, component, client }: { surface: Surface; 
     }
   };
 
+  const onRecheck = () => {
+    if (!unconfirmed) return;
+    try { client.recheckCall(unconfirmed.functionCallId); setLocalError(null); }
+    catch (err) { setLocalError(err instanceof Error ? err.message : String(err)); }
+  };
+
   const modelState = (str(status.state) ?? 'idle') as TicketState;
-  const shownState: TicketState | 'unconfirmed' = pending ? 'submitting' : latest?.state === 'unconfirmed' && modelState !== 'filled' && modelState !== 'rejected' ? 'unconfirmed' : modelState;
+  const shownState: TicketState | 'unconfirmed' = pending ? 'submitting' : unconfirmed ? 'unconfirmed' : modelState;
   // The response of the latest call only describes the ticket while the agent's status still points at that
   // order (or at a terminal state): after an edit or a resumed snapshot the model status wins.
   const terminal = modelState === 'filled' || modelState === 'rejected';
   const done = latest?.state === 'done' ? latest.response : undefined;
   const doneValue = done && isObject(done.value) ? (done.value as JsonObject) : null;
   const modelOrderId = str(status.orderId);
-  const resp = done && (modelOrderId ? str(doneValue?.orderId) === modelOrderId : terminal) ? done : undefined;
+  const resp = done && !done.error && (modelOrderId ? str(doneValue?.orderId) === modelOrderId : terminal) ? done : undefined;
   const respValue = resp ? doneValue : null;
+  // An error answer to the latest call is shown until the user edits the ticket (no order exists for it).
+  const callError = done?.error && latest && latest.startedAt >= editedAt ? done.error : undefined;
   const orderId = modelOrderId ?? (respValue ? str(respValue.orderId) : null);
   const statusMessage = localError
-    ?? (resp?.error ? `${resp.error.code}: ${resp.error.message}` : null)
-    ?? (shownState === 'unconfirmed' ? 'Connection dropped twice before the agent confirmed. The status shown is the agent’s latest snapshot.' : null)
+    ?? (callError ? errorText(callError) : null)
+    ?? (unconfirmed ? 'Connection dropped twice before the agent confirmed this order, so it may exist. Check its status before placing another.' : null)
     ?? (str(status.message) || null);
 
   return (
@@ -237,12 +249,25 @@ export function OrderTicket({ surface, component, client }: { surface: Surface; 
             </span>
           )}
         </div>
-        <button type="button" className="btn btn--primary" onClick={onSubmit} disabled={!editable || !submitCall || !qtyValid || !limitValid || !side}>
-          {pending ? 'Submitting…' : side === 'sell' ? 'Submit sell' : 'Submit buy'}
-        </button>
+        {unconfirmed ? (
+          <button type="button" className="btn btn--primary" onClick={onRecheck} disabled={!connected}>Check status</button>
+        ) : (
+          <button type="button" className="btn btn--primary" onClick={onSubmit} disabled={!editable || !submitCall || !qtyValid || !limitValid || !side}>
+            {pending ? 'Submitting…' : side === 'sell' ? 'Submit sell' : 'Submit buy'}
+          </button>
+        )}
       </div>
     </section>
   );
+}
+
+/** Agent error codes (CONTRACT.md), in words; the code stays visible for support. */
+function errorText(e: { code: string; message: string }): string {
+  switch (e.code) {
+    case 'ORDER_IN_FLIGHT': return `An earlier order from this ticket is still being processed; wait for its result before submitting again. (${e.code})`;
+    case 'USER_ACTIVATION_REQUIRED': return `The agent did not accept the click as fresh user activation; no order was placed. Click Submit again. (${e.code})`;
+    default: return `${e.code}: ${e.message}`;
+  }
 }
 
 function statusText(s: TicketState | 'unconfirmed'): string {
