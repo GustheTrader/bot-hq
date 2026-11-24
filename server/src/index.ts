@@ -9,6 +9,7 @@ import type { Server } from 'node:http';
 import { env } from './env.js';
 import { api } from './routes.js';
 import { attachVncRelay } from './vnc.js';
+import { a2uiApi, attachA2uiRelay } from './a2ui-relay.js';
 import { initRoutines } from './routines.js';
 import { initTriggers } from './triggers.js';
 import { initProactive } from './proactive.js';
@@ -59,6 +60,7 @@ app.route('/api/revopt', revoptApi);
 app.route('/api/projects', projectsApi);
 app.route('/api/launch', launchApi);
 app.route('/api/workspace', workspaceApi);
+app.route('/a2ui', a2uiApi);
 app.route('/api', api);
 app.route('/api', configApi);
 
@@ -71,6 +73,7 @@ if (fs.existsSync(webDist)) {
 
 const server = serve({ fetch: app.fetch, port: env.port, hostname: process.env.HOST || undefined }, (info) => console.log(`[grokbot] server on http://localhost:${info.port}`));
 attachVncRelay(server as unknown as Server);
+attachA2uiRelay(server as unknown as Server);
 // GROKBOT_NO_SCHEDULER=1 for extra dev/test servers sharing a database copy, so routines and triggers don't fire twice.
 if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
   initRoutines(enqueue);
