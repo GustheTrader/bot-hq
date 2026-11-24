@@ -1,0 +1,92 @@
+name: a2ui-durable
+
+# PRD v1.1 Day 5: all five MVP success criteria in one CI-runnable job.
+#   Valid        -> cargo test (jsonschema crate) + the E2E validates every wire frame with ajv (--require-schema)
+#   Render/Update/Submit -> web typecheck + web a2ui renderer test
+#   Crash-resume -> scripts/a2ui-crash-e2e.mjs against the release binary (3 kill points, <= 5 s, zero dup orders)
+
+on:
+  push:
+    paths:
+      - 'agents/a2ui-durable/**'
+      - 'web/src/a2ui/**'
+      - 'web/src/components/TradingView.tsx'
+      - 'web/src/styles/a2ui.css'
+      - 'package-lock.json'
+      - 'web/test/**'
+      - 'web/package.json'
+      - 'scripts/a2ui-*'
+      - 'docs/a2ui/**'
+      - '.github/workflows/a2ui-durable.yml'
+  pull_request:
+    paths:
+      - 'agents/a2ui-durable/**'
+      - 'web/src/a2ui/**'
+      - 'web/src/components/TradingView.tsx'
+      - 'web/src/styles/a2ui.css'
+      - 'package-lock.json'
+      - 'web/test/**'
+      - 'web/package.json'
+      - 'scripts/a2ui-*'
+      - 'docs/a2ui/**'
+      - '.github/workflows/a2ui-durable.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: a2ui-durable-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  a2ui-durable:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agents/a2ui-durable -> target
+
+      - name: cargo test (incl. A2UI v1.0 schema validation)
+        working-directory: agents/a2ui-durable
+        run: cargo test $( [ -f Cargo.lock ] && echo --locked )
+
+      - name: cargo build --release
+        working-directory: agents/a2ui-durable
+        run: cargo build --release $( [ -f Cargo.lock ] && echo --locked )
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Web typecheck
+        run: npm run typecheck -w web
+
+      - name: Web A2UI renderer test
+        run: npm run test:a2ui -w web
+
+      - name: Crash E2E (3 kill points) + latency report
+        run: node scripts/a2ui-crash-e2e.mjs --bin agents/a2ui-durable/target/release/bothq-a2ui-agent --require-schema --keep
+
+      - name: Upload agent logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a2ui-e2e-logs
+          path: /tmp/a2ui-e2e-*/
+          if-no-files-found: ignore
