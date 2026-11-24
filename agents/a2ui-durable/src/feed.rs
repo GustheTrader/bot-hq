@@ -10,6 +10,8 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 pub const KALSHI_BASE: &str = "https://api.elections.kalshi.com/trade-api/v2";
+/// Cap on `GET /markets` pages (1000 markets each) scanned by [`Kalshi::pick`].
+pub const PICK_MAX_PAGES: usize = 10;
 
 /// One observation of a Kalshi market's YES top of book.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -56,11 +58,15 @@ pub fn round4(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
 
+/// Reads a `*_dollars` / `*_fp` string field. An explicit `null` is an empty
+/// side of the book (0.0); a missing key is an error, so a renamed or dropped
+/// Kalshi field can never show up as a zero price.
 fn dollars(m: &Value, key: &str) -> Result<f64> {
-    match &m[key] {
-        Value::String(s) => s.trim().parse::<f64>().map(round4).with_context(|| format!("{key}={s:?}")),
-        Value::Null => Ok(0.0),
-        other => bail!("{key} is not a *_dollars/_fp string: {other}"),
+    match m.get(key) {
+        None => bail!("market has no {key} field"),
+        Some(Value::String(s)) => s.trim().parse::<f64>().map(round4).with_context(|| format!("{key}={s:?}")),
+        Some(Value::Null) => Ok(0.0),
+        Some(other) => bail!("{key} is not a *_dollars/_fp string: {other}"),
     }
 }
 
@@ -81,9 +87,10 @@ pub fn parse_market(body: &Value, as_of: DateTime<Utc>, source: &str) -> Result<
     })
 }
 
-/// Chooses a currently tradable, liquid binary market from a
-/// `GET /markets?status=open` page: two-sided, closing in more than an hour,
-/// highest 24h volume.
+/// Chooses a currently tradable, liquid binary market from
+/// `GET /markets?status=open` results (`{"markets": [...]}`; [`Kalshi::pick`]
+/// merges up to [`PICK_MAX_PAGES`] cursor pages first): two-sided, closing in
+/// more than an hour, highest 24h volume.
 pub fn pick_market(page: &Value, now: DateTime<Utc>) -> Option<String> {
     let markets = page["markets"].as_array()?;
     markets
@@ -118,30 +125,71 @@ impl Kalshi {
         Ok(Self { http, base: base.trim_end_matches('/').to_owned() })
     }
 
-    /// GET with a few retries (this API occasionally resets connections).
+    /// GET with a few retries. Connection errors and 5xx are retried with a
+    /// short backoff (this API occasionally resets connections); 429 is
+    /// retried after `Retry-After` (else 2 s, 4 s, 6 s); any other 4xx fails
+    /// immediately, since repeating the same request cannot fix it.
     pub async fn get(&self, path_and_query: &str) -> Result<Value> {
         let url = format!("{}{}", self.base, path_and_query);
         let mut last = None;
-        for attempt in 0..4u64 {
-            if attempt > 0 {
-                tokio::time::sleep(Duration::from_millis(250 * attempt)).await;
+        let mut wait = Duration::ZERO;
+        for attempt in 1..=4u64 {
+            if !wait.is_zero() {
+                tokio::time::sleep(wait).await;
             }
             match self.http.get(&url).send().await {
                 Ok(r) if r.status().is_success() => return Ok(r.json().await?),
-                Ok(r) => last = Some(anyhow!("GET {url}: HTTP {}", r.status())),
-                Err(e) => last = Some(anyhow!("GET {url}: {e}")),
+                Ok(r) if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS => {
+                    let after = r.headers().get(reqwest::header::RETRY_AFTER)
+                        .and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok());
+                    wait = Duration::from_secs(after.unwrap_or(2 * attempt).min(30));
+                    last = Some(anyhow!("GET {url}: HTTP 429 (rate limited)"));
+                }
+                Ok(r) if r.status().is_client_error() => bail!("GET {url}: HTTP {}", r.status()),
+                Ok(r) => {
+                    wait = Duration::from_millis(250 * attempt);
+                    last = Some(anyhow!("GET {url}: HTTP {}", r.status()));
+                }
+                Err(e) => {
+                    wait = Duration::from_millis(250 * attempt);
+                    last = Some(anyhow!("GET {url}: {e}"));
+                }
             }
         }
-        Err(last.unwrap())
+        Err(last.expect("at least one attempt"))
     }
 
     pub async fn market(&self, ticker: &str) -> Result<Value> {
         self.get(&format!("/markets/{ticker}")).await
     }
 
+    /// Pages through `GET /markets?status=open` (following `cursor`, at most
+    /// [`PICK_MAX_PAGES`] pages of 1000) and picks with [`pick_market`].
     pub async fn pick(&self) -> Result<String> {
-        let page = self.get("/markets?status=open&limit=1000&mve_filter=exclude").await?;
-        pick_market(&page, Utc::now()).ok_or_else(|| anyhow!("no open, two-sided market found on Kalshi"))
+        let mut markets = Vec::new();
+        let mut cursor = String::new();
+        for page_no in 1..=PICK_MAX_PAGES {
+            let mut q = String::from("/markets?status=open&limit=1000&mve_filter=exclude");
+            if !cursor.is_empty() {
+                q.push_str("&cursor=");
+                q.extend(cursor.bytes().map(|b| match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+                    _ => format!("%{b:02X}"),
+                }));
+            }
+            let page = self.get(&q).await?;
+            markets.extend(page["markets"].as_array().cloned().unwrap_or_default());
+            cursor = page["cursor"].as_str().unwrap_or_default().to_owned();
+            if cursor.is_empty() {
+                break;
+            }
+            if page_no == PICK_MAX_PAGES {
+                tracing::warn!(target: "a2ui::feed", pages = PICK_MAX_PAGES, markets = markets.len(),
+                    "market pick stopped at the page cap; pass --symbol to choose explicitly");
+            }
+        }
+        pick_market(&json!({ "markets": markets }), Utc::now())
+            .ok_or_else(|| anyhow!("no open, two-sided market found on Kalshi"))
     }
 }
 
@@ -176,7 +224,7 @@ pub struct Tick {
     pub received: Instant,
 }
 
-pub async fn run_kalshi(client: Kalshi, ticker: String, every: Duration, tx: tokio::sync::mpsc::UnboundedSender<Tick>) {
+pub async fn run_kalshi(client: Kalshi, ticker: String, every: Duration, tx: tokio::sync::mpsc::Sender<Tick>) {
     let mut interval = tokio::time::interval(every);
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -185,7 +233,7 @@ pub async fn run_kalshi(client: Kalshi, ticker: String, every: Duration, tx: tok
         match client.market(&ticker).await.and_then(|b| parse_market(&b, Utc::now(), "kalshi")) {
             Ok(quote) => {
                 tracing::debug!(target: "a2ui::feed", ticker = %quote.ticker, bid = quote.bid, ask = quote.ask, http_ms = started.elapsed().as_millis() as u64, "kalshi quote");
-                if tx.send(Tick { quote, received: Instant::now() }).is_err() {
+                if tx.send(Tick { quote, received: Instant::now() }).await.is_err() {
                     return;
                 }
             }
@@ -194,11 +242,11 @@ pub async fn run_kalshi(client: Kalshi, ticker: String, every: Duration, tx: tok
     }
 }
 
-pub async fn run_replay(lines: Vec<Recorded>, every: Duration, tx: tokio::sync::mpsc::UnboundedSender<Tick>) {
+pub async fn run_replay(lines: Vec<Recorded>, every: Duration, tx: tokio::sync::mpsc::Sender<Tick>) {
     for rec in lines.iter().filter(|r| r.body.get("market").is_some()) {
         match parse_market(&rec.body, rec.received_at, "kalshi-replay") {
             Ok(quote) => {
-                if tx.send(Tick { quote, received: Instant::now() }).is_err() {
+                if tx.send(Tick { quote, received: Instant::now() }).await.is_err() {
                     return;
                 }
             }

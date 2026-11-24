@@ -7,7 +7,8 @@
 //!
 //! Fill rule (immediate-or-cancel against the last real Kalshi quote):
 //! - the quote must be for the order's ticker, `active`, and observed by this
-//!   process within `STALE_QUOTE_SECS`;
+//!   process at most `STALE_QUOTE_SECS` ago (full-precision age, not whole
+//!   seconds) and not more than `QUOTE_MAX_FUTURE_MS` in the future;
 //! - buy is marketable when `limit >= yes_ask`; it fills at the ask;
 //!   sell is marketable when `limit <= yes_bid`; it fills at the bid;
 //! - filled quantity = min(quantity, displayed size at that price, floored);
@@ -16,11 +17,15 @@
 //! - buys need `filled * price <= buyingPower`; sells are long-only
 //!   (`filled <= position`);
 //! - anything else is rejected with a reason.
+//!
+//! `place` reads the account, applies the rule and inserts the order inside one
+//! `BEGIN IMMEDIATE` transaction, so two writers on the same file cannot both
+//! spend the same buying power or sell the same position.
 
 use crate::feed::{round4, Quote};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -29,6 +34,8 @@ compile_error!("live-routing is not implemented: real order routing is gated on 
 
 pub const PAPER_STARTING_BUYING_POWER: f64 = 1000.0;
 pub const STALE_QUOTE_SECS: i64 = 30;
+/// Tolerated clock skew for a quote timestamp that is ahead of `now`.
+pub const QUOTE_MAX_FUTURE_MS: i64 = 1000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -115,39 +122,12 @@ impl PaperBroker {
     }
 
     pub fn get(&self, key: &str) -> Result<Option<Order>> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT order_id, idempotency_key, symbol, side, quantity, limit_price, state, filled_qty, avg_price, reason
-                 FROM paper_orders WHERE idempotency_key = ?1",
-                [key],
-                |r| {
-                    Ok(Order {
-                        order_id: r.get(0)?, idempotency_key: r.get(1)?, symbol: r.get(2)?, side: r.get(3)?,
-                        quantity: r.get(4)?, limit_price: r.get(5)?, state: r.get(6)?, filled_qty: r.get(7)?,
-                        avg_price: r.get(8)?, reason: r.get(9)?,
-                    })
-                },
-            )
-            .optional()?)
+        get_order(&self.conn, key)
     }
 
     /// Paper account derived from filled orders. `position` is for `symbol`.
     pub fn account(&self, symbol: &str) -> Result<Account> {
-        let (spent, received): (f64, f64) = self.conn.query_row(
-            "SELECT COALESCE(SUM(CASE WHEN side='buy' THEN filled_qty*avg_price END),0),
-                    COALESCE(SUM(CASE WHEN side='sell' THEN filled_qty*avg_price END),0)
-             FROM paper_orders WHERE account_id=?1 AND filled_qty > 0",
-            [&self.account_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        let position: i64 = self.conn.query_row(
-            "SELECT COALESCE(SUM(CASE WHEN side='buy' THEN filled_qty ELSE -filled_qty END),0)
-             FROM paper_orders WHERE account_id=?1 AND symbol=?2 AND filled_qty > 0",
-            params![self.account_id, symbol],
-            |r| r.get(0),
-        )?;
-        Ok(Account { buying_power: round4(PAPER_STARTING_BUYING_POWER - spent + received), position })
+        account_on(&self.conn, &self.account_id, symbol)
     }
 
     /// Places (or finds) the order for `key`. Returns `(order, duplicate)`.
@@ -159,10 +139,11 @@ impl PaperBroker {
         quote: Option<&Quote>,
         now: DateTime<Utc>,
     ) -> Result<(Order, bool)> {
-        if let Some(existing) = self.get(key)? {
+        let tx = self.conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(existing) = get_order(&tx, key)? {
             return Ok((existing, true));
         }
-        let account = self.account(&req.symbol)?;
+        let account = account_on(&tx, &self.account_id, &req.symbol)?;
         let (state, filled_qty, avg_price, reason) = fill(req, quote, account, now);
         let order = Order {
             order_id: format!("paper-{}", uuid::Uuid::new_v4()),
@@ -176,7 +157,7 @@ impl PaperBroker {
             avg_price,
             reason,
         };
-        let inserted = self.conn.execute(
+        let inserted = tx.execute(
             "INSERT INTO paper_orders (order_id, idempotency_key, account_id, function_call_id, symbol, side, quantity,
                  limit_price, state, filled_qty, avg_price, reason, quote_json, created_at)
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
@@ -188,13 +169,50 @@ impl PaperBroker {
             ],
         )?;
         if inserted == 0 {
-            // Another writer won the UNIQUE key between our read and insert.
-            return Ok((self.get(key)?.expect("row exists after conflict"), true));
+            // Defensive only: BEGIN IMMEDIATE already serializes writers on this file.
+            let existing = get_order(&tx, key)?.expect("row exists after conflict");
+            tx.commit()?;
+            return Ok((existing, true));
         }
+        tx.commit()?;
         tracing::info!(target: "a2ui::orders", order_id = %order.order_id, key, state = %order.state,
             filled = order.filled_qty, avg_price = ?order.avg_price, "paper order placed");
         Ok((order, false))
     }
+}
+
+fn get_order(conn: &Connection, key: &str) -> Result<Option<Order>> {
+    Ok(conn
+        .query_row(
+            "SELECT order_id, idempotency_key, symbol, side, quantity, limit_price, state, filled_qty, avg_price, reason
+             FROM paper_orders WHERE idempotency_key = ?1",
+            [key],
+            |r| {
+                Ok(Order {
+                    order_id: r.get(0)?, idempotency_key: r.get(1)?, symbol: r.get(2)?, side: r.get(3)?,
+                    quantity: r.get(4)?, limit_price: r.get(5)?, state: r.get(6)?, filled_qty: r.get(7)?,
+                    avg_price: r.get(8)?, reason: r.get(9)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+fn account_on(conn: &Connection, account_id: &str, symbol: &str) -> Result<Account> {
+    let (spent, received): (f64, f64) = conn.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN side='buy' THEN filled_qty*avg_price END),0),
+                COALESCE(SUM(CASE WHEN side='sell' THEN filled_qty*avg_price END),0)
+         FROM paper_orders WHERE account_id=?1 AND filled_qty > 0",
+        [account_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let position: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(CASE WHEN side='buy' THEN filled_qty ELSE -filled_qty END),0)
+         FROM paper_orders WHERE account_id=?1 AND symbol=?2 AND filled_qty > 0",
+        params![account_id, symbol],
+        |r| r.get(0),
+    )?;
+    Ok(Account { buying_power: round4(PAPER_STARTING_BUYING_POWER - spent + received), position })
 }
 
 /// The paper fill rule (see module docs). Returns (state, filled, avg, reason).
@@ -203,9 +221,12 @@ pub fn fill(req: &OrderRequest, quote: Option<&Quote>, acct: Account, now: DateT
     let Some(q) = quote.filter(|q| q.ticker == req.symbol) else {
         return reject(format!("no quote for {}", req.symbol));
     };
-    let age = now.signed_duration_since(q.observed_at).num_seconds();
-    if age > STALE_QUOTE_SECS {
-        return reject(format!("quote is {age}s old (max {STALE_QUOTE_SECS}s)"));
+    let age = now.signed_duration_since(q.observed_at);
+    if age > chrono::Duration::seconds(STALE_QUOTE_SECS) {
+        return reject(format!("quote is {:.3}s old (max {STALE_QUOTE_SECS}s)", age.num_milliseconds() as f64 / 1000.0));
+    }
+    if age < -chrono::Duration::milliseconds(QUOTE_MAX_FUTURE_MS) {
+        return reject(format!("quote is {}ms in the future (max skew {QUOTE_MAX_FUTURE_MS}ms)", -age.num_milliseconds()));
     }
     if q.status != "active" {
         return reject(format!("market is {}", q.status));

@@ -27,15 +27,31 @@ struct Agent {
     stderr: std::sync::mpsc::Receiver<String>,
 }
 
+fn agent_cmd() -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_bothq-a2ui-agent"));
+    for v in ["BOTHQ_A2UI_PAUSE_AT", "BOTHQ_A2UI_TOKEN", "BOTHQ_A2UI_LISTEN", "BOTHQ_A2UI_DB", "BOTHQ_A2UI_FEED", "BOTHQ_A2UI_POLL_MS"] {
+        cmd.env_remove(v);
+    }
+    cmd.env("RUST_LOG", "info");
+    cmd
+}
+
 impl Agent {
-    fn spawn(db: &Path, port: u16, pause: Option<&str>) -> Self {
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_bothq-a2ui-agent"));
-        cmd.args(["--feed", "replay", "--replay-interval-ms", "100", "--listen", &format!("127.0.0.1:{port}")])
+    /// Binds port 0 and learns the real port from the agent's `LISTENING <addr>`
+    /// line, so concurrently running tests can never collide on a port.
+    fn spawn(db: &Path, pause: Option<&str>) -> Self {
+        Self::spawn_with(db, pause, None)
+    }
+    fn spawn_with(db: &Path, pause: Option<&str>, token: Option<&str>) -> Self {
+        let mut cmd = agent_cmd();
+        cmd.args(["--feed", "replay", "--replay-interval-ms", "100", "--listen", "127.0.0.1:0"])
             .arg("--replay-file").arg(fixture()).arg("--db").arg(db)
-            .env("RUST_LOG", "info").env_remove("BOTHQ_A2UI_PAUSE_AT")
             .stdout(Stdio::null()).stderr(Stdio::piped());
         if let Some(p) = pause {
             cmd.env("BOTHQ_A2UI_PAUSE_AT", p);
+        }
+        if let Some(t) = token {
+            cmd.env("BOTHQ_A2UI_TOKEN", t);
         }
         let mut child = cmd.spawn().unwrap();
         let (tx, stderr) = std::sync::mpsc::channel();
@@ -45,6 +61,14 @@ impl Agent {
                 let _ = tx.send(line);
             }
         });
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let port = loop {
+            let line = stderr.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .unwrap_or_else(|_| panic!("agent never printed LISTENING"));
+            if let Some(addr) = line.strip_prefix("LISTENING ") {
+                break addr.trim().parse::<std::net::SocketAddr>().unwrap().port();
+            }
+        };
         Self { child, port, stderr }
     }
     fn wait_stderr(&self, needle: &str, within: Duration) {
@@ -81,10 +105,6 @@ impl Drop for Agent {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
-}
-
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
 async fn recv(ws: &mut Ws, what: &str, pred: impl Fn(&Value) -> bool) -> Value {
@@ -130,7 +150,7 @@ fn response_for(id: &str) -> impl Fn(&Value) -> bool + '_ {
 #[tokio::test(flavor = "multi_thread")]
 async fn render_price_update_submit_over_websocket() {
     let dir = tempfile::tempdir().unwrap();
-    let agent = Agent::spawn(&dir.path().join("a.sqlite"), free_port(), None);
+    let agent = Agent::spawn(&dir.path().join("a.sqlite"), None);
     let mut ws = agent.connect().await;
     let create = recv(&mut ws, "createSurface", is_create).await;
     let cs = &create["createSurface"];
@@ -161,6 +181,14 @@ async fn render_price_update_submit_over_websocket() {
         let snap = recv(&mut ws, "snapshot", is_create).await;
         assert_eq!(snap["createSurface"]["surfaceId"], json!(sid));
         assert_eq!(snap["createSurface"]["dataModel"]["ticket"]["limitPrice"], 0.99);
+        // Keep reading briefly: no second createSurface may follow.
+        let until = Instant::now() + Duration::from_millis(400);
+        while let Ok(Some(Ok(msg))) = tokio::time::timeout(until.saturating_duration_since(Instant::now()), ws.next()).await {
+            if let Message::Text(t) = msg {
+                let v: Value = serde_json::from_str(&t).unwrap();
+                assert!(!is_create(&v), "second createSurface on one connection: {v}");
+            }
+        }
     }
 }
 
@@ -168,8 +196,7 @@ async fn render_price_update_submit_over_websocket() {
 async fn crash_case(point: &str) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("a.sqlite");
-    let port = free_port();
-    let agent = Agent::spawn(&db, port, Some(point));
+    let agent = Agent::spawn(&db, Some(point));
     let mut ws = agent.connect().await;
     let create = recv(&mut ws, "createSurface", is_create).await;
     let sid = create["createSurface"]["surfaceId"].as_str().unwrap().to_owned();
@@ -186,7 +213,7 @@ async fn crash_case(point: &str) {
     agent.kill9();
 
     let started = Instant::now();
-    let agent = Agent::spawn(&db, port, None);
+    let agent = Agent::spawn(&db, None);
     let mut ws = agent.connect().await;
     let snap = recv(&mut ws, "snapshot", is_create).await;
     let resume = started.elapsed();
@@ -251,4 +278,43 @@ async fn crash_after_call_received() {
 #[tokio::test(flavor = "multi_thread")]
 async fn crash_after_order_placed() {
     crash_case("after_order_placed").await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn token_is_required_on_both_routes_when_configured() {
+    let dir = tempfile::tempdir().unwrap();
+    let token = "test-token-0123456789";
+    let agent = Agent::spawn_with(&dir.path().join("a.sqlite"), None, Some(token));
+    let base = format!("http://127.0.0.1:{}", agent.port);
+    let http = reqwest::Client::new();
+    assert_eq!(http.get(format!("{base}/a2ui/health")).send().await.unwrap().status(), 401);
+    let wrong = http.get(format!("{base}/a2ui/health")).header("x-bothq-a2ui-token", "test-token-0123456780").send().await.unwrap();
+    assert_eq!(wrong.status(), 401);
+    let ok = http.get(format!("{base}/a2ui/health")).header("x-bothq-a2ui-token", token).send().await.unwrap();
+    assert_eq!(ok.status(), 200);
+    let url = format!("ws://127.0.0.1:{}/a2ui/ws", agent.port);
+    match tokio_tungstenite::connect_async(&url).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(r)) => assert_eq!(r.status(), 401),
+        other => panic!("upgrade without a token must be refused with 401, got {:?}", other.map(|_| ())),
+    }
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut req = url.into_client_request().unwrap();
+    req.headers_mut().insert("x-bothq-a2ui-token", token.parse().unwrap());
+    let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
+    recv(&mut ws, "createSurface", is_create).await;
+}
+
+#[test]
+fn refuses_non_loopback_without_token_and_zero_poll_period() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = agent_cmd()
+        .args(["--feed", "replay", "--listen", "0.0.0.0:0"]).arg("--replay-file").arg(fixture())
+        .arg("--db").arg(dir.path().join("a.sqlite")).output().unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("BOTHQ_A2UI_TOKEN"), "{err}");
+    assert!(!dir.path().join("a.sqlite").exists(), "refused before opening the database");
+    let out = agent_cmd().args(["--poll-ms", "0", "--db"]).arg(dir.path().join("b.sqlite")).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--poll-ms"));
 }

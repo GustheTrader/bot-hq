@@ -14,7 +14,7 @@ use crate::catalog::{self, authorize, Caller, FnError, CATALOG_ID, SUBMIT_ORDER}
 use crate::feed::{Quote, Tick};
 use crate::journal::Journal;
 use crate::schema::schemas;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use chrono::Utc;
 use rpi_durable::storage::JournalFrame;
 use serde::Serialize;
@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::{error::TrySendError, Receiver, Sender};
 
 pub mod kind {
     pub const SESSION_STARTED: &str = "a2ui.session.started";
@@ -42,8 +42,13 @@ pub mod kind {
 
 pub type ClientId = u64;
 
+/// Error code for a new submit while the ticket already has one in flight.
+pub const ORDER_IN_FLIGHT: &str = "ORDER_IN_FLIGHT";
+
 pub enum Event {
-    Connect { client: ClientId, tx: UnboundedSender<Outbound> },
+    /// `tx` is the client's bounded outbound queue; a client whose queue is
+    /// full is dropped (see `server.rs` back-pressure policy).
+    Connect { client: ClientId, tx: Sender<Outbound> },
     Disconnect { client: ClientId },
     Inbound { client: ClientId, text: String },
     Tick(Tick),
@@ -122,8 +127,9 @@ impl State {
                 if let Some(c) = r["functionCallId"].as_str().and_then(|id| self.calls.get_mut(id)) {
                     c.response = Some(e.clone());
                 }
-            } else {
-                apply_to_store(&mut self.surfaces, e);
+            } else if let Err(err) = apply_to_store(&mut self.surfaces, e) {
+                // Unreachable for frames this agent committed (effects are dry-run first).
+                tracing::error!(target: "a2ui::agent", frame = f.sequence, %err, "journal effect does not apply");
             }
         }
     }
@@ -171,7 +177,7 @@ pub struct Agent {
     broker: PaperBroker,
     author: Box<dyn A2uiAuthoring>,
     pub state: State,
-    clients: Vec<(ClientId, UnboundedSender<Outbound>)>,
+    clients: Vec<(ClientId, Sender<Outbound>)>,
     /// Latest quote observed by *this process* (not journaled when unchanged);
     /// the paper fill rule only trades against it.
     fresh_quote: Option<Quote>,
@@ -222,7 +228,7 @@ impl Agent {
     }
 
     /// Runs the actor on the current (dedicated) thread until all senders drop.
-    pub fn run(mut self, mut rx: UnboundedReceiver<Event>) {
+    pub fn run(mut self, mut rx: Receiver<Event>) {
         while let Some(ev) = rx.blocking_recv() {
             if let Err(e) = self.handle(ev) {
                 tracing::error!(target: "a2ui::agent", error = %format!("{e:#}"), "event failed");
@@ -232,7 +238,7 @@ impl Agent {
 
     pub fn handle(&mut self, ev: Event) -> Result<()> {
         match ev {
-            Event::Connect { client, tx } => self.connect(client, tx),
+            Event::Connect { client, tx } => self.connect(client, tx)?,
             Event::Disconnect { client } => {
                 self.clients.retain(|(id, _)| *id != client);
                 tracing::info!(target: "a2ui::transport", client, "renderer disconnected");
@@ -257,11 +263,21 @@ impl Agent {
 
     /// Validates effects, commits the frame, folds it into state. Nothing is
     /// sent before this returns Ok.
-    fn commit(&mut self, kind: &str, mut payload: Value, effects: Vec<Value>) -> Result<Vec<Value>> {
+    ///
+    /// In every build (not only debug), an effect that fails the A2UI v1.0
+    /// schema or does not apply to the surface store refuses the whole frame:
+    /// nothing is journaled, state is unchanged, and the error is returned.
+    pub(crate) fn commit(&mut self, kind: &str, mut payload: Value, effects: Vec<Value>) -> Result<Vec<Value>> {
+        let mut dry = self.state.surfaces.clone();
         for e in &effects {
             if let Err(err) = schemas().validate_outbound(e) {
-                tracing::error!(target: "a2ui::schema", %err, msg = %e, "outbound message fails A2UI v1.0 schema");
-                debug_assert!(false, "outbound message fails A2UI v1.0 schema: {err}\n{e}");
+                tracing::error!(target: "a2ui::schema", %err, msg = %e, "outbound message fails A2UI v1.0 schema; frame refused");
+                bail!("{kind}: outbound message fails A2UI v1.0 schema: {err}");
+            }
+            if e.get("agentFunctionResponse").is_none() {
+                if let Err(err) = apply_to_store(&mut dry, e) {
+                    bail!("{kind}: effect does not apply to the surface store: {err}");
+                }
             }
         }
         payload["effects"] = Value::Array(effects);
@@ -281,7 +297,15 @@ impl Agent {
             }
             msgs.iter().all(|m| {
                 rendered |= m.get("createSurface").is_some();
-                tx.send(Outbound { text: m.to_string(), feed_received: feed }).is_ok()
+                match tx.try_send(Outbound { text: m.to_string(), feed_received: feed }) {
+                    Ok(()) => true,
+                    Err(TrySendError::Full(_)) => {
+                        // Slow client: drop it (closing its queue closes its socket).
+                        tracing::warn!(target: "a2ui::transport", client = *id, "outbound queue full; dropping slow client");
+                        false
+                    }
+                    Err(TrySendError::Closed(_)) => false,
+                }
             })
         });
         if rendered {
@@ -289,8 +313,7 @@ impl Agent {
         }
     }
 
-    fn connect(&mut self, client: ClientId, tx: UnboundedSender<Outbound>) {
-        self.clients.push((client, tx));
+    fn connect(&mut self, client: ClientId, tx: Sender<Outbound>) -> Result<()> {
         let session = json!({"id": self.state.session_id, "resumed": self.resumed, "frame": self.state.head});
         let snapshot: Vec<Value> = self
             .state
@@ -302,11 +325,16 @@ impl Agent {
                 self.author.create_surface(id, &s.catalog_id, &s.components, &dm)
             })
             .collect();
-        tracing::info!(target: "a2ui::transport", client, surfaces = snapshot.len(), head = self.state.head, "renderer connected; snapshot replayed");
         for m in &snapshot {
-            debug_assert!(schemas().validate_outbound(m).is_ok(), "snapshot fails schema");
+            if let Err(err) = schemas().validate_outbound(m) {
+                // Not registered: the client gets nothing rather than an invalid frame.
+                bail!("snapshot for client {client} fails A2UI v1.0 schema: {err}");
+            }
         }
+        self.clients.push((client, tx));
+        tracing::info!(target: "a2ui::transport", client, surfaces = snapshot.len(), head = self.state.head, "renderer connected; snapshot replayed");
         self.send(Some(client), &snapshot, None);
+        Ok(())
     }
 
     /// Re-asserts the current component tree on surfaces restored from an
@@ -440,7 +468,8 @@ impl Agent {
             Err(e) => {
                 tracing::warn!(target: "a2ui::call", call = %id, code = e.code, message = %e.message, "function call rejected");
                 let mut fx = vec![self.author.function_response(&id, Err(e.clone()))];
-                if self.state.surfaces.contains_key(&sid) {
+                // ORDER_IN_FLIGHT must not overwrite the in-flight call's "submitting" status.
+                if self.state.surfaces.contains_key(&sid) && e.code != ORDER_IN_FLIGHT {
                     fx.push(self.author.update_data_model(&sid, "/ticket/status",
                         json!({"state": "rejected", "message": e.message, "orderId": null})));
                 }
@@ -476,6 +505,15 @@ impl Agent {
         let sid = c["surfaceId"].as_str().unwrap_or_default();
         let surface = self.state.surfaces.get(sid)
             .ok_or_else(|| FnError::new("UNKNOWN_SURFACE", format!("no live surface {sid}")))?;
+        // One order at a time per ticket: a NEW functionCallId while an accepted
+        // call on this surface is still unanswered would place a second order
+        // (the idempotency key is per call). Re-sends of the SAME id never get
+        // here; `call` dedupes them first.
+        if let Some((pending, _)) = self.state.calls.iter()
+            .find(|(_, r)| r.surface_id == sid && r.key.is_some() && r.response.is_none())
+        {
+            return Err(FnError::new(ORDER_IN_FLIGHT, format!("call {pending} on {sid} is still executing; wait for its response")));
+        }
         let (side, quantity, limit_price) = validate_edit(&args).map_err(|e| FnError::new("INVALID_ARGS", e))?;
         let symbol = args["symbol"].as_str().ok_or_else(|| FnError::new("INVALID_ARGS", "symbol must be a resolved string"))?;
         if surface.data_model["ticket"]["symbol"] != symbol {

@@ -28,19 +28,38 @@ curl -s 127.0.0.1:8790/a2ui/health
 | Flag | Env | Default |
 |---|---|---|
 | `--db <path>` | `BOTHQ_A2UI_DB` | `./data/a2ui-agent.sqlite` (journal and `paper_orders` in one file) |
-| `--listen <addr>` | `BOTHQ_A2UI_LISTEN` | `127.0.0.1:8790` |
+| `--listen <addr>` | `BOTHQ_A2UI_LISTEN` | `127.0.0.1:8790`. Port 0 picks a free port; the bound address is printed to stderr as `LISTENING <addr>`. |
+| `--token <secret>` | `BOTHQ_A2UI_TOKEN` | unset. When set, `/a2ui/ws` and `/a2ui/health` require `x-bothq-a2ui-token: <secret>` (else HTTP 401, before any upgrade). Required for a non-loopback `--listen`. |
 | `--feed kalshi\|replay` | `BOTHQ_A2UI_FEED` | `kalshi` |
 | `--symbol <ticker>` | `BOTHQ_A2UI_SYMBOL` | the resumed ticket's market, else the open two-sided binary market with the highest 24h volume that closes more than 1 h from now (`GET /markets?status=open&mve_filter=exclude`). In replay it filters the file. |
 | `--replay-file <jsonl>` | `BOTHQ_A2UI_REPLAY_FILE` | (required for replay) |
-| `--poll-ms` / `--replay-interval-ms` | `BOTHQ_A2UI_POLL_MS` / `BOTHQ_A2UI_REPLAY_INTERVAL_MS` | 1000 / 1000 |
+| `--poll-ms` / `--replay-interval-ms` | `BOTHQ_A2UI_POLL_MS` / `BOTHQ_A2UI_REPLAY_INTERVAL_MS` | 1000 / 1000 (`--poll-ms` must be >= 1) |
 | `--kalshi-base` | `BOTHQ_A2UI_KALSHI_BASE` | `https://api.elections.kalshi.com/trade-api/v2` |
 | crash hooks | `BOTHQ_A2UI_PAUSE_AT`, `BOTHQ_A2UI_PAUSE_SECS` | off, 30 s |
 | logs | `RUST_LOG`, `BOTHQ_A2UI_LOG_FORMAT=json` | `info`, text on stderr |
 
 The Kalshi feed needs no key. Prices are read from the `*_dollars` strings (`yes_bid_dollars`,
 `yes_ask_dollars`, `last_price_dollars`) and sizes from the `*_fp` strings. Legacy integer cents are
-rejected. Retries cover this API's occasional connection resets. A quote is journaled and pushed
-(`updateDataModel` on `/market`) only when the book changes.
+rejected, and so is a response missing one of these fields (an explicit `null` is an empty side, 0).
+Connection errors and 5xx are retried with a short backoff, 429 after `Retry-After` (else 2/4/6 s),
+other 4xx fail at once. A quote is journaled and pushed (`updateDataModel` on `/market`) only when
+the book changes. The auto-pick follows `cursor` over at most 10 pages (10,000 open markets).
+
+## Transport access and back-pressure
+
+- **Token.** With `BOTHQ_A2UI_TOKEN` set, both routes need the `x-bothq-a2ui-token` header
+  (constant-time compare). Unset is allowed only on a loopback `--listen` (dev); the agent logs a
+  warning once at startup. On any other address it refuses to start. The Node relay and the Vite
+  dev proxy send the header.
+- **Frame size.** Inbound WebSocket messages over 64 KiB are refused.
+- **Inbound queue** (1024 events, shared by all clients and the feed). When it is full, the frame
+  that hit it is dropped and that client is disconnected; it gets a snapshot on reconnect.
+- **Per-client outbound queue** (256 messages). A client that falls that far behind is dropped, and
+  so is one whose single send takes over 10 s. A reconnect gets a fresh snapshot.
+- **Agent thread.** If the actor thread panics, the process exits with status 70 so a supervisor
+  restarts it (the journal makes the restart safe).
+- **Outbound validity.** In every build, an effect that fails the A2UI v1.0 schema (or does not
+  apply to the surface store) refuses the whole frame before it is journaled or sent.
 
 ## How durability works
 
@@ -57,6 +76,9 @@ rejected. Retries cover this API's occasional connection resets. A quote is jour
   - If not, the order is placed on the first live quote. It is placed exactly once.
 - **Repeated calls.** A repeated `functionCallId` is answered from the journal with
   `duplicate:true`.
+- **One order in flight per ticket.** A *new* `functionCallId` while the surface already has an
+  accepted, unanswered call is rejected with `ORDER_IN_FLIGHT` (the ticket's `submitting` status
+  is left alone). Re-sends of the same id still dedupe.
 
 ## Paper fill rule (honest, simple)
 
@@ -67,9 +89,15 @@ The rule is immediate-or-cancel against the latest real quote this process has o
 - **Size.** It fills `min(quantity, floor(displayed size))`. The remainder is cancelled. Real Kalshi
   books often show fractional sizes such as `0.01`, which leads to a rejection.
 - **Rejections.** The order is rejected if any of these hold:
-  - the quote is more than 30 s old
+  - there is no quote for the order's ticker from this process
+  - the quote is more than 30 s old (full-precision age) or more than 1 s in the future
   - the market is not `active`
+  - the limit does not cross the quote (buy below the ask, sell above the bid): IOC, nothing rests
+  - the displayed size at that price is below one whole contract
   - the buying power is insufficient. The paper account starts at $1000.
+  - it is a sell and there is no position (long-only)
+- **Atomicity.** The account read, the fill rule and the insert run in one `BEGIN IMMEDIATE`
+  transaction.
 - **Not modelled.** There are no fees, queues or resting orders.
 
 Live routing sits behind `--features live-routing`, which is a `compile_error!`.
@@ -78,13 +106,20 @@ Live routing sits behind `--features live-routing`, which is a `compile_error!`.
 
 `submitOrder` is `rendererOnly` with `requiresUserActivation:true`. The renderer must put
 `args.userActivation = {type, isTrusted:true, timestamp}` from the click's DOM event. The agent
-rejects a new call that lacks it, or whose evidence is untrusted or stale. See CONTRACT.md.
+rejects a new call that lacks it, or whose evidence is untrusted, more than 120 s old or more than
+30 s in the future (full-precision comparison). See CONTRACT.md.
+
+This is **client-supplied evidence, not proof of a real click**: any client that can reach the
+socket can write these fields. It is a hint that stops accidental calls (agent-originated ones, or a
+renderer path that fires without a user event) and stale re-sent frames. It does not stop a client
+that fabricates fresh evidence, or a re-sent call under a new `functionCallId` inside the window.
+Who may reach the socket is controlled by the transport token.
 
 ## Tests
 
 ```bash
-cargo test              # 15 unit/component tests + 5 tests that spawn the real binary, all offline
-cargo clippy --all-targets
+cargo test --release    # 21 unit/component tests + 7 tests that spawn the real binary, all offline
+cargo clippy --release --all-targets
 ```
 
 Everything runs on the committed real fixtures in `fixtures/`:
@@ -111,9 +146,17 @@ Coverage:
 - **Safety:**
   - No secrets, key-like names or account ids appear in any client-bound JSON.
   - Calls that break the caller or user-activation rules are rejected.
-- **Units:** the paper fill rule, Kalshi parsing and market picking.
+  - A new call while one is in flight gets `ORDER_IN_FLIGHT`; schema-invalid effects are refused
+    before the journal; a slow client is dropped; the catalog only accepts a `submitOrder` call
+    as `submit`.
+- **Units:** the paper fill rule (incl. sub-second staleness and future quotes), activation windows,
+  Kalshi parsing (missing vs `null` fields), market picking and JSON Pointer writes.
 - **`tests/ws_e2e.rs`:**
-  - render → price update → submit over a real WebSocket, plus 3 sequential reconnects
+  - render → price update → submit over a real WebSocket, plus 3 sequential reconnects that each
+    get exactly one snapshot
+  - token auth (401 on both routes without the header), refusal to listen on a non-loopback
+    address without a token, and `--poll-ms 0` rejected at parse time
+  - every spawned agent binds port 0 and reports its port, so the tests run concurrently
   - kill -9 at `after_render`, `mid_edit`, `after_call_received` and `after_order_placed`: restart in
     under 5 s with zero duplicate orders
 

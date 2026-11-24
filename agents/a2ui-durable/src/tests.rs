@@ -11,7 +11,7 @@ use chrono::Utc;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver};
+use tokio::sync::mpsc::{channel, Receiver};
 
 fn fixture(suffix: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");
@@ -34,15 +34,14 @@ fn tick(q: &Quote) -> Event {
 }
 
 struct Client {
-    rx: UnboundedReceiver<Outbound>,
-    seen: Vec<Value>,
+    rx: Receiver<Outbound>,
 }
 
 impl Client {
     fn connect(agent: &mut Agent, id: u64) -> Self {
-        let (tx, rx) = unbounded_channel();
+        let (tx, rx) = channel(4096);
         agent.handle(Event::Connect { client: id, tx }).unwrap();
-        Self { rx, seen: Vec::new() }
+        Self { rx }
     }
     /// Everything delivered since the last drain.
     fn drain(&mut self) -> Vec<Value> {
@@ -50,7 +49,6 @@ impl Client {
         while let Ok(o) = self.rx.try_recv() {
             out.push(serde_json::from_str::<Value>(&o.text).unwrap());
         }
-        self.seen.extend(out.iter().cloned());
         out
     }
 }
@@ -257,7 +255,9 @@ fn journal_is_wal_with_synchronous_full() {
     for opt in ["DEFAULT_SYNCHRONOUS=2", "DEFAULT_WAL_SYNCHRONOUS=2"] {
         assert!(opts.iter().any(|o| o == opt), "bundled SQLite lacks {opt}: {opts:?}");
     }
-    assert!(db.with_extension("sqlite-wal").exists() || pragmas(&db).unwrap().0 == "wal");
+    // While the agent holds the database open after committing, the WAL file is on disk.
+    assert!(agent.state.head >= 1);
+    assert!(db.with_extension("sqlite-wal").exists(), "no -wal file next to {}", db.display());
 }
 
 #[test]
@@ -566,9 +566,156 @@ fn edits_and_pointers() {
     assert!(validate_edit(&json!({"side": "buy", "quantity": 3, "limitPrice": 0.075})).is_err());
     assert!(validate_edit(&json!({"side": "hold", "quantity": 3, "limitPrice": 0.07})).is_err());
     let mut v = json!({"a": {"b": 1}});
-    set_pointer(&mut v, "/a/c/d", json!(2));
-    set_pointer(&mut v, "/a/b", Value::Null);
+    set_pointer(&mut v, "/a/c/d", json!(2)).unwrap();
+    set_pointer(&mut v, "/a/b", Value::Null).unwrap();
     assert_eq!(v, json!({"a": {"c": {"d": 2}}}));
-    set_pointer(&mut v, "/", json!({"x": 1}));
+    // Empty segments are RFC 6901 "" keys, not dropped.
+    set_pointer(&mut v, "/a/", json!(3)).unwrap();
+    assert_eq!(v["a"][""], 3);
+    set_pointer(&mut v, "/x~1y/~0z", json!(4)).unwrap();
+    assert_eq!(v["x/y"]["~z"], 4);
+    // Malformed or clobbering paths are refused and change nothing.
+    let before = v.clone();
+    assert!(set_pointer(&mut v, "ticket", json!(1)).is_err());
+    assert!(set_pointer(&mut v, "ticket/side", json!(1)).is_err());
+    assert!(set_pointer(&mut v, "/a/c/d/e", json!(1)).is_err(), "d holds a number");
+    assert!(set_pointer(&mut v, "/a/c/d/e/f", json!(1)).is_err());
+    assert_eq!(v, before);
+    set_pointer(&mut v, "/", json!({"x": 1})).unwrap();
     assert_eq!(v, json!({"x": 1}));
+    set_pointer(&mut v, "", json!({"y": 1})).unwrap();
+    assert_eq!(v, json!({"y": 1}));
+}
+
+// ---------------------------------------------------------------- review fixes
+
+#[test]
+fn new_call_while_one_is_in_flight_is_rejected_and_same_id_still_dedupes() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("a.sqlite");
+    let qs = quotes("_primary.jsonl");
+    {
+        let mut agent = open(&db);
+        agent.handle(tick(&qs[0])).unwrap();
+    }
+    // Restarted, no live quote yet: the first call is accepted and stays in flight.
+    let mut agent = open(&db);
+    let mut c = Client::connect(&mut agent, 1);
+    c.drain();
+    let sid = surface_id(&agent);
+    let (a, b, d) = ("cccccccc-6666-4666-8666-00000000000a", "cccccccc-6666-4666-8666-00000000000b", "cccccccc-6666-4666-8666-00000000000d");
+    let call_a = submit(&sid, a, &agent);
+    send(&mut agent, 1, &call_a);
+    assert!(responses(&c.drain()).is_empty());
+    assert_eq!(agent.state.surfaces[&sid].data_model["ticket"]["status"]["state"], "submitting");
+    let call_b = submit(&sid, b, &agent);
+    send(&mut agent, 1, &call_b);
+    let out = c.drain();
+    let r = responses(&out);
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0]["functionCallId"], b);
+    assert_eq!(r[0]["error"]["code"], "ORDER_IN_FLIGHT");
+    assert!(!out.iter().any(|m| m["updateDataModel"]["path"] == "/ticket/status"), "in-flight status untouched");
+    assert_eq!(agent.state.surfaces[&sid].data_model["ticket"]["status"]["state"], "submitting");
+    // Same id re-sent while executing: deduped, no second record, no response yet.
+    send(&mut agent, 1, &call_a);
+    assert!(responses(&c.drain()).is_empty());
+    assert_eq!(agent.broker().count().unwrap(), 0);
+    // The first live quote executes A exactly once.
+    agent.handle(tick(&qs[1])).unwrap();
+    let r = responses(&c.drain());
+    assert_eq!(r.len(), 1);
+    assert_eq!(r[0]["functionCallId"], a);
+    assert_eq!(agent.broker().count().unwrap(), 1);
+    // Re-sending A returns the original answer; a fresh id is now accepted.
+    send(&mut agent, 1, &call_a);
+    let again = responses(&c.drain());
+    assert_eq!(again[0]["value"]["duplicate"], true);
+    let call_d = submit(&sid, d, &agent);
+    send(&mut agent, 1, &call_d);
+    let r = responses(&c.drain());
+    assert_eq!(r[0]["functionCallId"], d);
+    assert!(r[0].get("value").is_some(), "{}", r[0]);
+    assert_eq!(agent.broker().count().unwrap(), 2);
+}
+
+#[test]
+fn schema_invalid_or_unappliable_effects_are_refused_before_the_journal() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("a.sqlite");
+    let qs = quotes("_primary.jsonl");
+    let mut agent = open(&db);
+    agent.handle(tick(&qs[0])).unwrap();
+    let sid = surface_id(&agent);
+    let head = agent.state.head;
+    let frames = Journal::open(&db).unwrap().1.len();
+    let invalid = json!({"version": "1.0", "createSurface": {"surfaceId": "x", "catalogId": "bothq.trading.v0",
+        "components": [{"id": "root", "component": "Text"}], "dataModel": {}}});
+    assert!(agent.commit("test.invalid", json!({}), vec![invalid]).is_err());
+    let clobber = json!({"version": "1.0", "updateDataModel": {"surfaceId": sid, "path": "/ticket/symbol/x", "value": 1}});
+    assert_eq!(schemas().validate_outbound(&clobber), Ok(()));
+    assert!(agent.commit("test.clobber", json!({}), vec![clobber]).is_err());
+    assert_eq!(agent.state.head, head);
+    assert_eq!(Journal::open(&db).unwrap().1.len(), frames, "nothing journaled");
+    assert!(agent.state.surfaces[&sid].data_model["ticket"]["symbol"].is_string());
+}
+
+#[test]
+fn a_client_whose_outbound_queue_is_full_is_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let qs = quotes("_primary.jsonl");
+    let mut agent = open(&dir.path().join("a.sqlite"));
+    agent.handle(tick(&qs[0])).unwrap();
+    let (tx, mut rx) = channel(1);
+    agent.handle(Event::Connect { client: 9, tx }).unwrap(); // snapshot fills the queue
+    let changes: Vec<&Quote> = qs.windows(2).filter(|w| !w[0].same_book(&w[1])).map(|w| &w[1]).take(3).collect();
+    assert!(!changes.is_empty());
+    for q in changes {
+        agent.handle(tick(q)).unwrap();
+    }
+    assert!(rx.try_recv().unwrap().text.contains("createSurface"));
+    assert!(matches!(rx.try_recv(), Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)), "slow client's queue was closed");
+}
+
+#[test]
+fn staleness_and_activation_windows_are_not_truncated_to_whole_seconds() {
+    let mut q = quotes("_primary.jsonl").into_iter().find(|q| q.ask_size >= 1.0).unwrap();
+    let t0 = Utc::now();
+    q.observed_at = t0;
+    let acct = Account { buying_power: 1000.0, position: 0 };
+    let req = OrderRequest { symbol: q.ticker.clone(), side: "buy".into(), quantity: 1, limit_price: q.ask };
+    let ms = chrono::Duration::milliseconds;
+    assert_ne!(fill(&req, Some(&q), acct, t0 + ms(30_000)).0, "rejected", "exactly 30 s is still fresh");
+    let (s, _, _, why) = fill(&req, Some(&q), acct, t0 + ms(30_001));
+    assert!(s == "rejected" && why.contains("old"), "{why}");
+    let (s, _, _, why) = fill(&req, Some(&q), acct, t0 - ms(5_000));
+    assert!(s == "rejected" && why.contains("future"), "{why}");
+    assert_ne!(fill(&req, Some(&q), acct, t0 - ms(500)).0, "rejected", "sub-second skew tolerated");
+
+    let args = |at: chrono::DateTime<Utc>| json!({"symbol": "X", "side": "buy", "quantity": 1, "limitPrice": 0.5,
+        "userActivation": {"type": "click", "isTrusted": true, "timestamp": at.to_rfc3339()}});
+    assert!(authorize(Caller::Renderer, "submitOrder", &args(t0 - ms(120_000)), t0).is_ok());
+    assert!(authorize(Caller::Renderer, "submitOrder", &args(t0 - ms(120_500)), t0).is_err(), "120.5 s is stale");
+    assert!(authorize(Caller::Renderer, "submitOrder", &args(t0 + ms(30_500)), t0).is_err(), "30.5 s in the future");
+}
+
+#[test]
+fn missing_dollar_fields_are_errors_and_null_is_an_empty_side() {
+    let rec = &read_replay(&fixture("_primary.jsonl")).unwrap()[0];
+    let mut body = rec.body.clone();
+    body["market"]["yes_bid_dollars"] = Value::Null;
+    assert_eq!(parse_market(&body, rec.received_at, "k").unwrap().bid, 0.0);
+    body["market"].as_object_mut().unwrap().remove("yes_ask_dollars");
+    let err = parse_market(&body, rec.received_at, "k").unwrap_err().to_string();
+    assert!(err.contains("yes_ask_dollars"), "{err}");
+}
+
+#[test]
+fn catalog_submit_must_be_a_submit_order_function_call() {
+    let s = schemas();
+    let mut create = json!({"version": "1.0", "createSurface": {"surfaceId": "s", "catalogId": "bothq.trading.v0",
+        "components": order_ticket_components(), "dataModel": {}}});
+    assert_eq!(s.validate_outbound(&create), Ok(()));
+    create["createSurface"]["components"][0]["submit"] = json!({"event": {"name": "submitOrder"}});
+    assert!(s.validate_outbound(&create).is_err(), "an event action is not a submitOrder call");
 }

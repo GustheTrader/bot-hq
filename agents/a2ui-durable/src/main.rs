@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use bothq_a2ui_agent::agent::{Agent, Event, Pause};
 use bothq_a2ui_agent::feed::{self, Kalshi};
-use bothq_a2ui_agent::server::{router, App};
+use bothq_a2ui_agent::server::{router, App, EVENT_QUEUE, TOKEN_HEADER};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -20,8 +20,14 @@ struct Cli {
     /// SQLite file holding the rpi-durable journal and the paper orders.
     #[arg(long, env = "BOTHQ_A2UI_DB", default_value = "./data/a2ui-agent.sqlite")]
     db: PathBuf,
+    /// Listen address. Port 0 picks a free port; the bound address is printed
+    /// to stderr as `LISTENING <addr>`.
     #[arg(long, env = "BOTHQ_A2UI_LISTEN", default_value = "127.0.0.1:8790")]
     listen: String,
+    /// Shared secret required in the `x-bothq-a2ui-token` header on /a2ui/ws and
+    /// /a2ui/health. Required when --listen is not a loopback address.
+    #[arg(long, env = "BOTHQ_A2UI_TOKEN", hide_env_values = true)]
+    token: Option<String>,
     #[arg(long, env = "BOTHQ_A2UI_FEED", value_enum, default_value = "kalshi")]
     feed: FeedKind,
     /// Kalshi market ticker. Default: the resumed ticket's market, else a liquid open market.
@@ -30,7 +36,8 @@ struct Cli {
     /// JSONL of recorded Kalshi responses (for --feed replay).
     #[arg(long, env = "BOTHQ_A2UI_REPLAY_FILE")]
     replay_file: Option<PathBuf>,
-    #[arg(long, env = "BOTHQ_A2UI_POLL_MS", default_value_t = 1000)]
+    /// Kalshi poll period (>= 1).
+    #[arg(long, env = "BOTHQ_A2UI_POLL_MS", default_value_t = 1000, value_parser = clap::value_parser!(u64).range(1..))]
     poll_ms: u64,
     #[arg(long, env = "BOTHQ_A2UI_REPLAY_INTERVAL_MS", default_value_t = 1000)]
     replay_interval_ms: u64,
@@ -76,10 +83,23 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    let token = cli.token.clone().filter(|t| !t.is_empty());
+    let loopback = listen_is_loopback(&cli.listen)?;
+    match (&token, loopback) {
+        (None, false) => bail!(
+            "refusing to listen on non-loopback {} without a token: set BOTHQ_A2UI_TOKEN (or --token); \
+             clients must then send it in the {TOKEN_HEADER} header",
+            cli.listen
+        ),
+        (None, true) => tracing::warn!(target: "a2ui::transport", listen = %cli.listen,
+            "BOTHQ_A2UI_TOKEN is unset: /a2ui/ws and /a2ui/health are unauthenticated (loopback dev mode only)"),
+        (Some(_), _) => tracing::info!(target: "a2ui::transport", header = TOKEN_HEADER, "token auth enabled"),
+    }
+
     let agent = Agent::open(&cli.db, Pause::from_env())?;
     let health = agent.health();
-    let (events, rx) = tokio::sync::mpsc::unbounded_channel();
-    let (ticks, mut tick_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (events, rx) = tokio::sync::mpsc::channel(EVENT_QUEUE);
+    let (ticks, mut tick_rx) = tokio::sync::mpsc::channel(16);
     match cli.feed {
         FeedKind::Replay => {
             let Some(path) = &cli.replay_file else { bail!("--feed replay needs --replay-file") };
@@ -106,17 +126,38 @@ async fn main() -> Result<()> {
     let forward = events.clone();
     tokio::spawn(async move {
         while let Some(t) = tick_rx.recv().await {
-            if forward.send(Event::Tick(t)).is_err() {
+            if forward.send(Event::Tick(t)).await.is_err() {
                 break;
             }
         }
     });
-    std::thread::Builder::new().name("a2ui-agent".into()).spawn(move || agent.run(rx))?;
+    // The agent is the only consumer of `rx`: if its thread panics, nothing
+    // would process events while HTTP kept answering, so exit non-zero and let
+    // a supervisor restart the process (the journal makes that safe).
+    std::thread::Builder::new().name("a2ui-agent".into()).spawn(move || {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| agent.run(rx))).is_err() {
+            tracing::error!(target: "a2ui::agent", "agent thread panicked; exiting");
+            eprintln!("bothq-a2ui-agent: agent thread panicked; exiting with status 70");
+            std::process::exit(70);
+        }
+    })?;
 
     let listener = tokio::net::TcpListener::bind(&cli.listen).await?;
-    tracing::info!(target: "a2ui::transport", addr = %listener.local_addr()?, "listening (GET /a2ui/ws, GET /a2ui/health)");
-    axum::serve(listener, router(App::new(events, health)))
+    let addr = listener.local_addr()?;
+    if !addr.ip().is_loopback() && token.is_none() {
+        bail!("refusing to serve on non-loopback {addr} without BOTHQ_A2UI_TOKEN");
+    }
+    tracing::info!(target: "a2ui::transport", %addr, "listening (GET /a2ui/ws, GET /a2ui/health)");
+    eprintln!("LISTENING {addr}");
+    axum::serve(listener, router(App::new(events, health, token)))
         .with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; })
         .await?;
     Ok(())
+}
+
+/// True when every address `listen` resolves to is loopback.
+fn listen_is_loopback(listen: &str) -> Result<bool> {
+    use std::net::ToSocketAddrs;
+    let addrs: Vec<_> = listen.to_socket_addrs().map_err(|e| anyhow::anyhow!("--listen {listen}: {e}"))?.collect();
+    Ok(!addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback()))
 }

@@ -47,8 +47,31 @@
           "description": "Binding to the ticket status object {state, message, orderId}."
         },
         "submit": {
-          "$ref": "common_types.json#/$defs/Action",
-          "description": "Must be a functionCall of submitOrder."
+          "description": "Must be a functionCall of submitOrder (an event action or any other function is rejected).",
+          "allOf": [
+            {
+              "$ref": "common_types.json#/$defs/Action"
+            },
+            {
+              "type": "object",
+              "required": [
+                "functionCall"
+              ],
+              "properties": {
+                "functionCall": {
+                  "type": "object",
+                  "required": [
+                    "@call"
+                  ],
+                  "properties": {
+                    "@call": {
+                      "const": "submitOrder"
+                    }
+                  }
+                }
+              }
+            }
+          ]
         }
       },
       "required": [
@@ -68,7 +91,7 @@
   "functions": {
     "submitOrder": {
       "type": "object",
-      "description": "Places one PAPER limit order for the ticket. Executed by the agent; the agent derives the idempotency key, so the renderer never sends one. requiresUserActivation is evidenced by args.userActivation, which the renderer fills from the trusted DOM event of the click that fired the call (it is not part of the component's bound args).",
+      "description": "Places one PAPER limit order for the ticket. Executed by the agent; the agent derives the idempotency key, so the renderer never sends one. requiresUserActivation is evidenced by args.userActivation, which the renderer fills from the DOM event of the click that fired the call (it is not part of the component's bound args). That evidence is client-supplied, so the agent treats it as a hint, not proof.",
       "returnType": "object",
       "allowedCallers": "rendererOnly",
       "requiresUserActivation": true,
@@ -170,7 +193,7 @@
     },
     "UserActivation": {
       "type": "object",
-      "description": "Evidence of the user activation that triggered a call: the DOM event type, its isTrusted flag and when it happened. Required by the agent for functions with requiresUserActivation:true; the agent rejects missing, untrusted or stale (>120 s) evidence.",
+      "description": "Client-supplied evidence of the user activation that triggered a call: the DOM event type, its isTrusted flag and when it happened. Required by the agent for functions with requiresUserActivation:true; the agent rejects missing, untrusted, stale (>120 s) or future-dated (>30 s) evidence. It is a hint that stops accidental or agent-originated calls, not proof of a real click: socket access is controlled by the transport token.",
       "properties": {
         "type": {
           "enum": [

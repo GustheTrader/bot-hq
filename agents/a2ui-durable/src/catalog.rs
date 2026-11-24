@@ -74,11 +74,17 @@ impl FnError {
 /// Enforces the catalog's caller and user-activation rules for one call.
 ///
 /// User activation over a WebSocket cannot be observed by the agent, so the
-/// renderer must attach evidence of the trusted DOM event that fired the call
+/// renderer attaches what it saw of the DOM event that fired the call
 /// (`args.userActivation = {type, isTrusted, timestamp}`, see CONTRACT.md). The
-/// agent requires it to be present, `isTrusted: true`, and recent. This is
-/// renderer-asserted evidence: it stops agent-originated, scripted-replay and
-/// programmatic calls that follow the contract, not a compromised renderer.
+/// agent requires it to be present, `isTrusted: true`, and recent.
+///
+/// This is client-supplied evidence, not proof of a real click: any client
+/// that can reach the socket can write these fields. It is a hint that stops
+/// accidental calls (agent-originated ones, or a renderer path that fires
+/// without a user event) and re-sent stale frames. It does not stop a client
+/// that fabricates fresh evidence, and a re-sent call under a new
+/// `functionCallId` within the window passes it. Access to the socket is
+/// controlled by the transport token (`BOTHQ_A2UI_TOKEN`), not by this check.
 pub fn authorize(
     caller: Caller,
     name: &str,
@@ -108,11 +114,15 @@ pub fn authorize(
             .as_str()
             .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
             .ok_or_else(|| FnError::new("USER_ACTIVATION_REQUIRED", "user activation timestamp is not RFC 3339"))?;
-        let age = now.signed_duration_since(at.with_timezone(&Utc)).num_seconds();
-        if !(-ACTIVATION_MAX_FUTURE_SECS..=ACTIVATION_MAX_AGE_SECS).contains(&age) {
+        // Full-precision comparison: no truncation to whole seconds.
+        let age = now.signed_duration_since(at.with_timezone(&Utc));
+        if age > chrono::Duration::seconds(ACTIVATION_MAX_AGE_SECS) || age < -chrono::Duration::seconds(ACTIVATION_MAX_FUTURE_SECS) {
             return Err(FnError::new(
                 "USER_ACTIVATION_REQUIRED",
-                format!("user activation is {age}s old (allowed -{ACTIVATION_MAX_FUTURE_SECS}..{ACTIVATION_MAX_AGE_SECS}s)"),
+                format!(
+                    "user activation is {:.3}s old (allowed -{ACTIVATION_MAX_FUTURE_SECS}..{ACTIVATION_MAX_AGE_SECS}s)",
+                    age.num_milliseconds() as f64 / 1000.0
+                ),
             ));
         }
     }
