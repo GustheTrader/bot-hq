@@ -77,9 +77,30 @@ export function jobBrief(s: any): string {
 // ---------- /buildflow/* pass-through ----------
 
 const SIGN_IN_FIRST = '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Build-flow</title><body style="font:15px system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#111"><p>Sign in to Bot HQ first, then open Build-flow from its sidebar. <a href="/" target="_top">Go to Bot HQ</a></p></body>';
-const PUBLIC = /^\/(assets\/|portal\/|api\/v1\/portal\/|favicon|use\.txt$)/;
+const PUBLIC = /^\/(assets\/|portal\/|api\/v1\/portal\/|media\/|favicon|use\.txt$)/;
 const DROP_REQ = new Set(['host', 'cookie', 'authorization', 'x-api-key', 'x-actor', 'connection', 'content-length', 'accept-encoding']);
 const DROP_RES = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'set-cookie']);
+
+/** Sends the request on to Build-flow as `path` and returns its answer (cookies stay behind; redirects are passed on as they are). */
+async function forward(c: Context, path: string, headers: Headers, prefix: string): Promise<Response> {
+  const url = new URL(c.req.url);
+  const method = c.req.method;
+  let r: Response;
+  try {
+    r = await fetch(`${buildflowUrl()}${path}${url.search}`, {
+      method, headers, redirect: 'manual',
+      body: method === 'GET' || method === 'HEAD' ? undefined : await c.req.arrayBuffer(),
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch {
+    return c.json({ error: 'Build-flow is not answering on this computer.' }, 502);
+  }
+  const out = new Headers();
+  r.headers.forEach((v, k) => { if (!DROP_RES.has(k.toLowerCase())) out.set(k, v); });
+  const loc = out.get('location');
+  if (prefix && loc?.startsWith('/')) out.set('location', `${prefix}${loc}`);
+  return new Response(r.body, { status: r.status, headers: out });
+}
 
 export async function proxyBuildflow(c: Context): Promise<Response> {
   if (!buildflowEnabled()) return c.json({ error: 'Build-flow is not connected.' }, 404);
@@ -95,20 +116,25 @@ export async function proxyBuildflow(c: Context): Promise<Response> {
     headers.set('x-api-key', serviceKey());
     headers.set('x-actor', `${user.name} <${user.email}>`.slice(0, 120));
   }
-  const method = c.req.method;
-  let r: Response;
-  try {
-    r = await fetch(`${buildflowUrl()}${path}${url.search}`, {
-      method, headers, redirect: 'manual',
-      body: method === 'GET' || method === 'HEAD' ? undefined : await c.req.arrayBuffer(),
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    return c.json({ error: 'Build-flow is not answering on this computer.' }, 502);
-  }
-  const out = new Headers();
-  r.headers.forEach((v, k) => { if (!DROP_RES.has(k.toLowerCase())) out.set(k, v); });
-  const loc = out.get('location');
-  if (loc?.startsWith('/')) out.set('location', `/buildflow${loc}`);
-  return new Response(r.body, { status: r.status, headers: out });
+  return forward(c, path, headers, '/buildflow');
+}
+
+// ---------- /field/* : the crew's phone app ----------
+
+/**
+ * The field app (installable phone app for crews) is public on purpose: crew sign in to Build-flow itself with
+ * the account the office made them (its own token, sent as Authorization), not to Bot HQ. So nothing of Bot HQ's
+ * is forwarded (no cookie, no service key, no actor), and only paths under /field/ can be reached, so this can
+ * never be used to get at Build-flow's office API.
+ */
+const FIELD_DROP_REQ = new Set(['host', 'cookie', 'x-api-key', 'x-actor', 'connection', 'content-length', 'accept-encoding']);
+
+export async function proxyField(c: Context): Promise<Response> {
+  if (!buildflowEnabled()) return c.json({ error: 'Not available.' }, 404);
+  const path = new URL(c.req.url).pathname;
+  // Only plain paths under /field: no dot segments, and no encoded slashes, backslashes or dots (nothing here needs them).
+  if (!/^\/field(\/|$)/.test(path) || /(^|\/)\.\.?(\/|$)/.test(path) || path.includes('\\') || /%2f|%5c|%2e/i.test(path)) return c.json({ error: 'Not found' }, 404);
+  const headers = new Headers();
+  c.req.raw.headers.forEach((v, k) => { if (!FIELD_DROP_REQ.has(k.toLowerCase())) headers.set(k, v); });
+  return forward(c, path, headers, '');
 }
