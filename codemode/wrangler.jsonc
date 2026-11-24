@@ -1,0 +1,10 @@
+{
+  // Code Mode executor for Bot HQ (see README.md). Same code runs locally on Zo (wrangler dev) and on Cloudflare.
+  "name": "bothq-codemode",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "vars": { "HQ_URL": "http://127.0.0.1:8797" }
+  // CODEMODE_SECRET: `.dev.vars` locally, `wrangler secret put CODEMODE_SECRET` on Cloudflare.
+}

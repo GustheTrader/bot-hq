@@ -55,7 +55,7 @@ export interface GtmContactRow { id: string | null; name: string | null; email: 
 export interface GtmOverview { crm: boolean; me: string | null; companies: GtmCompanyRow[]; contacts: GtmContactRow[]; threads: GtmThread[] }
 export interface GtmCompany { id: string | null; name: string | null; domain: string | null; domains: string[]; description: string | null; contacts: { id: string; name: string | null; email: string | null; lastAt: string | null }[]; threads: GtmThread[] }
 
-export type BotPatch =Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode'>>;
+export type BotPatch =Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode' | 'codeMode'>>;
 
 export const configApi = {
   settings: (botId: string) => req<BotSettingsBundle>('GET', `/bots/${botId}/settings`),

@@ -162,6 +162,8 @@ addColumn('screens', 'height', 'INTEGER');
 // A team's standing brief: prepended to every member's context on each turn.
 addColumn('bots', 'brief', 'TEXT');
 addColumn('bots', 'brief_updated_at', 'INTEGER');
+// Code Mode (pilot): the bot gets one run_code tool over the app's tools instead of each tool directly.
+addColumn('bots', 'code_mode', 'INTEGER NOT NULL DEFAULT 0');
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS humans (

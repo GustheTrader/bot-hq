@@ -551,6 +551,7 @@ const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 /** What to show while a tool runs. `raw` is the name Hermes reports. */
 export function activityFor(raw: string): { kind: ActivityKind; label: string; detail?: string } {
   const { name, ours, server } = appToolName(raw);
+  if (ours && name === 'run_code') return { kind: 'working', label: 'Running a script' };
   if (ours) {
     const t = toolMap.get(name);
     if (t) return { kind: t.activity, label: t.label, ...(name === 'x_search' ? { detail: 'X' } : {}) };
