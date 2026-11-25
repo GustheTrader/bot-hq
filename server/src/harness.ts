@@ -45,6 +45,50 @@ interface Session { id: string; conversation: string; info: any; defaultModel: s
 interface Agent { child: ChildProcess; botId: string; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; session: Session | null; onUpdate: ((u: any) => void) | null; dead: boolean }
 
 const agents = new Map<string, Agent>();
+
+/**
+ * One subscription serves every bot on that harness, and the plans meter how many sessions may run at once
+ * (a third Claude Code session on one plan is the classic "it just hangs"). A turn waits for a slot instead
+ * of failing, so the queue shows up as a slow turn rather than an error nobody can read.
+ * BH_MAX_CONCURRENT_<HARNESS> overrides per harness; BH_MAX_CONCURRENT sets every harness. 0 = no cap.
+ */
+const TURN_LIMIT = (id: HarnessId): number => {
+  const raw = process.env[`BH_MAX_CONCURRENT_${id.toUpperCase()}`] ?? process.env.BH_MAX_CONCURRENT ?? '2';
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
+const turnSlots = new Map<HarnessId, { active: number; waiters: (() => void)[] }>();
+
+/** Runs `fn` once this harness has a free turn slot. An aborted turn gives its place back. */
+export async function withTurnSlot<T>(id: HarnessId, signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
+  const limit = TURN_LIMIT(id);
+  if (limit === 0) return fn();
+  let slot = turnSlots.get(id);
+  if (!slot) turnSlots.set(id, (slot = { active: 0, waiters: [] }));
+  while (slot.active >= limit) {
+    const parked = slot;
+    await new Promise<void>((resolve) => {
+      const wake = () => { signal.removeEventListener('abort', onAbort); resolve(); };
+      const onAbort = () => {
+        const i = parked.waiters.indexOf(wake);
+        if (i >= 0) parked.waiters.splice(i, 1);
+        resolve();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      parked.waiters.push(wake);
+    });
+    if (signal.aborted) throw new Error('interrupted');
+  }
+  slot.active++;
+  try {
+    return await fn();
+  } finally {
+    slot.active--;
+    // The waiter re-checks the cap when it wakes and takes the slot itself; counting it here would
+    // count one turn twice and shrink the cap by one per turn.
+    slot.waiters.shift()?.();
+  }
+}
 /** Bots being deleted: no harness may start for them again. */
 const retired = new Set<string>();
 const LIB_ROOT = '/root/grokbot/files';
@@ -552,7 +596,7 @@ async function* runPrompt(a: Agent, def: HarnessDef, opts: {
   // A Stop pressed while the harness was starting must still keep the prompt from running.
   if (opts.signal.aborted) { a.onUpdate = null; throw new Error('interrupted'); }
   opts.signal.addEventListener('abort', stop, { once: true });
-  call(a, 'session/prompt', { sessionId, prompt: [{ type: 'text', text }] })
+  withTurnSlot(a.harness, opts.signal, () => call(a, 'session/prompt', { sessionId, prompt: [{ type: 'text', text }] }))
     .catch((e) => { failure = e instanceof Error ? e : new Error(String(e)); })
     .finally(() => { finished = true; wake?.(); });
 
