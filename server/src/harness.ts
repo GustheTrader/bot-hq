@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { env } from './env.js';
 import { displayFor } from './box.js';
+import { db } from './db.js';
 import { engineKind, mcpToken } from './engine.js';
 
 /**
@@ -40,7 +41,7 @@ export interface HarnessEvent { type: string; data: any }
 // ---------- one ACP agent process per bot ----------
 
 interface Session { id: string; conversation: string; info: any; defaultModel: string | null; applied: { model: string | null; effort: string | null } }
-interface Agent { child: ChildProcess; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; session: Session | null; onUpdate: ((u: any) => void) | null; dead: boolean }
+interface Agent { child: ChildProcess; botId: string; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; session: Session | null; onUpdate: ((u: any) => void) | null; dead: boolean }
 
 const agents = new Map<string, Agent>();
 /** Bots being deleted: no harness may start for them again. */
@@ -58,15 +59,55 @@ function call(a: Agent, method: string, params: object): Promise<any> {
   });
 }
 
-/** The agent asks something of us. Permission requests are allowed (as Hermes' own tools are); we offer no files or terminals. */
-function answer(a: Agent, m: any) {
-  if (m.method === 'session/request_permission') {
-    const opts: any[] = Array.isArray(m.params?.options) ? m.params.options : [];
-    const pick = opts.find((o) => o.kind === 'allow_once') ?? opts.find((o) => String(o.kind).startsWith('allow'));
-    send(a, { id: m.id, result: { outcome: pick ? { outcome: 'selected', optionId: pick.optionId } : { outcome: 'cancelled' } } });
-    return;
-  }
+/** The agent asks something of us. */
+async function answer(a: Agent, m: any) {
+  if (m.method === 'session/request_permission') return permission(a, m);
   send(a, { id: m.id, error: { code: -32601, message: `${m.method} is not offered by this client` } });
+}
+
+/**
+ * How a harness's permission request is answered. `ask` puts it in the conversation as an approval
+ * card and waits, the same way the MCP tools do, and a standing "always allow" for that user and
+ * kind answers it without a card. `allow` is the old behaviour, where every request was granted;
+ * `deny` refuses everything, for a bot that should not touch its machine at all.
+ */
+const permissionMode = (): 'ask' | 'allow' | 'deny' => {
+  const v = String(process.env.BH_HARNESS_PERMISSIONS ?? 'ask').toLowerCase();
+  return v === 'allow' || v === 'deny' ? v : 'ask';
+};
+
+async function permission(a: Agent, m: any) {
+  const opts: any[] = Array.isArray(m.params?.options) ? m.params.options : [];
+  const allowPick = opts.find((o) => o.kind === 'allow_once') ?? opts.find((o) => String(o.kind).startsWith('allow'));
+  const denyPick = opts.find((o) => o.kind === 'reject_once') ?? opts.find((o) => String(o.kind).startsWith('reject'));
+  const reply = (pick: any) =>
+    send(a, { id: m.id, result: { outcome: pick ? { outcome: 'selected', optionId: pick.optionId } : { outcome: 'cancelled' } } });
+
+  const mode = permissionMode();
+  const call = m.params?.toolCall ?? {};
+  const kind = String(call.kind ?? 'other');
+  const key = `harness:${kind}`;
+  const title = String(call.title ?? kind);
+
+  if (mode === 'allow') return reply(allowPick);
+  if (mode === 'deny') return reply(denyPick);
+
+  try {
+    const userId = (db.prepare('SELECT user_id FROM bots WHERE id=?').get(a.botId) as any)?.user_id;
+    if (!userId) return reply(denyPick);
+    const standing = db.prepare("SELECT 1 FROM policies WHERE user_id=? AND tool=? AND mode='always_allow'").get(userId, key);
+    if (standing) return reply(allowPick);
+    const { requestApproval } = await import('./agent/loop.js');
+    const decision = await requestApproval(
+      { userId, botId: a.botId },
+      { key, title: `harness: ${title}` },
+      call.rawInput ?? { title, kind, locations: call.locations },
+      null,
+    );
+    reply(decision === 'allow' ? allowPick : denyPick);
+  } catch {
+    reply(denyPick);
+  }
 }
 
 /**
@@ -139,7 +180,7 @@ function startAgent(key: string, botId: string, harness: HarnessDef, screenId: s
     detached: true,
     env: harnessEnv(screenId, harness.id),
   });
-  const a: Agent = { child, harness: harness.id, nextId: 1, waiting: new Map(), session: null, onUpdate: null, dead: false };
+  const a: Agent = { child, botId, harness: harness.id, nextId: 1, waiting: new Map(), session: null, onUpdate: null, dead: false };
   let buf = '';
   child.stdout?.on('data', (d: Buffer) => {
     buf += d.toString('utf8');
@@ -152,7 +193,7 @@ function startAgent(key: string, botId: string, harness: HarnessDef, screenId: s
       try { m = JSON.parse(line); } catch { continue; }
       if (m.id !== undefined && !m.method && a.waiting.has(m.id)) { a.waiting.get(m.id)!(m); a.waiting.delete(m.id); }
       else if (m.method === 'session/update') a.onUpdate?.(m.params?.update);
-      else if (m.method && m.id !== undefined) answer(a, m);
+      else if (m.method && m.id !== undefined) void answer(a, m).catch(() => { /* the harness gets no reply; the turn fails, the server stays up */ });
     }
   });
   child.stderr?.on('data', () => { /* adapters log here; not ours to show */ });
