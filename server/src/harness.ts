@@ -1,6 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import os from 'node:os';
 import { env } from './env.js';
 import { displayFor } from './box.js';
 import { db } from './db.js';
@@ -111,19 +112,84 @@ async function permission(a: Agent, m: any) {
 }
 
 /**
- * What the harness process gets to see of our environment: what a program needs to run, plus the
- * variables that point harnesses at their own config. Never the server's secrets (session secret,
- * app keys), which the agent could otherwise read from its shell.
+ * Per-bot home and tool config dirs. Default `isolated`: every bot gets its own HOME, CODEX_HOME,
+ * CLAUDE_CONFIG_DIR and PI_CODING_AGENT_DIR under BH_HOME_ROOT, and the shared config dirs are
+ * symlinked in rather than copied, so a sign-in done once keeps working (and rotating it updates
+ * every bot). `shared` keeps the old behaviour: one set of dirs for the whole server.
  */
+const BOT_HOME_MODE = (process.env.BH_BOT_HOME ?? 'isolated').toLowerCase();
+const HOME_ROOT = process.env.BH_HOME_ROOT ?? `${LIB_ROOT}/.homes`;
+const SHARED_CONFIG = {
+  codex: process.env.CODEX_HOME ?? `${os.homedir()}/.codex`,
+  claude: process.env.CLAUDE_CONFIG_DIR ?? `${os.homedir()}/.claude`,
+  pi: process.env.PI_CODING_AGENT_DIR ?? `${os.homedir()}/.pi/agent`,
+  claudeJson: `${os.homedir()}/.claude.json`,
+};
+/** What stays shared per tool: the sign-in, the model list, the skills. Everything else is per-bot. */
+function sharedLinks(dirs: Record<string, string>): [to: string, from: string][] {
+  return [
+    [`${dirs.CODEX_HOME}/auth.json`, `${SHARED_CONFIG.codex}/auth.json`],
+    [`${dirs.CODEX_HOME}/config.toml`, `${SHARED_CONFIG.codex}/config.toml`],
+    [`${dirs.CODEX_HOME}/skills`, `${SHARED_CONFIG.codex}/skills`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/.claude.json`, SHARED_CONFIG.claudeJson],
+    [`${dirs.CLAUDE_CONFIG_DIR}/.credentials.json`, `${SHARED_CONFIG.claude}/.credentials.json`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/settings.json`, `${SHARED_CONFIG.claude}/settings.json`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/skills`, `${SHARED_CONFIG.claude}/skills`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/plugins`, `${SHARED_CONFIG.claude}/plugins`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/policy-limits.json`, `${SHARED_CONFIG.claude}/policy-limits.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/auth.json`, `${SHARED_CONFIG.pi}/auth.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/models.json`, `${SHARED_CONFIG.pi}/models.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/models-store.json`, `${SHARED_CONFIG.pi}/models-store.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/settings.json`, `${SHARED_CONFIG.pi}/settings.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/skills`, `${SHARED_CONFIG.pi}/skills`],
+    // Identity, not config: a bot that cannot see these cannot push or sign a commit, and it could
+    // see them anyway when HOME was the server's own (the behaviour this replaces).
+    [`${dirs.HOME}/.gitconfig`, `${os.homedir()}/.gitconfig`],
+    [`${dirs.HOME}/.git-credentials`, `${os.homedir()}/.git-credentials`],
+    [`${dirs.HOME}/.ssh`, `${os.homedir()}/.ssh`],
+    [`${dirs.HOME}/.config/gh`, `${os.homedir()}/.config/gh`],
+  ];
+}
+
+/**
+ * The env a bot's harness processes get for home and config. Bots must not share these: a harness
+ * turn can read anything in its own config dir, including another bot's transcripts. Credentials are
+ * symlinked from the shared dirs, so one sign-in still serves every bot.
+ */
+export function botEnvDirs(botId: string): Record<string, string> {
+  if (BOT_HOME_MODE === 'shared') return {};
+  const root = `${HOME_ROOT}/${botId}`;
+  const home = `${root}/home`;
+  const dirs: Record<string, string> = {
+    HOME: home,
+    XDG_CONFIG_HOME: `${home}/.config`,
+    XDG_CACHE_HOME: `${home}/.cache`,
+    XDG_DATA_HOME: `${home}/.local/share`,
+    XDG_RUNTIME_DIR: `${home}/.run`,
+    CODEX_HOME: `${root}/codex`,
+    CLAUDE_CONFIG_DIR: `${root}/claude`,
+    PI_CODING_AGENT_DIR: `${root}/pi`,
+  };
+  try {
+    for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(`${dirs.HOME}/.config`, { recursive: true, mode: 0o700 });
+    for (const [to, from] of sharedLinks(dirs)) {
+      if (fs.existsSync(to) || !fs.existsSync(from)) continue;
+      fs.symlinkSync(from, to);
+    }
+  } catch { /* a missing link costs a sign-in, not the turn */ }
+  return dirs;
+}
+
 const PASS_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TERM', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'OPENCODE_CONFIG'];
-function harnessEnv(screenId: string | null, harness?: HarnessId): NodeJS.ProcessEnv {
+function harnessEnv(screenId: string | null, harness?: HarnessId, botId?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const k of PASS_ENV) if (process.env[k] !== undefined) out[k] = process.env[k];
   // pi-acp starts `pi` itself; the wrapper adds --approve so the bot's own .pi/mcp.json (which
   // carries the app's hq server) is read without an interactive trust prompt.
   if (harness === 'pi') out.PI_ACP_PI_COMMAND = fileURLToPath(new URL('../scripts/pi-trusted', import.meta.url));
   // Its windows and browser land on the bot's own screen.
-  return { ...out, DISPLAY: displayFor(screenId), NO_COLOR: '1' };
+  return { ...out, ...(botId ? botEnvDirs(botId) : {}), DISPLAY: displayFor(screenId), NO_COLOR: '1' };
 }
 
 /**
@@ -178,7 +244,7 @@ function startAgent(key: string, botId: string, harness: HarnessDef, screenId: s
     stdio: ['pipe', 'pipe', 'pipe'],
     // Its own process group, so stopping it also stops what it started (Codex runs a helper process).
     detached: true,
-    env: harnessEnv(screenId, harness.id),
+    env: harnessEnv(screenId, harness.id, botId),
   });
   const a: Agent = { child, botId, harness: harness.id, nextId: 1, waiting: new Map(), session: null, onUpdate: null, dead: false };
   let buf = '';
