@@ -14,7 +14,7 @@ import { engineKind, mcpToken } from './engine.js';
  * events Hermes streams, so the turn loop treats every harness alike.
  */
 
-export type HarnessId = 'hermes' | 'codex' | 'claude-code' | 'pi' | 'opencode';
+export type HarnessId = 'hermes' | 'codex' | 'claude-code' | 'pi' | 'opencode' | 'deepseek';
 
 interface HarnessDef { id: HarnessId; name: string; subscription: string; command?: string[] }
 
@@ -24,6 +24,7 @@ export const HARNESSES: HarnessDef[] = [
   { id: 'claude-code', name: 'Claude Code', subscription: 'Claude', command: ['claude-agent-acp'] },
   { id: 'pi', name: 'Pi', subscription: 'Its own providers', command: ['pi-acp'] },
   { id: 'opencode', name: 'OpenCode', subscription: 'Its own providers', command: ['opencode', 'acp'] },
+  { id: 'deepseek', name: 'DeepSeek Harness', subscription: 'Its own providers', command: ['dsh', '--profile', 'acp'] },
 ];
 
 export const isHarnessId = (v: unknown): v is HarnessId => HARNESSES.some((h) => h.id === v);
@@ -225,7 +226,10 @@ export function botEnvDirs(botId: string): Record<string, string> {
   return dirs;
 }
 
-const PASS_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TERM', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'OPENCODE_CONFIG'];
+const PASS_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TERM', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'OPENCODE_CONFIG',
+  // Model keys the harness itself reads from the environment (the DeepSeek Harness); the ACP
+  // agents that keep keys in files get them through their config dirs instead.
+  'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY'];
 function harnessEnv(screenId: string | null, harness?: HarnessId, botId?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const k of PASS_ENV) if (process.env[k] !== undefined) out[k] = process.env[k];
