@@ -58,7 +58,13 @@ Approvals happen inside the MCP call, so they work the same for every engine:
 - Anything else posts an **approval card** and the tool call waits. **Allow** runs it once, **Always allow** stores a per-tool policy, **Don't allow** returns a refusal that tells the agent not to retry.
 - A new user message, or no answer in time, closes the card and the call returns "skipped".
 
-Not covered: what a Bot does through its browser or shell, and Hermes' own prompts for risky commands.
+ACP harnesses (Codex, Claude Code, Pi, OpenCode) go through the same card: the harness asks the server for
+permission, the server asks the user, and the answer is `allow_once` / refusal. A standing **Always allow** answers
+that permission kind (`harness:<kind>`) without a card. `BH_HARNESS_PERMISSIONS` sets the mode: `ask` (default),
+`allow` (the old behaviour, every request granted), `deny` (refuse everything).
+
+Not covered: what a Bot does inside a harness turn that needs no permission (reads, and anything Hermes does of its
+own accord), and Hermes' own prompts for risky commands.
 
 ## Bots working together
 
