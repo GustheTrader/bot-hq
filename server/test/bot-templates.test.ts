@@ -41,25 +41,26 @@ test('the browser gets the template without its functions', () => {
 });
 
 const home = { company: 'Sierra Home Pros', areas: 'Reno–Sparks, Carson City, Lake Tahoe' };
+const BF = { available: new Set(['buildflow'] as const) };
 
 test('every Home Service template makes a Claude Code bot that works through Build-flow and never contacts customers', () => {
   for (const id of ['home-dispatch-lead', 'home-margin-watch', 'home-lead-follow-up', 'home-maintenance-plans']) {
-    const plan = planFromTemplate(id, home);
+    const plan = planFromTemplate(id, home, BF);
     assert.equal(plan.harness, 'claude-code', id);
     assert.match(plan.bot.instructions, /Sierra Home Pros/, id);
     assert.match(plan.bot.instructions, /buildflow_jobs/, id);
     assert.match(plan.bot.instructions, /never contact homeowners/, id);
     assert.match(plan.routine.prompt, /Sierra Home Pros/, id);
   }
-  assert.equal(planFromTemplate('home-dispatch-lead', home).routine.schedule, '30 6 * * 1-5');
-  assert.match(planFromTemplate('home-margin-watch', { ...home, target: '35' }).bot.instructions, /below 35%/);
-  assert.match(planFromTemplate('home-lead-follow-up', { ...home, staleDays: '3' }).bot.instructions, /in 3 days or more/);
+  assert.equal(planFromTemplate('home-dispatch-lead', home, BF).routine.schedule, '30 6 * * 1-5');
+  assert.match(planFromTemplate('home-margin-watch', { ...home, target: '35' }, BF).bot.instructions, /below 35%/);
+  assert.match(planFromTemplate('home-lead-follow-up', { ...home, staleDays: '3' }, BF).bot.instructions, /in 3 days or more/);
 });
 
 test('Home Service answers are checked', () => {
-  assert.throws(() => planFromTemplate('home-dispatch-lead', { areas: 'Reno' }), /Business name is required/);
-  assert.throws(() => planFromTemplate('home-margin-watch', { ...home, target: '150' }), /1 to 99/);
-  assert.throws(() => planFromTemplate('home-lead-follow-up', { ...home, staleDays: '1.5' }), /1 to 60/);
+  assert.throws(() => planFromTemplate('home-dispatch-lead', { areas: 'Reno' }, BF), /Business name is required/);
+  assert.throws(() => planFromTemplate('home-margin-watch', { ...home, target: '150' }, BF), /1 to 99/);
+  assert.throws(() => planFromTemplate('home-lead-follow-up', { ...home, staleDays: '1.5' }, BF), /1 to 60/);
   const pub = publicTemplates().find((t) => t.id === 'home-lead-follow-up')!;
   assert.equal(pub.category, 'Home Service');
   assert.equal(typeof (pub as any).validate, 'undefined');
@@ -79,4 +80,12 @@ test('templates come in two kinds: technical roles in a repo, and domain roles f
   assert.equal(new Set(publicTemplates().map((t) => t.id)).size, TEMPLATES.length, 'ids are unique');
   assert.throws(() => planFromTemplate('migration-engineer', { repo: 'acme/shop' }), /The migration is required/);
   assert.match(planFromTemplate('product-engineer', { repo: 'acme/shop' }).bot.instructions, /labelled `bot:product`/);
+});
+
+test('a template that needs Build-flow is refused, and shown as missing it, until Build-flow is connected', () => {
+  assert.throws(() => planFromTemplate('home-dispatch-lead', home), /needs Build-flow connected/);
+  assert.deepEqual(publicTemplates().find((t) => t.id === 'home-dispatch-lead')!.missing, ['Build-flow']);
+  assert.deepEqual(publicTemplates(BF.available).find((t) => t.id === 'home-dispatch-lead')!.missing, []);
+  assert.deepEqual(publicTemplates().find((t) => t.id === 'software-factory')!.missing, []);
+  assert.match(planFromTemplate('software-factory', { repo: 'acme/shop', area: 'x' }).bot.instructions, /bot\/software-factory\//);
 });

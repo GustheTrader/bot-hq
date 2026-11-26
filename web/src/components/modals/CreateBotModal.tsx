@@ -78,7 +78,7 @@ export function CreateBotModal() {
                 <option value="">Blank: give it a job yourself</option>
                 {groups.map(([group, list]) => (
                   <optgroup key={group} label={group}>
-                    {list.map((t) => <option key={t.id} value={t.id}>{t.title} · {t.category}</option>)}
+                    {list.map((t) => <option key={t.id} value={t.id} disabled={t.missing.length > 0}>{t.title}{t.missing.length ? ` (needs ${t.missing.join(', ')})` : ''}</option>)}
                   </optgroup>
                 ))}
               </select>

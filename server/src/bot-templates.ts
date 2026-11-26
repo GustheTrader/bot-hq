@@ -43,10 +43,18 @@ export interface BotTemplate {
   routine: (v: Record<string, string>) => { name: string; prompt: string; schedule: string };
   /** Extra checks on the answers; throws TemplateError. May normalise values in place. */
   validate?: (v: Record<string, string>) => void;
+  /** App connections the bot cannot do its job without (their tools only exist while connected). */
+  requires?: Requirement[];
 }
 
+export type Requirement = 'buildflow';
+const REQUIREMENT_NAMES: Record<Requirement, string> = { buildflow: 'Build-flow' };
+
 /** What the browser sees: everything but the functions. */
-export type PublicTemplate = Omit<BotTemplate, 'describe' | 'instructions' | 'routine' | 'validate'>;
+export type PublicTemplate = Omit<BotTemplate, 'describe' | 'instructions' | 'routine' | 'validate'> & {
+  /** Names of required connections that are not set up here; the template cannot be used until they are. */
+  missing: string[];
+};
 
 export interface TemplatePlan {
   templateId: string;
@@ -88,7 +96,7 @@ Find small, real improvements in your area and ship each one as its own pull req
 
 ## Rules for every pull request
 1. One concern per pull request, small enough to review in a few minutes (aim for under ~200 changed lines).
-2. Work on a new branch named \`factory/<short-slug>\`. Never push to the default branch and never merge anything yourself.
+2. Work on a new branch named \`bot/${LABEL}/<short-slug>\`. Never push to the default branch and never merge anything yourself.
 3. Show proof that it works in the description: the tests you added or ran and their output, a before/after measurement for performance work, or a screenshot for visible changes. If you cannot prove it, do not open it.
 4. Add the label \`${LABEL}\` (create it if it does not exist) so your work is easy to find and so you can learn from it.
 5. Explain in two or three plain sentences what was wrong, what you changed, and how a reviewer can check it.
@@ -306,7 +314,7 @@ House rules:
 type HomeSpec = Omit<BotTemplate, 'kind' | 'category' | 'harness' | 'inputs' | 'worksWith'> & { extraInputs?: TemplateInput[] };
 
 const homeTemplate = ({ extraInputs = [], ...rest }: HomeSpec): BotTemplate => ({
-  ...rest, kind: 'domain', category: 'Home Service', harness: 'claude-code', worksWith: ['Build-flow'], inputs: [...HOME_INPUTS, ...extraInputs],
+  ...rest, kind: 'domain', category: 'Home Service', harness: 'claude-code', worksWith: ['Build-flow'], requires: ['buildflow'], inputs: [...HOME_INPUTS, ...extraInputs],
 });
 
 const wholeNumber = (v: Record<string, string>, key: string, label: string, min: number, max: number) => {
@@ -401,8 +409,15 @@ export const TEMPLATES: BotTemplate[] = [
   dispatchLead, marginWatch, leadFollowUp, maintenancePlans,
 ];
 
-export const publicTemplates = (): PublicTemplate[] =>
-  TEMPLATES.map(({ describe: _d, instructions: _i, routine: _r, validate: _v, ...rest }) => rest);
+const missingFor = (t: BotTemplate, available: ReadonlySet<Requirement>) =>
+  (t.requires ?? []).filter((r) => !available.has(r)).map((r) => REQUIREMENT_NAMES[r]);
+
+/** `available`: the connections set up on this server (e.g. Build-flow). */
+export const publicTemplates = (available: ReadonlySet<Requirement> = new Set()): PublicTemplate[] =>
+  TEMPLATES.map((t) => {
+    const { describe: _d, instructions: _i, routine: _r, validate: _v, ...rest } = t;
+    return { ...rest, missing: missingFor(t, available) };
+  });
 
 const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -410,10 +425,12 @@ const clean = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().sli
 export function planFromTemplate(
   templateId: string,
   answers: Record<string, unknown> = {},
-  opts: { name?: string; timezone?: string } = {},
+  opts: { name?: string; timezone?: string; available?: ReadonlySet<Requirement> } = {},
 ): TemplatePlan {
   const t = TEMPLATES.find((x) => x.id === templateId);
   if (!t) throw new TemplateError('That template does not exist.');
+  const missing = missingFor(t, opts.available ?? new Set());
+  if (missing.length) throw new TemplateError(`${t.title} needs ${missing.join(' and ')} connected to this Bot HQ first.`);
 
   const v: Record<string, string> = {};
   for (const input of t.inputs) {
