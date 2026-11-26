@@ -126,14 +126,28 @@ export function noteText(n: Note): string {
 
 // ---------- which bank a note goes to ----------
 
-/** The vault folder (`Workspaces/<name>`) holding this account's notes for a workspace of that name, if there is one. */
+/** Names that are left out of the sync (the zo-vaults rules: no hidden entries, nothing named "secret"). */
+const unsynced = (name: string) => name.startsWith('.') || /secret/i.test(name);
+/** SQLite's `lower()`: A to Z only. */
+const asciiLower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+/** Whether a `Workspaces/<folder>` belongs to the workspace of this name. */
+export const folderMatches = (folder: string, name: string) => asciiLower(folder.trim()) === asciiLower(name.trim());
+
+/**
+ * The vault folder (`Workspaces/<name>`) holding notes of this account that sync into the workspace of that name,
+ * or null when there are none. A folder that cannot be read is an error, not an empty one.
+ */
 export function workspaceFolder(userId: string, name: string): string | null {
   const vault = vaultPath();
   const owner = vaultOwner();
   if (!vault || !('id' in owner) || owner.id !== userId) return null;
+  const root = path.join(vault, 'workspace');
   let entries: fs.Dirent[];
-  try { entries = fs.readdirSync(path.join(vault, 'workspace', 'Workspaces'), { withFileTypes: true }); } catch { return null; }
-  const hit = entries.find((e) => e.isDirectory() && e.name.trim().toLowerCase() === name.toLowerCase());
+  try { entries = fs.readdirSync(path.join(root, 'Workspaces'), { withFileTypes: true }); } catch (e: any) {
+    if (e?.code === 'ENOENT') return null;
+    throw new ObsidianError(`Could not read the vault folder workspace/Workspaces: ${e?.message ?? e}`);
+  }
+  const hit = entries.find((e) => e.isDirectory() && !unsynced(e.name) && folderMatches(e.name, name) && walk(root, `Workspaces/${e.name}`).files.length > 0);
   return hit ? `workspace/Workspaces/${hit.name}` : null;
 }
 
@@ -148,7 +162,8 @@ export function routeNote(userId: string, rel: string): Bank | { skip: string } 
   const parts = rel.split('/');
   if (parts[0] === 'Shared' && parts.length > 1) return bankById(userId, SHARED)!;
   if (parts[0] === 'Workspaces' && parts.length > 2) {
-    const s = db.prepare('SELECT id FROM spaces WHERE user_id=? AND lower(name)=lower(?)').get(userId, parts[1].trim()) as { id: string } | undefined;
+    const s = (db.prepare('SELECT id, name FROM spaces WHERE user_id=? ORDER BY created_at').all(userId) as { id: string; name: string }[])
+      .find((x) => folderMatches(parts[1], x.name));
     return (s && bankById(userId, s.id)) || { skip: `no workspace named "${parts[1]}"` };
   }
   if ((parts[0] === 'Teams' || parts[0] === 'Bots') && parts.length > 2) {
@@ -172,7 +187,7 @@ function walk(root: string, dir = '', acc = { files: [] as string[], truncated: 
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of entries) {
     if (acc.files.length >= MAX_NOTES) { acc.truncated = true; break; }
-    if (e.name.startsWith('.') || /secret/i.test(e.name)) continue; // the zo-vaults rules: no hidden entries, nothing named "secret"
+    if (unsynced(e.name)) continue;
     const rel = dir ? `${dir}/${e.name}` : e.name;
     if (e.isDirectory()) walk(root, rel, acc);
     else if (e.isFile() && e.name.endsWith('.md')) acc.files.push(rel);

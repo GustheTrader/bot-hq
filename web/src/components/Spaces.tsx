@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { Space } from '@shared/types';
 import { palette } from '../lib/colors';
 import { shownSpace, useStore } from '../store';
@@ -25,6 +26,9 @@ function groups(spaces: Space[]): [string, Space[]][] {
 /** Picks the workspace something belongs to. An empty value is General. */
 export function SpaceSelect({ value, onChange, label = 'Workspace', id }: { value: string | null; onChange: (id: string | null) => void; label?: string; id?: string }) {
   const spaces = useStore((s) => s.spaces);
+  // A default taken before the workspaces loaded may name one that no longer exists.
+  const gone = useStore((s) => s.spacesLoaded && !!value && !s.spaces.some((x) => x.id === value));
+  useEffect(() => { if (gone) onChange(null); }, [gone, onChange]);
   return (
     <select id={id} className="text-input" value={value ?? ''} onChange={(e) => onChange(e.target.value || null)} aria-label={label}>
       <option value="">General</option>

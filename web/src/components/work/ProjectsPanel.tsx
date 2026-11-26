@@ -82,7 +82,8 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
     setError(null);
     try {
       setProject((await configApi.updateProject(id, { spaceId })).project);
-      await useStore.getState().loadSpaces();
+      // Only the counts; the move is already saved if this fails.
+      useStore.getState().loadSpaces().catch(() => {});
     } catch (e) { setError(errText(e, 'Could not move the project')); }
   };
 

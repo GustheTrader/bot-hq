@@ -501,7 +501,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'create_group',
-    description: "Create a group chat between the user and several Bots on the team (by name). It appears in the user's sidebar; when the user posts there, the relevant Bots answer.",
+    description: "Create a group chat between the user and several Bots on the team (by name, or by id when two share a name). It appears in the user's sidebar; when the user posts there, the relevant Bots answer.",
     parameters: obj({ name: { type: 'string' }, bot_names: { type: 'array', items: { type: 'string' } } }, ['name', 'bot_names']),
     activity: 'working',
     label: 'Setting up a group',

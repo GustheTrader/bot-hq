@@ -203,6 +203,7 @@ test('a vault folder for a workspace is found by name, for the vault owner only'
   const { user, a } = world();
   const vault = path.join(dir, 'vault');
   fs.mkdirSync(path.join(vault, 'workspace', 'Workspaces', a.name.toUpperCase()), { recursive: true });
+  fs.writeFileSync(path.join(vault, 'workspace', 'Workspaces', a.name.toUpperCase(), 'note.md'), '# Note');
   process.env.OBSIDIAN_VAULT = vault;
   process.env.OBSIDIAN_WORKSPACE = user;
   try {
@@ -263,4 +264,32 @@ test('a workspace request that is not a JSON object is refused', async () => {
   }
   assert.equal((await send('PATCH', `/s/${a.id}`, '{"description":"x"}')).status, 200);
   assert.equal(S.getSpace(user, a.id)?.description, 'x');
+});
+
+test('a rename is refused only while the vault has notes under the old name', async () => {
+  const { Hono } = await import('hono');
+  const { spacesApi } = await import('../src/routes-spaces.js');
+  const { createSession } = await import('../src/lib/auth.js');
+  const { user, a } = world();
+  const app = new Hono();
+  app.get('/login', (c) => { createSession(c, user); return c.text('ok'); });
+  app.route('/s', spacesApi);
+  const cookie = (await app.request('/login')).headers.get('set-cookie')!.split(';')[0];
+  const rename = async (name: string) => (await app.request(`/s/${a.id}`, { method: 'PATCH', body: JSON.stringify({ name }), headers: { cookie } })).status;
+  const vault = path.join(dir, 'vault-rename');
+  const folder = path.join(vault, 'workspace', 'Workspaces', a.name);
+  fs.mkdirSync(folder, { recursive: true });
+  process.env.OBSIDIAN_VAULT = vault;
+  process.env.OBSIDIAN_WORKSPACE = user;
+  try {
+    assert.equal(await rename('Empty folder is fine'), 200);
+    assert.equal(await rename(a.name), 200);
+    fs.writeFileSync(path.join(folder, 'pricing.md'), '# Pricing');
+    assert.equal(await rename(a.name.toUpperCase()), 200);
+    assert.equal(await rename('Another name'), 409);
+    assert.equal(S.getSpace(user, a.id)?.name, a.name.toUpperCase());
+  } finally {
+    delete process.env.OBSIDIAN_VAULT;
+    delete process.env.OBSIDIAN_WORKSPACE;
+  }
 });

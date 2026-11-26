@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono';
 import { requireUser, type AuthVars } from './lib/auth.js';
 import { hub } from './lib/hub.js';
 import { SpaceError, createSpace, deleteSpace, getSpace, listSpaces, updateSpace } from './spaces.js';
-import { workspaceFolder } from './obsidian.js';
+import { ObsidianError, folderMatches, workspaceFolder } from './obsidian.js';
 
 /** /api/spaces: the workspaces (one per business or project) of the signed-in account. */
 export const spacesApi = new Hono<AuthVars>();
@@ -19,6 +19,7 @@ async function guard(c: Context<AuthVars>, fn: () => Response | Promise<Response
     return await fn();
   } catch (e) {
     if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
+    if (e instanceof ObsidianError) return c.json({ error: e.message }, 409);
     throw e;
   }
 }
@@ -38,7 +39,7 @@ spacesApi.patch('/:id', (c) => guard(c, async () => {
   const userId = c.get('user').id;
   const patch = await body(c);
   const before = getSpace(userId, c.req.param('id'));
-  const renaming = before && typeof patch.name === 'string' && patch.name.trim().toLowerCase() !== before.name.toLowerCase();
+  const renaming = before && typeof patch.name === 'string' && !folderMatches(patch.name, before.name);
   const folder = renaming ? workspaceFolder(userId, before.name) : null;
   // Notes are matched to a workspace by folder name, so a rename would silently stop them syncing.
   if (folder) throw new SpaceError(`The Obsidian vault has notes in ${folder}. Rename or remove that folder first.`, 409);

@@ -14,6 +14,8 @@ interface State {
   bots: Bot[];
   /** Workspaces, one per business or project. */
   spaces: Space[];
+  /** False until the first load of the workspaces has finished, well or not. */
+  spacesLoaded: boolean;
   /** What the lists show: 'all', 'general', or a workspace id. A view filter only. */
   activeSpace: string;
   live: Record<string, LiveState>;
@@ -60,6 +62,7 @@ export const useStore = create<State>((set, get) => ({
   authChecked: false,
   bots: [],
   spaces: [],
+  spacesLoaded: false,
   activeSpace: lsGet(LS_SPACE) ?? 'all',
   live: {},
   selectedBotId: lsGet(LS_SELECTED),
@@ -85,8 +88,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async loadSpaces() {
-    const { spaces } = await api.spaces();
-    set({ spaces });
+    const { spaces } = await api.spaces().catch((e) => { set({ spacesLoaded: true }); throw e; });
+    set({ spaces, spacesLoaded: true });
     const active = get().activeSpace;
     if (active !== 'all' && active !== 'general' && !spaces.some((s) => s.id === active)) get().set({ activeSpace: 'all' });
   },
@@ -215,9 +218,9 @@ export function sortedRows(t: Transcript | undefined): Row[] {
 export const inSpace = (item: { spaceId?: string | null }, active: string) =>
   active === 'all' || (active === 'general' ? !item.spaceId : item.spaceId === active);
 
-/** The filter in force: a stored id that names no known workspace shows everything. */
-export const shownSpace = (s: { activeSpace: string; spaces: Space[] }) =>
-  s.activeSpace === 'general' || s.spaces.some((x) => x.id === s.activeSpace) ? s.activeSpace : 'all';
+/** The filter in force: once the workspaces are known, a stored id that names none of them shows everything. */
+export const shownSpace = (s: { activeSpace: string; spaces: Space[]; spacesLoaded: boolean }) =>
+  !s.spacesLoaded || s.activeSpace === 'general' || s.spaces.some((x) => x.id === s.activeSpace) ? s.activeSpace : 'all';
 
 /** The workspace new things go into under the current filter (null = General). */
 export const newSpaceId = (active: string) => (active === 'all' || active === 'general' ? null : active);

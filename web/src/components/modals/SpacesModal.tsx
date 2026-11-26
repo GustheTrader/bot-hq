@@ -11,14 +11,18 @@ function SpaceRow({ space, onError }: { space: Space; onError: (e: string | null
   const [confirming, setConfirming] = useState(false);
   const [description, setDescription] = useState(space.description);
   const described = description.trim() !== space.description;
-  const describe = () => run(() => api.updateSpace(space.id, { description }));
+  // Follow changes made elsewhere, so a stale field cannot undo them.
+  useEffect(() => { setName(space.name); }, [space.name]);
+  useEffect(() => { setDescription(space.description); }, [space.description]);
+  // The server tidies what it saves; the field then shows exactly that.
+  const describe = () => run(async () => setDescription((await api.updateSpace(space.id, { description: description.trim() })).space.description));
   const empty = space.botCount === 0 && space.projectCount === 0;
   const run = async (fn: () => Promise<unknown>) => {
     onError(null);
     try { await fn(); await useStore.getState().loadSpaces(); } catch (e) { onError((e as Error).message); }
   };
   const renamed = !!name.trim() && name.trim() !== space.name;
-  const rename = () => run(() => api.updateSpace(space.id, { name }));
+  const rename = () => run(async () => setName((await api.updateSpace(space.id, { name: name.trim() })).space.name));
   return (
     <li className="space-list__row">
       <div className="space-list__head">
