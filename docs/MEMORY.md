@@ -77,7 +77,7 @@ It extends `Projects/unified-memory/ONTOLOGY.md` (v1, proposed, not deployed): t
 | `OBSIDIAN_WORKSPACE` | the account the vault belongs to (account id or email). Default: the only account that has bots; required when there are several |
 | `HINDSIGHT_URL` | default `http://127.0.0.1:8888` |
 
-The vault belongs to one workspace. Only that account's bots, teams and `shared` are synced, and only that account (and its workspace members) sees the sync's details or can start it. Other accounts see that the vault belongs to another workspace.
+The vault belongs to one account. Only that account's bots, teams, business and project workspaces and `shared` are synced, and only that account (and its team members) sees the sync's details or can start it. Other accounts see that the vault belongs to another account.
 
 Before pointing it into the `zo-vaults` git repo, decide whether `Memory/` is committed. It holds what the bots remember (client names, deal facts), and a commit would push it to GitHub. **This repo does not add any ignore rule there.** To keep it on Zo only, add `bot-memory/Memory/` to the zo-vaults `.gitignore` yourself before the first commit.
 
