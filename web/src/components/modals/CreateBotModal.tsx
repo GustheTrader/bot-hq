@@ -23,6 +23,13 @@ export function CreateBotModal() {
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const close = useCallback(() => setModal(null), [setModal]);
   const template = templates.find((t) => t.id === templateId) ?? null;
+  // Technical roles first, then one group per business domain.
+  const groups = templates.reduce<[string, PublicTemplate[]][]>((acc, t) => {
+    const group = t.kind === 'technical' ? 'Technical' : `Domain · ${t.category}`;
+    const found = acc.find(([g]) => g === group);
+    if (found) found[1].push(t); else acc.push([group, [t]]);
+    return acc;
+  }, []);
 
   useEffect(() => {
     api.botTemplates().then((r) => setTemplates(r.templates)).catch(() => setTemplates([]));
@@ -65,18 +72,17 @@ export function CreateBotModal() {
         </div>
         <div className="create-modal__body">
           {templates.length > 0 && (
-            <div className="mode-pick" role="radiogroup" aria-label="Start from">
-              <button type="button" role="radio" aria-checked={!template} className={`mode-pick__opt${!template ? ' is-active' : ''}`} onClick={() => pickTemplate(null)}>
-                <span className="mode-pick__title">Blank</span>
-                <span className="mode-pick__sub">Give it a job yourself</span>
-              </button>
-              {templates.map((t) => (
-                <button key={t.id} type="button" role="radio" aria-checked={templateId === t.id} className={`mode-pick__opt${templateId === t.id ? ' is-active' : ''}`} onClick={() => pickTemplate(t)}>
-                  <span className="mode-pick__title">{t.title}</span>
-                  <span className="mode-pick__sub">{t.category} template</span>
-                </button>
-              ))}
-            </div>
+            <label className="template-pick">
+              <span className="template-form__label">Start from</span>
+              <select className="text-input" value={templateId ?? ''} onChange={(e) => pickTemplate(templates.find((t) => t.id === e.target.value) ?? null)} aria-label="Start from">
+                <option value="">Blank: give it a job yourself</option>
+                {groups.map(([group, list]) => (
+                  <optgroup key={group} label={group}>
+                    {list.map((t) => <option key={t.id} value={t.id}>{t.title} · {t.category}</option>)}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
           )}
           <BotAvatarFor bot={{ name, avatarShape: 'heart', avatarColor: color, avatarImage }} size={96} className="create-modal__preview" />
           <input
