@@ -61,7 +61,7 @@ export function CreateGroupModal() {
           <input className="text-input create-modal__name" placeholder="Name your team" value={name} onChange={(e) => setName(e.target.value)} autoFocus aria-label="Team name" />
 
           <div className="section-label" style={{ marginTop: 14 }}>Workspace</div>
-          <SpaceSelect value={spaceId} onChange={(id) => { setSpaceId(id); setPicked([]); }} />
+          <SpaceSelect value={spaceId} onChange={(id) => { setSpaceId(id); setPicked((p) => p.filter((x) => allBots.some((b) => b.id === x && b.isPrimary))); }} />
 
           <div className="section-label" style={{ marginTop: 14 }}>Bots on this team</div>
           <div className="group-pick">

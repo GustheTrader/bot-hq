@@ -39,19 +39,21 @@ export function TeamsView() {
 
   const activeSpace = useStore(shownSpace);
   const spaceOf = (id: string) => bots.find((b) => b.id === id)?.spaceId ?? null;
-  // A team stays inside one workspace, so the first bot picked narrows the rest to its workspace.
-  const pickedSpace = newBots.length ? spaceOf(newBots[0]) : undefined;
-  const candidateBots = bots.filter((b) => b.kind !== 'team' && !b.isPrimary && inSpace(b, activeSpace) && (pickedSpace === undefined || (b.spaceId ?? null) === pickedSpace));
+  const eligible = bots.filter((b) => b.kind !== 'team' && !b.isPrimary && inSpace(b, activeSpace));
+  // Derived each time: a pick that was deleted, moved or filtered away no longer counts.
+  // A team stays inside one workspace, so the first remaining pick narrows the rest to its workspace.
+  const chosen = newBots.flatMap((id) => eligible.filter((b) => b.id === id));
+  const pickedSpace = chosen.length ? chosen[0].spaceId ?? null : undefined;
+  const candidateBots = eligible.filter((b) => pickedSpace === undefined || (b.spaceId ?? null) === pickedSpace);
+  const picked = chosen.filter((b) => (b.spaceId ?? null) === pickedSpace).map((b) => b.id);
   const shown = data?.teams.filter((t) => inSpace({ spaceId: spaceOf(t.id) }, activeSpace)) ?? [];
   const team = shown.find((t) => t.id === selected) ?? shown[0] ?? null;
-  // A pick made under another filter would be hidden but still sent.
-  useEffect(() => { setNewBots([]); }, [activeSpace]);
 
   const createTeam = async () => {
-    if (!newName.trim() || newBots.length === 0) return;
+    if (!newName.trim() || picked.length === 0) return;
     setBusy(true); setError(null);
     try {
-      const { id } = await api.createTeam(newName.trim(), newBots);
+      const { id } = await api.createTeam(newName.trim(), picked);
       setNewName(''); setNewBots([]);
       await useStore.getState().loadBots();
       setSelected(id);
@@ -92,8 +94,8 @@ export function TeamsView() {
                     key={b.id}
                     type="button"
                     role="checkbox"
-                    aria-checked={newBots.includes(b.id)}
-                    className={`teams-chip${newBots.includes(b.id) ? ' is-on' : ''}`}
+                    aria-checked={picked.includes(b.id)}
+                    className={`teams-chip${picked.includes(b.id) ? ' is-on' : ''}`}
                     onClick={() => setNewBots((p) => (p.includes(b.id) ? p.filter((x) => x !== b.id) : [...p, b.id]))}
                   >
                     <BotAvatarFor bot={b} size={18} />
@@ -103,7 +105,7 @@ export function TeamsView() {
                 ))}
                 {candidateBots.length === 0 && <div className="teams-new__empty">Create a Bot first — a team needs at least one.</div>}
               </div>
-              <button type="button" className="btn btn--primary btn--sm" disabled={busy || !newName.trim() || newBots.length === 0} onClick={createTeam}>
+              <button type="button" className="btn btn--primary btn--sm" disabled={busy || !newName.trim() || picked.length === 0} onClick={createTeam}>
                 {busy ? 'Creating…' : 'Create team'}
               </button>
             </div>

@@ -150,8 +150,8 @@ async function call(path: string, method: string, body: unknown, fetchFn: Fetch,
   return r.json().catch(() => ({}));
 }
 
-/** Banks created (or confirmed) since this process started. `shared` is never touched: it is set up outside the app. */
-const ready = new Set<string>([SHARED]);
+/** Banks created (or confirmed) since this process started, with the name they had. `shared` is never touched: it is set up outside the app. */
+const ready = new Map<string, string>();
 
 function missionFor(bank: Bank): string {
   if (bank.layer === 'everyone') return `What the bots of one workspace all know (${bank.label.replace(/^Everyone at /, '')}).`;
@@ -161,10 +161,10 @@ function missionFor(bank: Bank): string {
 }
 
 export async function ensureBank(bank: Bank, fetchFn: Fetch = fetch as unknown as Fetch): Promise<void> {
-  if (ready.has(bank.id)) return;
+  if (bank.id === SHARED || ready.get(bank.id) === bank.label) return;
   // PUT creates the bank or updates its name and mission; both are cheap and idempotent.
   await call(`/v1/default/banks/${bank.id}`, 'PUT', { name: bank.label, mission: missionFor(bank) }, fetchFn);
-  ready.add(bank.id);
+  ready.set(bank.id, bank.label);
 }
 
 export interface RetainMeta {

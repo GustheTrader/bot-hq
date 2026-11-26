@@ -47,6 +47,8 @@ export function CreateBotModal() {
   };
 
   const pickTemplate = (t: PublicTemplate | null) => {
+    // Picking what is already picked must not undo a portrait, colour or answers chosen since.
+    if ((t?.id ?? null) === templateId) return;
     setTemplateId(t?.id ?? null);
     setInputs(prefill(t, spaceId));
     setError(null);

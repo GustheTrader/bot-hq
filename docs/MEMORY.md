@@ -51,12 +51,12 @@ It extends `Projects/unified-memory/ONTOLOGY.md` (v1, proposed, not deployed): t
 <OBSIDIAN_VAULT>/
   workspace/                you write; bots learn it
     Shared/…                → shared
-    Businesses/<workspace name>/… → that workspace's bank (matched by name, any case; not its id)
+    Workspaces/<workspace name>/… → that workspace's bank (matched by name, any case; not its id)
     Teams/<team name>/…     → that team's bank
     Bots/<bot name>/…       → that bot's bank
   Memory/                   generated; never read back
     Ontology.md
-    Shared/, Businesses/<workspace name>/, Teams/<team>/, Bots/<bot>/   00 <name>.md + <type plural>/<entity>.md
+    Shared/, Workspaces/<workspace name>/, Teams/<team>/, Bots/<bot>/   00 <name>.md + <type plural>/<entity>.md
 ```
 
 - **In:** only changed notes are sent (content hash in `obsidian_notes`). The document id is a hash of the note's path, so an edit **replaces** the old version. A deleted note, or one moved to another bank, is forgotten from the old bank. `type:` and link fields become entity hints plus plain statements ("Dana works at Acme"). Hidden entries and names containing "secret" are skipped. A note over 256 KB, or whose text sent to Hindsight (title, type and relation lines, then the body) is over 60,000 characters, is skipped, and its earlier version is forgotten so nothing stale stays. Each changed note costs one fact-extraction LLM call in Hindsight.

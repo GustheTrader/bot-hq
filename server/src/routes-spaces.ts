@@ -8,7 +8,11 @@ import { workspaceFolder } from './obsidian.js';
 export const spacesApi = new Hono<AuthVars>();
 spacesApi.use('*', requireUser);
 
-const body = async (c: Context<AuthVars>) => ((await c.req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+async function body(c: Context<AuthVars>): Promise<Record<string, unknown>> {
+  const b: unknown = await c.req.json().catch(() => null);
+  if (!b || typeof b !== 'object' || Array.isArray(b)) throw new SpaceError('Send the workspace as a JSON object.');
+  return b as Record<string, unknown>;
+}
 
 async function guard(c: Context<AuthVars>, fn: () => Response | Promise<Response>): Promise<Response> {
   try {

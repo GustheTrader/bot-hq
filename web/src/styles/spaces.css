@@ -21,7 +21,7 @@
 .template-gallery__group { display: flex; flex-direction: column; gap: 6px; }
 .template-gallery__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .template-card { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 4px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: var(--color-ink); cursor: pointer; }
-.template-card:hover:not(:disabled) { border-color: var(--color-text-tertiary); }
+.template-card:hover:not(:disabled):not(.is-active) { border-color: var(--color-text-tertiary); }
 .template-card.is-active { border-color: #7faaff; }
 .template-card:disabled { opacity: 0.5; cursor: not-allowed; }
 .template-card--blank { flex-direction: row; justify-content: center; font-size: 13px; }

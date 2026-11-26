@@ -11,12 +11,12 @@ import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relatio
  *
  *   <vault>/workspace/            people write here; bots learn it
  *     Shared/…                    → the `shared` bank (every bot in General)
- *     Businesses/<workspace name>/… → that workspace's bank (matched by name, not id)
+ *     Workspaces/<workspace name>/… → that workspace's bank (matched by name, not id)
  *     Teams/<team name>/…         → that team's bank
  *     Bots/<bot name>/…           → that bot's own bank
  *   <vault>/Memory/               Bot HQ writes here; never read back
  *     Ontology.md
- *     Shared/, Businesses/<workspace name>/, Teams/<team name>/, Bots/<bot name>/
+ *     Shared/, Workspaces/<workspace name>/, Teams/<team name>/, Bots/<bot name>/
  *                                 each: 00 <name>.md + <type plural>/<entity>.md
  *
  * In: each changed note is saved to its bank as one document (its path's hash is the document id,
@@ -126,15 +126,15 @@ export function noteText(n: Note): string {
 
 // ---------- which bank a note goes to ----------
 
-/** The vault folder (`Businesses/<name>`) holding this account's notes for a workspace of that name, if there is one. */
+/** The vault folder (`Workspaces/<name>`) holding this account's notes for a workspace of that name, if there is one. */
 export function workspaceFolder(userId: string, name: string): string | null {
   const vault = vaultPath();
   const owner = vaultOwner();
   if (!vault || !('id' in owner) || owner.id !== userId) return null;
   let entries: fs.Dirent[];
-  try { entries = fs.readdirSync(path.join(vault, 'workspace', 'Businesses'), { withFileTypes: true }); } catch { return null; }
+  try { entries = fs.readdirSync(path.join(vault, 'workspace', 'Workspaces'), { withFileTypes: true }); } catch { return null; }
   const hit = entries.find((e) => e.isDirectory() && e.name.trim().toLowerCase() === name.toLowerCase());
-  return hit ? `workspace/Businesses/${hit.name}` : null;
+  return hit ? `workspace/Workspaces/${hit.name}` : null;
 }
 
 function bankByName(userId: string, kind: 'team' | 'agent', name: string): Bank | null | 'ambiguous' {
@@ -147,7 +147,7 @@ function bankByName(userId: string, kind: 'team' | 'agent', name: string): Bank 
 export function routeNote(userId: string, rel: string): Bank | { skip: string } {
   const parts = rel.split('/');
   if (parts[0] === 'Shared' && parts.length > 1) return bankById(userId, SHARED)!;
-  if (parts[0] === 'Businesses' && parts.length > 2) {
+  if (parts[0] === 'Workspaces' && parts.length > 2) {
     const s = db.prepare('SELECT id FROM spaces WHERE user_id=? AND lower(name)=lower(?)').get(userId, parts[1].trim()) as { id: string } | undefined;
     return (s && bankById(userId, s.id)) || { skip: `no workspace named "${parts[1]}"` };
   }
@@ -156,7 +156,7 @@ export function routeNote(userId: string, rel: string): Bank | { skip: string } 
     if (b === 'ambiguous') return { skip: `more than one ${parts[0] === 'Teams' ? 'team' : 'bot'} is named "${parts[1]}"` };
     return b ?? { skip: `no ${parts[0] === 'Teams' ? 'team' : 'bot'} named "${parts[1]}"` };
   }
-  return { skip: 'not under Shared/, Businesses/<workspace>/, Teams/<team>/ or Bots/<bot>/' };
+  return { skip: 'not under Shared/, Workspaces/<workspace>/, Teams/<team>/ or Bots/<bot>/' };
 }
 
 /**
@@ -420,7 +420,7 @@ export async function exportBanks(vault: string, userId: string, banks: Bank[], 
     // Same names as the workspace folders: Memory/Shared, Memory/Teams/<team>, Memory/Bots/<bot>.
     const ofSpace = bank.layer === 'everyone' && bank.id !== SHARED;
     const label = ofSpace ? bank.label.replace(/^Everyone at /, '') : bank.layer === 'everyone' ? 'Shared' : bank.label.replace(/ \(own\)$/, '').replace(/^Team /, '');
-    const folder = ofSpace ? `Memory/Businesses/${safeName(label)}` : bank.layer === 'everyone' ? 'Memory/Shared' : `Memory/${LAYER_DIRS[bank.layer]}/${safeName(label)}`;
+    const folder = ofSpace ? `Memory/Workspaces/${safeName(label)}` : bank.layer === 'everyone' ? 'Memory/Shared' : `Memory/${LAYER_DIRS[bank.layer]}/${safeName(label)}`;
     const raw = await memoryGraph(bank.id, opts.limit ?? 250, opts.fetchFn);
     const kept = raw.nodes.filter((n) => !ignore.has(n.label.toLowerCase()));
     const keep = new Set(kept.map((n) => n.id));

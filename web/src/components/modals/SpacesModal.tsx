@@ -9,6 +9,9 @@ import { Modal } from './Modal';
 function SpaceRow({ space, onError }: { space: Space; onError: (e: string | null) => void }) {
   const [name, setName] = useState(space.name);
   const [confirming, setConfirming] = useState(false);
+  const [description, setDescription] = useState(space.description);
+  const described = description.trim() !== space.description;
+  const describe = () => run(() => api.updateSpace(space.id, { description }));
   const empty = space.botCount === 0 && space.projectCount === 0;
   const run = async (fn: () => Promise<unknown>) => {
     onError(null);
@@ -42,6 +45,18 @@ function SpaceRow({ space, onError }: { space: Space; onError: (e: string | null
         >
           {confirming ? `Delete ${space.name}` : 'Delete'}
         </button>
+      </div>
+      <div className="space-list__edit">
+        <input
+          className="text-input"
+          placeholder="What it does, in one line (its bots read this)"
+          value={description}
+          maxLength={300}
+          onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (described) void describe(); } }}
+          aria-label={`Description of ${space.name}`}
+        />
+        {described && <button type="button" className="btn btn--secondary btn--sm" onClick={describe}>Save</button>}
       </div>
     </li>
   );

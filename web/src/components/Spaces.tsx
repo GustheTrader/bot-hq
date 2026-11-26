@@ -5,6 +5,8 @@ import { shownSpace, useStore } from '../store';
 /** The coloured dot and name that say which business or project something belongs to. */
 export function SpaceTag({ spaceId }: { spaceId?: string | null }) {
   const space = useStore((s) => s.spaces.find((x) => x.id === spaceId));
+  const any = useStore((s) => s.spaces.length > 0);
+  if (!spaceId && any) return <span className="space-tag" title="Not in a business or project workspace"><span className="space-tag__name">General</span></span>;
   if (!space) return null;
   return (
     <span className="space-tag" title={`${space.kind === 'business' ? 'Business' : 'Project'}: ${space.name}`}>

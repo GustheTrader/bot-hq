@@ -202,11 +202,11 @@ test('workspace names that would not survive as vault folders are refused', () =
 test('a vault folder for a workspace is found by name, for the vault owner only', () => {
   const { user, a } = world();
   const vault = path.join(dir, 'vault');
-  fs.mkdirSync(path.join(vault, 'workspace', 'Businesses', a.name.toUpperCase()), { recursive: true });
+  fs.mkdirSync(path.join(vault, 'workspace', 'Workspaces', a.name.toUpperCase()), { recursive: true });
   process.env.OBSIDIAN_VAULT = vault;
   process.env.OBSIDIAN_WORKSPACE = user;
   try {
-    assert.match(workspaceFolder(user, a.name) ?? '', /^workspace\/Businesses\//);
+    assert.match(workspaceFolder(user, a.name) ?? '', /^workspace\/Workspaces\//);
     assert.equal(workspaceFolder(mkUser(), a.name), null);
     assert.equal(workspaceFolder(user, 'Nobody'), null);
   } finally {
@@ -215,12 +215,12 @@ test('a vault folder for a workspace is found by name, for the vault owner only'
   }
 });
 
-test('vault notes under Businesses/<workspace>/ go to that workspace', () => {
+test('vault notes under Workspaces/<workspace>/ go to that workspace', () => {
   const { user, a } = world();
-  const route = routeNote(user, 'Businesses/Sierra Home Pros/pricing.md');
+  const route = routeNote(user, 'Workspaces/Sierra Home Pros/pricing.md');
   assert.ok(!('skip' in route));
   assert.equal(route.id, a.id);
-  assert.ok('skip' in routeNote(user, 'Businesses/Nobody/x.md'));
+  assert.ok('skip' in routeNote(user, 'Workspaces/Nobody/x.md'));
 });
 
 test('every template starts with its own preset portrait', () => {
@@ -230,4 +230,37 @@ test('every template starts with its own preset portrait', () => {
   });
   assert.ok(images.every(isPortraitPreset));
   assert.equal(new Set(images).size, TEMPLATES.length);
+});
+
+test("a renamed workspace updates its memory bank's name on the next save", async () => {
+  const { user, a, botA } = world();
+  const puts: string[] = [];
+  const store = (async (_url: string, init: any = {}) => {
+    if (init.method === 'PUT') puts.push(JSON.parse(init.body).name);
+    return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
+  }) as any;
+  const save = () => M.retain(M.pickBanks(user, botA, { layer: 'everyone', write: true })[0], 'fact', { by: 'test' }, store);
+  await save();
+  await save();
+  S.updateSpace(user, a.id, { name: 'Sierra Pros' });
+  await save();
+  assert.deepEqual(puts, ['Everyone at Sierra Home Pros', 'Everyone at Sierra Pros']);
+});
+
+test('a workspace request that is not a JSON object is refused', async () => {
+  const { Hono } = await import('hono');
+  const { spacesApi } = await import('../src/routes-spaces.js');
+  const { createSession } = await import('../src/lib/auth.js');
+  const { user, a } = world();
+  const app = new Hono();
+  app.get('/login', (c) => { createSession(c, user); return c.text('ok'); });
+  app.route('/s', spacesApi);
+  const cookie = (await app.request('/login')).headers.get('set-cookie')!.split(';')[0];
+  const send = (method: string, url: string, body: string) => app.request(url, { method, body, headers: { cookie } });
+  for (const bad of ['{nope', '[1]', '']) {
+    assert.equal((await send('PATCH', `/s/${a.id}`, bad)).status, 400);
+    assert.equal((await send('POST', '/s', bad)).status, 400);
+  }
+  assert.equal((await send('PATCH', `/s/${a.id}`, '{"description":"x"}')).status, 200);
+  assert.equal(S.getSpace(user, a.id)?.description, 'x');
 });
