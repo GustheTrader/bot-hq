@@ -6,11 +6,15 @@ import { Icon } from '../Icon';
 import { SpaceTag } from '../Spaces';
 import { Modal } from './Modal';
 
+/** A one-line field as the server stores it (spaces.ts), so the buttons show only for a real change. */
+// eslint-disable-next-line no-control-regex
+const tidy = (s: string) => s.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+
 function SpaceRow({ space, onError }: { space: Space; onError: (e: string | null) => void }) {
   const [name, setName] = useState(space.name);
   const [confirming, setConfirming] = useState(false);
   const [description, setDescription] = useState(space.description);
-  const described = description.trim() !== space.description;
+  const described = tidy(description) !== space.description;
   // Follow changes made elsewhere, so a stale field cannot undo them.
   useEffect(() => { setName(space.name); }, [space.name]);
   useEffect(() => { setDescription(space.description); }, [space.description]);
@@ -21,7 +25,7 @@ function SpaceRow({ space, onError }: { space: Space; onError: (e: string | null
     onError(null);
     try { await fn(); await useStore.getState().loadSpaces(); } catch (e) { onError((e as Error).message); }
   };
-  const renamed = !!name.trim() && name.trim() !== space.name;
+  const renamed = !!tidy(name) && tidy(name) !== space.name;
   const rename = () => run(async () => setName((await api.updateSpace(space.id, { name: name.trim() })).space.name));
   return (
     <li className="space-list__row">
