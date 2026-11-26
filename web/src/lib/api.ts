@@ -1,4 +1,6 @@
 import type { RevOpsMetrics } from '@shared/revops-metrics';
+import type { PublicTemplate } from '@shared/bot-templates';
+export type { PublicTemplate } from '@shared/bot-templates';
 import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
 
 export class ApiError extends Error {
@@ -35,7 +37,8 @@ export const api = {
   logout: () => req<{ ok: true }>('POST', '/auth/logout'),
 
   bots: () => req<{ bots: Bot[]; live: LiveState[] }>('GET', '/bots'),
-  createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'mode'>) => req<{ bot: Bot }>('POST', '/bots', b),
+  createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'mode'> & { template?: string; inputs?: Record<string, string>; timezone?: string }) => req<{ bot: Bot }>('POST', '/bots', b),
+  botTemplates: () => req<{ templates: PublicTemplate[] }>('GET', '/bot-templates'),
   markRead: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/read`),
   rows: (id: string) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${id}/rows`),
   send: (id: string, text: string) => req<{ row: Row }>('POST', `/bots/${id}/messages`, { text }),
