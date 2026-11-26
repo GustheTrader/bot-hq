@@ -32,10 +32,13 @@ import { startGrokBridge } from './routes-grok.js';
 import { recoverGrokJobs, startGrokSweep } from './grok-jobs.js';
 import { startGrokCallbacks } from './grok-notify.js';
 import { proxyBuildflow, proxyField } from './buildflow.js';
+import { initObsidian, startObsidianSync } from './obsidian.js';
+import { startMemoryRetry } from './memory-banks.js';
 
 if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
 initRooms();
+initObsidian();
 // Approvals wait in memory; whatever was still open when the last process stopped can no longer be answered.
 expireStaleApprovals();
 // Questions a bot asked (ask_user) stay answerable across a restart, so bring back their "needs you" state.
@@ -75,6 +78,8 @@ attachVncRelay(server as unknown as Server);
 if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
   initRoutines(enqueue);
   void initTriggers(enqueue);
+  startObsidianSync(); // only when OBSIDIAN_VAULT and OBSIDIAN_SYNC_MINUTES are set
+  startMemoryRetry(); // retries team-memory saves Hindsight could not take
 initProactive(enqueue);
 } else console.log('[grokbot] scheduler disabled (GROKBOT_NO_SCHEDULER=1)');
 startIdleWatcher();

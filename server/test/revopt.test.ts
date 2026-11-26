@@ -89,3 +89,19 @@ test('tasks are scoped to their owner', () => {
   assert.equal(aliceCount, 1);
   assert.equal(bobCount, 0, 'another user sees none of the tasks');
 });
+
+test('taskOutcome is what the team bots replied after the task was posted, newest last, at most two', async () => {
+  const { taskOutcome } = await import('../src/routes-revopt.js');
+  const { appendRow } = await import('../src/store.js');
+  const user = mkUser();
+  const a = mkBot(user, 'Ann'), b = mkBot(user, 'Ben');
+  const team = createTeam(user, 'Outcomes', { botIds: [a, b] });
+  appendRow(team, 'message', { type: 'message', role: 'assistant', text: 'old reply before the task', from: { kind: 'bot', id: a, name: 'Ann' } } as any);
+  const posted = appendRow(team, 'message', { type: 'message', role: 'user', text: 'Task: renew Acme' } as any);
+  appendRow(team, 'message', { type: 'message', role: 'assistant', text: 'Looking into Acme.', from: { kind: 'bot', id: a, name: 'Ann' } } as any);
+  appendRow(team, 'event', { type: 'event', event: 'bot-message', text: 'noise' } as any);
+  appendRow(team, 'message', { type: 'message', role: 'assistant', text: 'Drafted the renewal.', from: { kind: 'bot', id: b, name: 'Ben' } } as any);
+  appendRow(team, 'message', { type: 'message', role: 'assistant', text: 'Sent  it\nto Dana.', from: { kind: 'bot', id: a, name: 'Ann' } } as any);
+  assert.equal(taskOutcome({ team_id: team, row_seq: posted.seq }), 'Ben: Drafted the renewal. / Ann: Sent it to Dana.');
+  assert.equal(taskOutcome({ team_id: team, row_seq: null }), '', 'a task never dispatched has no outcome');
+});

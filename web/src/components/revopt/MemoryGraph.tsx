@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { api, type MemoryEntity, type MemoryGraph as Graph } from '../../lib/api';
+import { api, type MemoryBank, type MemoryEntity, type MemoryGraph as Graph, type MemoryOntology, type ObsidianStatus } from '../../lib/api';
 
 /**
  * RevOpt → Memory graph: what the bots remember (Hindsight, the shared memory store), drawn like Obsidian's graph.
  * Each entity is a node sized by how often it is mentioned; entities mentioned together are linked. Hover shows a
  * node's neighbours, click lists the facts behind it. Wheel zooms, drag pans. Read-only.
+ *
+ * Nodes are coloured by their ontology type (person, company, deal, …); the legend hides a type. The bank picker
+ * covers the three memory layers (global, each team, each bot). When the server has an Obsidian vault set up, the
+ * bar under the graph shows the last two-way sync and can start one.
  */
 
-type P = { id: string; label: string; mentions: number; x: number; y: number; vx: number; vy: number; r: number };
+type P = { id: string; label: string; mentions: number; type?: string; x: number; y: number; vx: number; vy: number; r: number };
 const W = 900, H = 620;
 
 /** A plain force layout: springs on links, repulsion between nodes, a pull to the centre. Runs once per graph. */
@@ -63,9 +67,10 @@ function layout(g: Graph): P[] {
 }
 
 export function MemoryGraphView() {
-  const [banks, setBanks] = useState<{ id: string; facts: number }[]>([]);
+  const [banks, setBanks] = useState<MemoryBank[]>([]);
   const [bank, setBank] = useState('shared');
   const [limit, setLimit] = useState(150);
+  const [reload, setReload] = useState(0);
   const [g, setG] = useState<Graph | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
@@ -76,6 +81,31 @@ export function MemoryGraphView() {
   const [view, setView] = useState({ x: 0, y: 0, k: 1 });
   const drag = useRef<{ x: number; y: number; vx: number; vy: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [ontology, setOntology] = useState<MemoryOntology | null>(null);
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(new Set());
+  const [obsidian, setObsidian] = useState<ObsidianStatus | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.memoryOntology().then(setOntology).catch(() => {});
+    api.obsidianStatus().then(setObsidian).catch(() => {});
+  }, []);
+  // Check the sync's state every 2 s while one runs, every 30 s otherwise (the server's timer starts
+  // syncs too). Whenever a sync finishes (its time changes), reload the banks and the graph.
+  const lastAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (!obsidian?.enabled || !obsidian.mine) return;
+    const t = setInterval(() => api.obsidianStatus().then(setObsidian).catch(() => {}), obsidian.running ? 2000 : 30_000);
+    return () => clearInterval(t);
+  }, [obsidian?.enabled, obsidian?.mine, obsidian?.running]);
+  useEffect(() => {
+    const at = obsidian?.running ? null : obsidian?.last?.at ?? null;
+    if (at == null) return;
+    if (lastAt.current != null && at !== lastAt.current) { api.memoryBanks().then((r) => setBanks(r.banks)).catch(() => {}); setReload((n) => n + 1); }
+    lastAt.current = at;
+  }, [obsidian?.running, obsidian?.last?.at]);
+  const syncNow = () => { setSyncError(null); api.obsidianSync().then(setObsidian).catch((e) => setSyncError(e instanceof Error ? e.message : 'Could not start the sync')); };
+  const colorOf = useMemo(() => new Map((ontology?.types ?? []).map((t) => [t.id, t.color])), [ontology]);
 
   useEffect(() => { api.memoryBanks().then((r) => setBanks(r.banks)).catch(() => {}); }, []);
   useEffect(() => {
@@ -83,7 +113,7 @@ export function MemoryGraphView() {
     setG(null); setError(null); setPicked(null); setEntity(null);
     api.memoryGraph(bank, limit).then((r) => { if (alive) setG(r); }).catch((e) => { if (alive) setError(e instanceof Error ? e.message : 'Could not load the memory graph'); });
     return () => { alive = false; };
-  }, [bank, limit]);
+  }, [bank, limit, reload]);
   useEffect(() => {
     if (!picked) return;
     let alive = true;
@@ -92,7 +122,13 @@ export function MemoryGraphView() {
     return () => { alive = false; };
   }, [bank, picked]);
 
-  const pts = useMemo(() => (g ? layout(g) : []), [g]);
+  const all = useMemo(() => (g ? layout(g) : []), [g]);
+  const pts = useMemo(() => all.filter((p) => !hiddenTypes.has(p.type ?? 'entity')), [all, hiddenTypes]);
+  const typeCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of all) m.set(p.type ?? 'entity', (m.get(p.type ?? 'entity') ?? 0) + 1);
+    return m;
+  }, [all]);
   const byId = useMemo(() => new Map(pts.map((p) => [p.id, p])), [pts]);
   const neighbours = useMemo(() => {
     const m = new Map<string, Set<string>>();
@@ -129,7 +165,16 @@ export function MemoryGraphView() {
       <div className="viz-filters">
         <label className="mg-field">Bank
           <select className="text-input" value={bank} onChange={(e) => setBank(e.target.value)}>
-            {(banks.length ? banks : [{ id: 'shared', facts: 0 }]).map((b) => <option key={b.id} value={b.id}>{b.id}{b.facts ? ` · ${b.facts} facts` : ''}</option>)}
+            {banks.length ? (
+              (['everyone', 'team', 'me'] as const).map((layer) => {
+                const list = banks.filter((b) => b.layer === layer);
+                return list.length ? (
+                  <optgroup key={layer} label={layer === 'everyone' ? 'Global' : layer === 'team' ? 'Teams' : 'Bots'}>
+                    {list.map((b) => <option key={b.id} value={b.id}>{b.label}{b.facts ? ` · ${b.facts} facts` : ' · empty'}</option>)}
+                  </optgroup>
+                ) : null;
+              })
+            ) : <option value="shared">Everyone (shared)</option>}
           </select>
         </label>
         <div className="segmented" role="tablist" aria-label="How many entities">
@@ -139,13 +184,34 @@ export function MemoryGraphView() {
         <button type="button" className="link-btn link-btn--small" onClick={() => setView({ x: 0, y: 0, k: 1 })}>Reset view</button>
       </div>
       {g?.stats && <div className="mg-stats">{g.stats.facts} facts · {g.stats.links} links · {g.stats.documents} documents · showing {g.nodes.length} of {g.totalEntities} entities</div>}
+      {ontology && typeCounts.size > 0 && (
+        <div className="mg-legend" aria-label="Entity types">
+          {ontology.types.filter((t) => typeCounts.has(t.id)).map((t) => {
+            const off = hiddenTypes.has(t.id);
+            return (
+              <button key={t.id} type="button" className={`mg-legend__item${off ? ' is-off' : ''}`} aria-pressed={!off} title={t.about}
+                onClick={() => {
+                  setHiddenTypes((h) => { const n = new Set(h); if (off) n.delete(t.id); else n.add(t.id); return n; });
+                  // Hiding the selected entity's type drops the selection, so the graph is not left dimmed around a node it no longer draws.
+                  if (!off) {
+                    const typeOfNode = (id: string | null) => (id ? all.find((p) => p.id === id)?.type ?? 'entity' : null);
+                    if (typeOfNode(picked) === t.id) setPicked(null);
+                    if (typeOfNode(hover) === t.id) setHover(null);
+                  }
+                }}>
+                <span className="mg-legend__dot" style={{ background: t.color }} />{t.plural} {typeCounts.get(t.id)}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <div className="mg-body">
         <div className="mg-canvas">
           {!g ? <div className="cfg-empty">Laying out the graph…</div> : g.nodes.length === 0 ? <div className="viz-empty">No entities in this bank yet.</div> : (
             <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} onWheel={onWheel} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={() => { drag.current = null; }} onPointerLeave={() => { drag.current = null; }} role="img" aria-label={`Memory graph of ${g.nodes.length} entities`}>
               <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-                {g.edges.map((e, i) => {
+                {g.edges.filter((e) => byId.has(e.source) && byId.has(e.target)).map((e, i) => {
                   const a = byId.get(e.source), b = byId.get(e.target);
                   if (!a || !b) return null;
                   const on = focus && (e.source === focus || e.target === focus);
@@ -157,8 +223,8 @@ export function MemoryGraphView() {
                   const showLabel = p.id === focus || near?.has(p.id) || labelled.has(p.id) || hit;
                   return (
                     <g key={p.id} className={`mg-node${dim ? ' is-dim' : ''}${p.id === focus ? ' is-focus' : ''}${hit ? ' is-hit' : ''}`}>
-                      <circle cx={p.x} cy={p.y} r={p.r} onPointerEnter={() => setHover(p.id)} onPointerLeave={() => setHover(null)} onClick={() => setPicked(p.id === picked ? null : p.id)}>
-                        <title>{`${p.label} · ${p.mentions} mentions`}</title>
+                      <circle cx={p.x} cy={p.y} r={p.r} style={colorOf.get(p.type ?? 'entity') ? ({ '--mg-type': colorOf.get(p.type ?? 'entity') } as React.CSSProperties) : undefined} onPointerEnter={() => setHover(p.id)} onPointerLeave={() => setHover(null)} onClick={() => setPicked(p.id === picked ? null : p.id)}>
+                        <title>{`${p.label} · ${ontology?.types.find((t) => t.id === (p.type ?? 'entity'))?.label ?? 'Entity'} · ${p.mentions} mentions`}</title>
                       </circle>
                       {showLabel && <text x={p.x} y={p.y - p.r - 4 / view.k} textAnchor="middle" style={{ fontSize: 11 / view.k }}>{p.label}</text>}
                     </g>
@@ -174,7 +240,7 @@ export function MemoryGraphView() {
           ) : entityError ? <div className="card__error" role="alert">{entityError}</div> : !entity ? <div className="cfg-empty">Loading…</div> : (
             <>
               <div className="mg-side__name">{entity.entity.name}</div>
-              <div className="mg-side__meta">{entity.entity.mentions} mentions · {neighbours.get(picked)?.size ?? 0} linked</div>
+              <div className="mg-side__meta">{ontology?.types.find((t) => t.id === (all.find((p) => p.id === picked)?.type ?? 'entity'))?.label ?? 'Entity'} · {entity.entity.mentions} mentions · {neighbours.get(picked)?.size ?? 0} linked</div>
               <div className="mg-facts">
                 {entity.facts.length === 0 ? <div className="mg-side__empty">No facts listed for it.</div> : entity.facts.map((f) => (
                   <div key={f.id} className="mg-fact">
@@ -186,6 +252,24 @@ export function MemoryGraphView() {
             </>
           )}
         </aside>
+      </div>
+      <div className="mg-obsidian" aria-live="polite">
+        {!obsidian ? null : !obsidian.enabled ? (
+          <span>Obsidian sync is off. Set OBSIDIAN_VAULT on the server to a vault folder to have bots learn from its notes and see their memory there.</span>
+        ) : !obsidian.mine ? (
+          <span>{obsidian.problem ?? 'The Obsidian vault belongs to another workspace.'}</span>
+        ) : (
+          <>
+            <span>
+              Obsidian · {obsidian.vault}
+              {obsidian.running ? ' · syncing…' : obsidian.last ? (obsidian.last.error ? ` · last sync failed: ${obsidian.last.error}` : ` · synced ${new Date(obsidian.last.at).toLocaleString()}: ${obsidian.last.ingest?.saved.length ?? 0} notes learned, ${obsidian.last.ingest?.forgotten.length ?? 0} forgotten, ${obsidian.last.export?.banks.reduce((s, b) => s + b.entities, 0) ?? 0} entities written`) : ' · not synced yet'}
+              {obsidian.everyMinutes ? ` · every ${obsidian.everyMinutes} min` : ''}
+              {obsidian.problem ? ` · ${obsidian.problem}` : ''}
+            </span>
+            <button type="button" className="link-btn link-btn--small" disabled={obsidian.running || !!obsidian.problem} onClick={syncNow}>Sync now</button>
+            {syncError && <span className="card__error" role="alert">{syncError}</span>}
+          </>
+        )}
       </div>
     </div>
   );
