@@ -18,6 +18,7 @@ import { ConfigLayer } from './components/config/ConfigLayer';
 import { GnoesisWork } from './components/gnoesis/GnoesisWork';
 import { TeamsView } from './components/TeamsView';
 import { RevOptView } from './components/RevOptView';
+import { TradingView } from './components/TradingView';
 import { useConfigUI } from './configStore';
 
 function Shell() {
@@ -84,7 +85,7 @@ function Shell() {
   return (
     <div className={`app${collapsed ? ' is-sidebar-collapsed' : ''}${detailsOpen && hasBot && view === 'chat' ? ' has-details' : ''}`}>
       <Sidebar />
-      {view === 'code' ? <CodeView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'buildflow' ? <BuildflowView /> :view === 'hq' ? <HqView /> : <ChatView />}
+      {view === 'code' ? <CodeView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'buildflow' ? <BuildflowView /> : view === 'trading' ? <TradingView /> : view === 'hq' ? <HqView /> : <ChatView />}
       {detailsOpen && hasBot && view === 'chat' && <DetailsPanel />}
       {modal === 'create' && <CreateBotModal />}
       {modal === 'group' && <CreateGroupModal />}

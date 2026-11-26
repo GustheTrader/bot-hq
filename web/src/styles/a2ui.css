@@ -1,0 +1,44 @@
+/* ---------- Order Ticket (A2UI bothq.trading.v0) ----------
+   Built from the shared primitives (viz-card, viz-tiles/viz-tile, cfg-grid/cfg-field, cfg-seg, text-input,
+   btn--primary, hq-view__pill); only the ticket-specific bits live here. */
+
+.trading-view__meta { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+.hq-view__pill.is-resumed { color: var(--color-text-primary); background: color-mix(in srgb, var(--color-bot-blue) 18%, transparent); }
+.trading-view__banner { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px; background: var(--color-warn-bg); color: var(--color-warn-text); font-size: 13px; line-height: 18px; }
+.trading-view__surfaces { display: flex; flex-direction: column; gap: 16px; }
+
+.order-ticket { display: flex; flex-direction: column; gap: 14px; transition: opacity 160ms var(--ease-out); }
+.order-ticket.is-stale { opacity: 0.6; }
+.order-ticket__title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.order-ticket__title .viz-card__title { font-family: var(--font-mono-stack); font-size: 14px; overflow-wrap: anywhere; }
+.order-ticket__sub { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+
+.order-ticket__state { padding: 2px 10px; border-radius: 999px; font-size: 12px; line-height: 18px; font-weight: 500; text-transform: capitalize; color: var(--color-text-secondary); background: var(--color-bg-hover); }
+.order-ticket__state.is-submitting, .order-ticket__state.is-editing { color: var(--color-warn-text); background: var(--color-warn-bg); }
+.order-ticket__state.is-filled { color: var(--color-success-text); background: var(--color-success-bg); }
+.order-ticket__state.is-rejected, .order-ticket__state.is-unconfirmed { color: var(--color-danger-text); background: var(--color-danger-bg); }
+
+.order-ticket__tiles { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+.order-ticket__live { transition: background-color 600ms var(--ease-out), border-color 600ms var(--ease-out); }
+.order-ticket__live.is-flash-up { background: var(--color-success-bg); border-color: color-mix(in srgb, var(--color-success) 40%, transparent); transition-duration: 0ms; }
+.order-ticket__live.is-flash-down { background: var(--color-danger-bg); border-color: color-mix(in srgb, var(--color-danger) 40%, transparent); transition-duration: 0ms; }
+
+.order-ticket__form .text-input { font-variant-numeric: tabular-nums; }
+.order-ticket__form .text-input:disabled { opacity: 0.6; }
+.order-ticket__notional { display: flex; align-items: center; height: 35px; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.order-ticket__footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; border-top: 0.5px solid var(--color-border-tertiary); }
+.order-ticket__status { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; line-height: 18px; }
+.order-ticket__status-line { color: var(--color-text-primary); overflow-wrap: anywhere; }
+.order-ticket__status.is-rejected .order-ticket__status-line, .order-ticket__status.is-unconfirmed .order-ticket__status-line { color: var(--color-danger-text); }
+.order-ticket__status.is-filled .order-ticket__status-line { color: var(--color-success-text); }
+.order-ticket__status-meta { font-size: 12px; color: var(--color-text-secondary); }
+
+.a2ui-error { display: flex; flex-direction: column; gap: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .order-ticket__live { transition: none; }
+}
+@media (max-width: 560px) {
+  .order-ticket__footer { flex-direction: column; align-items: stretch; }
+}

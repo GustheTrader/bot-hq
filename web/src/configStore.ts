@@ -30,7 +30,7 @@ export type AppSection = 'general' | 'computer' | 'subscriptions' | 'wiki' | 'pe
 interface ConfigUI {
   botSettings: { botId: string; tab: BotSettingsTab } | null;
   appSettings: AppSection | null;
-  view: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro' | 'buildflow' | 'hq';
+  view: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro' | 'buildflow' | 'trading' | 'hq';
   workTab: WorkTab;
   /** A folder to start the next piece of work in (set by Clone / New worktree elsewhere; the composer picks it up). */
   launchFolder: string | null;
@@ -46,7 +46,7 @@ interface ConfigUI {
   closeBotSettings(): void;
   openAppSettings(section?: AppSection): void;
   closeAppSettings(): void;
-  setView(v: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro' | 'buildflow' | 'hq'): void;
+  setView(v: 'chat' | 'tasks' | 'teams' | 'code' | 'revopt' | 'macro' | 'buildflow' | 'trading' | 'hq'): void;
   setWorkTab(t: WorkTab): void;
   /** Shows the selected bot's chat: inside GnoesisWork when it is open, else in Bot HQ. */
   openChat(): void;
