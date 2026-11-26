@@ -169,3 +169,59 @@ test('sync refuses to run without a vault', async () => {
   assert.equal(O.syncStatus().enabled, false);
   await assert.rejects(O.syncVault(), /OBSIDIAN_VAULT/);
 });
+
+test('Types.md types and hides names, replaces earlier typing, and the export colours the graph once', async () => {
+  const vault = fs.mkdtempSync(path.join(dir, 'vault-'));
+  write(vault, 'Types.md', '---\ntype: types\n---\n# Types\n\n## People\n- Doug\n- [[Gus the Trader]]  # the owner\n\n## service\n- Hindsight\n\n## not-a-type\n- Nobody\n\n## ignore\n- user\n- Assistant\n');
+  const t = O.readTypesNote(vault);
+  assert.deepEqual([...t.types], [['Doug', 'person'], ['Gus the Trader', 'person'], ['Hindsight', 'service']]);
+  assert.deepEqual([...t.ignore], ['user', 'assistant']);
+
+  const graph = {
+    nodes: [{ data: { id: 'a', label: 'user', mentionCount: 90 } }, { data: { id: 'b', label: 'Hindsight', mentionCount: 11 } }, { data: { id: 'c', label: 'Doug', mentionCount: 9 } }],
+    edges: [{ data: { source: 'a', target: 'b', weight: 5 } }, { data: { source: 'b', target: 'c', weight: 2 } }],
+    total_entities: 3,
+  };
+  const facts: Record<string, string[]> = {
+    b: ['Hindsight runs on port 8888.', 'The key is sk-abcdef1234567890XYZ for the store.'],
+    c: ['Doug reviewed the plan.', 'Login at https://doug:hunter2@example.com/x', 'Hash 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 recorded.'],
+  };
+  const fetchFn = (async (url: string) => {
+    const id = /entity_id=([^&]+)/.exec(url)?.[1] ?? url.split('/entities/')[1]?.split('?')[0];
+    const json = url.includes('/entities/graph') ? graph : url.includes('/stats') ? null
+      : url.includes('/memories/list') ? { items: (facts[id!] ?? []).map((text, i) => ({ id: `${id}${i}`, text })) } : { id, canonical_name: id, mention_count: 1 };
+    return { ok: true, status: 200, json: async () => json, text: async () => '' };
+  }) as any;
+
+  const r = await O.exportBanks(vault, [bankById('shared')!], { fetchFn });
+  assert.equal(r.banks[0].entities, 2, '"user" is left out');
+  assert.equal(r.banks[0].withheld, 3);
+  const base = path.join(vault, 'Memory/Shared');
+  assert.ok(!fs.existsSync(path.join(base, 'Other/user.md')));
+  const hs = fs.readFileSync(path.join(base, 'Services/Hindsight.md'), 'utf8');
+  assert.match(hs, /- Hindsight runs on port 8888\./);
+  assert.doesNotMatch(hs, /sk-abc/);
+  assert.match(hs, /1 fact withheld/);
+  assert.doesNotMatch(hs, /\[\[Memory\/Shared\/Other\/user/, 'no link to an ignored entity');
+  const doug = fs.readFileSync(path.join(base, 'People/Doug.md'), 'utf8');
+  assert.match(doug, /Doug reviewed the plan/);
+  assert.doesNotMatch(doug, /hunter2|9f86d081/);
+  assert.equal(T.entityTyper()('gus the trader').id, 'person');
+
+  const graphCfg = JSON.parse(fs.readFileSync(path.join(vault, '.obsidian/graph.json'), 'utf8'));
+  assert.deepEqual(graphCfg.colorGroups.find((g: any) => g.query === '[type:person]').color, { a: 1, rgb: 0x7aa2f7 });
+  fs.writeFileSync(path.join(vault, '.obsidian/graph.json'), '{"mine":true}');
+  assert.equal(O.ensureGraphConfig(vault), false);
+  assert.equal(fs.readFileSync(path.join(vault, '.obsidian/graph.json'), 'utf8'), '{"mine":true}', 'the person\'s own graph settings are kept');
+
+  // Taking a name out of Types.md untypes it on the next sync.
+  write(vault, 'Types.md', '## People\n- Doug\n');
+  await O.exportBanks(vault, [bankById('shared')!], { fetchFn });
+  assert.equal(T.entityTyper()('gus the trader').id, 'entity');
+  assert.ok(fs.existsSync(path.join(base, 'Other/Hindsight.md')) && !fs.existsSync(path.join(base, 'Services/Hindsight.md')), 'a retyped entity moves folder and the old note is pruned');
+});
+
+test('the secret check catches keys, tokens and password URLs but not ordinary text', () => {
+  for (const s of ['zo_sk_live1234567890abcd', 'ghp_ABCDEFGHijklmnop1234', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkw', 'postgres://u:p4ss@db:5432/x', '-----BEGIN RSA PRIVATE KEY-----']) assert.ok(O.looksSecret(s), s);
+  for (const s of ['Hindsight runs on 127.0.0.1:8888', 'See /home/workspace/Projects/unified-memory/ONTOLOGY.md', 'GROK_INTEGRATION_KEY_SHA256_FILE names the key file', 'Phase B spent about $0.11']) assert.ok(!O.looksSecret(s), s);
+});

@@ -227,12 +227,74 @@ async function inPool<T, R>(items: T[], n: number, fn: (t: T) => Promise<R>): Pr
   return out;
 }
 
-export interface ExportResult { banks: { bank: string; label: string; entities: number; changed: number }[]; removed: number }
+// ---------- Types.md: the person's own typing, edited in Obsidian ----------
+
+/**
+ * `<vault>/Types.md` (outside workspace/, so it is never sent into memory): one `## <type>` heading
+ * per ontology type with `- name` lines under it, and `## ignore` for names to leave out of the
+ * graph (Hindsight's "user", "assistant"). It is the whole of the person's typing: on every sync
+ * its entries replace the previous ones, so taking a name out of the note untypes it again.
+ */
+export function readTypesNote(vault: string): { types: Map<string, string>; ignore: Set<string> } {
+  const types = new Map<string, string>();
+  const ignore = new Set<string>();
+  let src = '';
+  try { src = fs.readFileSync(path.join(vault, 'Types.md'), 'utf8'); } catch { return { types, ignore }; }
+  const label = new Map(ENTITY_TYPES.flatMap((t) => [[t.plural.toLowerCase(), t.id], [t.label.toLowerCase(), t.id]] as [string, string][]));
+  let current: string | null = null;
+  for (const line of parseFrontmatter(src).body.split(/\r?\n/)) {
+    const h = /^##\s+(.+?)\s*$/.exec(line);
+    if (h) {
+      const k = h[1].toLowerCase();
+      current = k === 'ignore' ? 'ignore' : typeOf(k)?.id ?? label.get(k) ?? null;
+      continue;
+    }
+    const item = /^\s*[-*]\s+(.+?)\s*$/.exec(line);
+    if (!item || !current) continue;
+    const name = item[1].replace(WIKI, (_m, t, a) => (a ?? t)).replace(/\s+#.*$/, '').trim(); // "- Gus  # the person" keeps a comment
+    if (!name) continue;
+    if (current === 'ignore') ignore.add(name.toLowerCase());
+    else types.set(name, current);
+  }
+  return { types, ignore };
+}
+
+function applyTypesNote(vault: string) {
+  const { types, ignore } = readTypesNote(vault);
+  db.prepare("DELETE FROM memory_entity_types WHERE source='user'").run();
+  for (const [name, type] of types) setEntityType(name, type, 'user');
+  return ignore;
+}
+
+/** Facts that look like a key, token, password URL or private key are not written to the vault. */
+const SECRET_RES = [
+  /\b(sk|ak|pk|rk|zo_sk|ghp|gho|ghs|github_pat|xox[abprs]|glpat|AKIA)[-_][A-Za-z0-9_-]{8,}/,
+  /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
+  /[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  // A long run of letters and digits with no slash or space: an API key, a hash, a base64 blob (paths have slashes).
+  /(?<![\w/+-])(?=[A-Za-z0-9+_-]*\d)(?=[A-Za-z0-9+_-]*[A-Za-z])[A-Za-z0-9+_-]{40,}={0,2}(?![\w/])/,
+];
+export const looksSecret = (s: string) => SECRET_RES.some((re) => re.test(s));
+
+/** Colours Obsidian's graph by ontology type. Only when the vault has no graph settings yet: never overwrites the person's own. */
+export function ensureGraphConfig(vault: string): boolean {
+  const file = path.join(vault, '.obsidian', 'graph.json');
+  if (fs.existsSync(file)) return false;
+  const colorGroups = ENTITY_TYPES.map((t) => ({ query: `[type:${t.id}]`, color: { a: 1, rgb: parseInt(t.color.slice(1), 16) } }));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ search: 'path:Memory', showTags: false, showAttachments: false, hideUnresolved: true, showOrphans: true, colorGroups, showArrow: false, textFadeMultiplier: 0, nodeSizeMultiplier: 1.2, lineSizeMultiplier: 1, linkDistance: 160, repelStrength: 12 }, null, 2));
+  return true;
+}
+
+export interface ExportResult { banks: { bank: string; label: string; entities: number; changed: number; withheld: number }[]; removed: number }
 
 export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: number; fetchFn?: any } = {}): Promise<ExportResult> {
   initObsidian();
   const root = path.join(vault, 'Memory');
   const written = new Set<string>();
+  const ignore = applyTypesNote(vault);
+  ensureGraphConfig(vault);
   const typer = entityTyper();
   const sources = new Map((db.prepare('SELECT path, title FROM obsidian_notes').all() as any[]).map((r) => [r.title.toLowerCase(), r.path as string]));
   const res: ExportResult = { banks: [], removed: 0 };
@@ -242,9 +304,18 @@ export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: 
     // Same names as the workspace folders: Memory/Shared, Memory/Teams/<team>, Memory/Bots/<bot>.
     const label = bank.layer === 'everyone' ? 'Shared' : bank.label.replace(/ \(own\)$/, '').replace(/^Team /, '');
     const folder = bank.layer === 'everyone' ? 'Memory/Shared' : `Memory/${LAYER_DIRS[bank.layer]}/${safeName(label)}`;
-    const g = await memoryGraph(bank.id, opts.limit ?? 250, opts.fetchFn);
+    const raw = await memoryGraph(bank.id, opts.limit ?? 250, opts.fetchFn);
+    const kept = raw.nodes.filter((n) => !ignore.has(n.label.toLowerCase()));
+    const keep = new Set(kept.map((n) => n.id));
+    const g = { ...raw, nodes: kept, edges: raw.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
+    let withheld = 0;
     const facts = await inPool(g.nodes, 6, (n) => entityFacts(bank.id, n.id, opts.fetchFn).catch(() => ({ entity: null, facts: [] as any[] })));
-    const typed = g.nodes.map((n, i) => ({ ...n, type: typer(n.label), facts: facts[i].facts as { text: string; date: string | null }[], entity: facts[i].entity as any }));
+    const typed = g.nodes.map((n, i) => {
+      const all = facts[i].facts as { text: string; date: string | null }[];
+      const safe = all.filter((f) => !looksSecret(f.text));
+      withheld += all.length - safe.length;
+      return { ...n, type: typer(n.label), facts: safe, hidden: all.length - safe.length, entity: facts[i].entity as any };
+    });
     const link = new Map(typed.map((n) => [n.id, `[[${folder}/${n.type.plural}/${safeName(n.label)}|${n.label}]]`]));
     let changed = 0;
     for (const n of typed) {
@@ -258,7 +329,8 @@ export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: 
         `# ${n.label}`, '',
         `${n.type === UNTYPED ? 'Untyped entity' : n.type.label} in ${bank.label}'s memory, mentioned ${n.mentions} time${n.mentions === 1 ? '' : 's'}.${src ? ` Source note: [[workspace/${src.replace(/\.md$/, '')}|${n.label}]].` : ''}`, '',
         '## Facts', '',
-        ...(n.facts.length ? n.facts.map((f) => `- ${f.text.replace(/\n+/g, ' ')}${f.date ? ` (${String(f.date).slice(0, 10)})` : ''}`) : ['- (none listed yet)']), '',
+        ...(n.facts.length ? n.facts.map((f) => `- ${f.text.replace(/\n+/g, ' ')}${f.date ? ` (${String(f.date).slice(0, 10)})` : ''}`) : ['- (none listed yet)']),
+        ...(n.hidden ? [`- (${n.hidden} fact${n.hidden === 1 ? '' : 's'} withheld: looked like a key or token; see it in the Memory graph)`] : []), '',
         ...(near.length ? ['## Comes up with', '', ...near.map((e) => `- ${link.get(e.source === n.id ? e.target : e.source)} · ${e.weight}×`), ''] : []),
       ].join('\n');
       if (put(path.join(vault, folder, n.type.plural, `${safeName(n.label)}.md`), text, written)) changed++;
@@ -271,7 +343,7 @@ export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: 
       ...byType.flatMap(({ t, list }) => [`## ${t.plural} (${list.length})`, '', ...list.slice(0, 40).map((n) => `- ${link.get(n.id)} · ${n.mentions}`), '']),
     ].join('\n');
     if (put(path.join(vault, folder, `00 ${safeName(label)}.md`), index, written)) changed++;
-    res.banks.push({ bank: bank.id, label: bank.label, entities: typed.length, changed });
+    res.banks.push({ bank: bank.id, label: bank.label, entities: typed.length, changed, withheld });
   }
   res.removed = prune(root, written);
   return res;
