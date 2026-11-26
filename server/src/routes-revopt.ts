@@ -8,7 +8,10 @@ import { teamMembers, teamBrief } from './agent/rooms.js';
 import { env } from './env.js';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './types.js';
 import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
-import { MemoryGraphError, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
+import { MemoryGraphError, checkBank, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
+import { banksForUser, retain, teamBank, userMayView } from './memory-banks.js';
+import { ENTITY_TYPES, RELATIONS, UNTYPED, entityTyper } from './ontology.js';
+import { syncStatus, syncVault } from './obsidian.js';
 import { SupersetError, enableEmbedding, guestToken, listDashboards, supersetConfig } from './superset.js';
 import { bf, buildflowEnabled, jobBrief, jobByNumber, looksLikeJobNumber, type JobRef } from './buildflow.js';
 
@@ -215,6 +218,25 @@ revoptApi.post('/tasks', async (c) => {
   return c.json({ id });
 });
 
+/**
+ * A finished task becomes part of its team's memory, so the next task about the same client or
+ * deal starts from what this one found. Runs in the background: a slow or absent memory store
+ * never holds up the status change.
+ */
+function rememberDone(userId: string, t: TaskRow, by: string) {
+  const bank = teamBank(userId, t.team_id);
+  if (!bank) return;
+  const job = (toTask(t).payload as any)?.buildflowJob;
+  const text = [
+    `RevOpt ${t.kind} task finished on ${new Date().toISOString().slice(0, 10)}: ${t.title}.`,
+    t.target ? `Target: ${t.target}.` : '',
+    job?.number ? `Build-flow job ${job.number}${job.name ? ` (${job.name})` : ''}.` : '',
+    t.detail ? `Details: ${t.detail.slice(0, 3000)}` : '',
+  ].filter(Boolean).join(' ');
+  retain(bank, text, { by, context: `RevOpt task ${t.id} marked done`, tags: ['revopt', t.kind] })
+    .catch((e) => console.warn(`[memory] could not save finished task ${t.id} to ${bank.id}: ${e instanceof Error ? e.message : e}`));
+}
+
 /** Update a task (status, priority, title, detail, target, payload, dueAt). */
 revoptApi.patch('/tasks/:id', async (c) => {
   const userId = c.get('user').id;
@@ -251,6 +273,7 @@ revoptApi.patch('/tasks/:id', async (c) => {
   args.push(id, userId);
   db.prepare(`UPDATE revopt_tasks SET ${sets.join(', ')} WHERE id=? AND user_id=?`).run(...args);
   const fresh = db.prepare('SELECT * FROM revopt_tasks WHERE id=?').get(id) as TaskRow;
+  if (fresh.status === 'done' && row.status !== 'done') rememberDone(userId, fresh, c.get('user').name);
   return c.json({ ok: true, task: toTask(fresh) });
 });
 
@@ -333,10 +356,50 @@ const graphGuard = async (c: any, fn: () => Promise<Response>) => {
   }
 };
 
-/** The bots' shared memory (Hindsight) as an entity graph. */
-revoptApi.get('/memory/banks', (c) => graphGuard(c, async () => c.json({ banks: await listBanks() })));
-revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => c.json(await memoryGraph(c.req.query('bank'), c.req.query('limit')))));
-revoptApi.get('/memory/entities/:id', (c) => graphGuard(c, async () => c.json(await entityFacts(c.req.query('bank'), c.req.param('id')))));
+/**
+ * The bots' memory (Hindsight) as an entity graph, one bank at a time: shared, a team's or a bot's.
+ * Only the signed-in person's own banks are listed or opened; a bank nobody has written to yet is
+ * listed with 0 facts.
+ */
+revoptApi.get('/memory/banks', (c) => graphGuard(c, async () => {
+  const live = new Map((await listBanks()).map((b) => [b.id, b]));
+  const banks = banksForUser(c.get('user').id).map((b) => ({ ...b, facts: live.get(b.id)?.facts ?? 0, lastWriteAt: live.get(b.id)?.lastWriteAt ?? null }));
+  return c.json({ banks });
+}));
+const viewable = (c: any) => {
+  const bank = checkBank(c.req.query('bank'));
+  if (!userMayView(c.get('user').id, bank)) throw new MemoryGraphError('Unknown memory bank.', 404);
+  return bank;
+};
+revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => {
+  const bank = viewable(c);
+  try {
+    const g = await memoryGraph(bank, c.req.query('limit'));
+    const typer = entityTyper();
+    return c.json({ ...g, nodes: g.nodes.map((n) => ({ ...n, type: typer(n.label).id })) });
+  } catch (e) {
+    // A bot's or team's bank is only created on its first save; until then it is empty, not missing.
+    if (e instanceof MemoryGraphError && e.status === 404) return c.json({ bank, nodes: [], edges: [], totalEntities: 0, totalEdges: 0, stats: null });
+    throw e;
+  }
+}));
+revoptApi.get('/memory/entities/:id', (c) => graphGuard(c, async () => c.json(await entityFacts(viewable(c), c.req.param('id')))));
+
+/** The ontology: entity types (with their graph colours) and the link fields notes may use. */
+revoptApi.get('/memory/ontology', (c) => c.json({
+  types: [...ENTITY_TYPES, UNTYPED].map(({ id, label, plural, color, about }) => ({ id, label, plural, color, about })),
+  relations: RELATIONS.map(({ id, label }) => ({ id, label })),
+}));
+
+/** Obsidian sync: its state, and "sync now" (runs in the background; poll the state). */
+revoptApi.get('/memory/obsidian', (c) => c.json(syncStatus()));
+revoptApi.post('/memory/obsidian/sync', (c) => {
+  const s = syncStatus();
+  if (!s.enabled) return c.json({ error: 'Obsidian sync is off: set OBSIDIAN_VAULT on the server to the vault folder.' }, 400);
+  if (s.running) return c.json(s, 202);
+  syncVault().catch((e) => console.warn(`[obsidian] sync failed: ${e instanceof Error ? e.message : e}`));
+  return c.json(syncStatus(), 202);
+});
 
 // ---------- BI (Apache Superset, embedded) ----------
 

@@ -13,6 +13,7 @@ import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
 import { dataGrep, dataList, dataRead, dataSearch, DataError, defaultConfig, warmCatalog } from '../dataplane/fs.js';
 import { bf, BuildflowError, buildflowEnabled } from '../buildflow.js';
+import { formatRecall, MemoryBankError, pickBanks, recall, retain } from '../memory-banks.js';
 
 export interface ToolCtx {
   userId: string;
@@ -154,6 +155,54 @@ const DATA_TOOLS: ToolDef[] = [
     activity: 'working',
     label: 'Searching files',
     impl: dataTool((a) => dataGrep(dataCfg, a), (a) => `Grepped for "${String(a.pattern).slice(0, 40)}"`),
+  },
+];
+
+/** Long-term memory in Hindsight: the bot's own bank, its teams' banks, and the shared one (see memory-banks.ts). */
+const bankTool = (fn: Impl): Impl => async (a, ctx) => {
+  try { return await fn(a, ctx); } catch (e: any) {
+    if (e instanceof MemoryBankError) return { output: JSON.stringify({ error: e.message }), summary: 'Memory request refused' };
+    throw e;
+  }
+};
+const scopeParam = (all: boolean) => ({
+  type: 'string',
+  enum: all ? ['all', 'me', 'team', 'everyone'] : ['me', 'team', 'everyone'],
+  description: `me = your own memory, team = the memory of a team you are on, everyone = memory shared by every bot${all ? ', all = all of them (default)' : ' (default: me)'}.`,
+});
+const MEMORY_TOOLS: ToolDef[] = [
+  {
+    name: 'memory_recall',
+    description: 'Search long-term memory by meaning: facts, decisions and outcomes you, your teams or the other bots saved. Use it before starting work that may have history ("what do we know about Acme", "what did the team decide on pricing"). Results are grouped by where they came from.',
+    parameters: obj({
+      query: { type: 'string', description: 'What to recall, in plain words.' },
+      scope: scopeParam(true),
+      team: { type: 'string', description: 'Only this team (by name), when you are on several.' },
+    }, ['query']),
+    activity: 'remembering',
+    label: 'Searching memory',
+    impl: bankTool(async (a, ctx) => {
+      const banks = pickBanks(ctx.userId, ctx.botId, { layer: a.scope, team: a.team });
+      return { output: formatRecall(await recall(banks, String(a.query ?? '')), banks).slice(0, 30000), summary: `Recalled "${String(a.query).slice(0, 50)}"` };
+    }),
+  },
+  {
+    name: 'memory_save',
+    description: "Save a fact, decision or outcome to long-term memory so it is there in later conversations. scope=team when the whole team should know it (a decision, a client fact, a task's result); scope=everyone only for something every bot needs. Write one self-contained statement with names and dates, not \"he said yes\". Your own notes file (memory tool) still holds short working notes; this is for knowledge worth searching later.",
+    parameters: obj({
+      text: { type: 'string', description: 'The fact, in one or a few sentences.' },
+      scope: scopeParam(false),
+      team: { type: 'string', description: 'Which team, by name, when you are on several.' },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Optional short tags, e.g. a client or project name.' },
+    }, ['text']),
+    activity: 'remembering',
+    label: 'Saving to memory',
+    impl: bankTool(async (a, ctx) => {
+      const [bank] = pickBanks(ctx.userId, ctx.botId, { layer: a.scope ?? 'me', team: a.team, write: true });
+      const tags = (Array.isArray(a.tags) ? a.tags : []).map((t: unknown) => String(t).trim().slice(0, 40)).filter(Boolean).slice(0, 8);
+      const r = await retain(bank, String(a.text ?? ''), { by: `${getBotName(ctx.botId)} (bot)`, tags });
+      return { output: JSON.stringify({ ok: true, saved_to: bank.label, ...r }), summary: `Saved to ${bank.label}` };
+    }),
   },
 ];
 
@@ -484,6 +533,7 @@ export const TOOLS: ToolDef[] = [
     },
   },
   ...DATA_TOOLS,
+  ...MEMORY_TOOLS,
   ...(buildflowEnabled() ? BUILDFLOW_TOOLS : []),
 ];
 

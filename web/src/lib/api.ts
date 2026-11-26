@@ -88,20 +88,46 @@ export const api = {
   dispatchRevoptTask: (id: string) => req<{ ok: true; prompt: string; teamId: string }>('POST', `/revopt/tasks/${id}/dispatch`),
   /** RevOps dashboard numbers for the last `days`. */
   revoptMetrics: (days = 30) => req<RevOpsMetrics>('GET', `/revopt/metrics?days=${days}`),
-  memoryBanks: () => req<{ banks: { id: string; facts: number; lastWriteAt: string | null }[] }>('GET', '/revopt/memory/banks'),
+  memoryBanks: () => req<{ banks: MemoryBank[] }>('GET', '/revopt/memory/banks'),
   memoryGraph: (bank: string, limit = 150) => req<MemoryGraph>('GET', `/revopt/memory/graph?bank=${encodeURIComponent(bank)}&limit=${limit}`),
   biStatus: () => req<{ configured: boolean; publicUrl: string | null; dashboards: BiDashboard[] }>('GET', '/revopt/bi'),
   biEnableEmbed: (id: number) => req<{ embedId: string }>('POST', `/revopt/bi/dashboards/${id}/embed`),
   biGuestToken: (embedId: string) => req<{ token: string }>('POST', '/revopt/bi/guest-token', { embedId }),
   memoryEntity: (bank: string, id: string) => req<MemoryEntity>('GET', `/revopt/memory/entities/${encodeURIComponent(id)}?bank=${encodeURIComponent(bank)}`),
+  memoryOntology: () => req<MemoryOntology>('GET', '/revopt/memory/ontology'),
+  obsidianStatus: () => req<ObsidianStatus>('GET', '/revopt/memory/obsidian'),
+  obsidianSync: () => req<ObsidianStatus>('POST', '/revopt/memory/obsidian/sync'),
 };
+
+/** The memory ontology: what kinds of things bots remember (with graph colours) and the link fields notes use. */
+export interface MemoryOntology {
+  types: { id: string; label: string; plural: string; color: string; about: string }[];
+  relations: { id: string; label: string }[];
+}
+
+/** Two-way sync between the bots' memory and an Obsidian vault on the server. */
+export interface ObsidianStatus {
+  enabled: boolean;
+  vault: string | null;
+  everyMinutes: number;
+  running: boolean;
+  last: null | {
+    at: number; ms: number; error?: string;
+    ingest?: { saved: string[]; unchanged: number; forgotten: string[]; skipped: { path: string; why: string }[] };
+    export?: { banks: { bank: string; label: string; entities: number; changed: number }[]; removed: number };
+  };
+}
 
 /** A Superset dashboard; `embedId` is set once embedding is turned on for it. */
 export interface BiDashboard { id: number; title: string; embedId: string | null; url: string; changedAt: string | null }
 
+/** A Hindsight bank the signed-in person may open: global (`everyone`), a team's, or one bot's (`me`). */
+export interface MemoryBank { id: string; layer: 'me' | 'team' | 'everyone'; label: string; facts: number; lastWriteAt: string | null }
+
 export interface MemoryGraph {
   bank: string;
-  nodes: { id: string; label: string; mentions: number }[];
+  /** `type` is an ontology type id (`person`, `company`, …; `entity` when not typed yet). */
+  nodes: { id: string; label: string; mentions: number; type?: string }[];
   edges: { source: string; target: string; weight: number; lastAt: string | null }[];
   totalEntities: number;
   totalEdges: number;

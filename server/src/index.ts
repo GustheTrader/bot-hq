@@ -32,10 +32,12 @@ import { startGrokBridge } from './routes-grok.js';
 import { recoverGrokJobs, startGrokSweep } from './grok-jobs.js';
 import { startGrokCallbacks } from './grok-notify.js';
 import { proxyBuildflow, proxyField } from './buildflow.js';
+import { startObsidianSync } from './obsidian.js';
 
 if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
 initRooms();
+startObsidianSync(); // creates its tables; syncs on a timer only when OBSIDIAN_VAULT and OBSIDIAN_SYNC_MINUTES are set
 // Approvals wait in memory; whatever was still open when the last process stopped can no longer be answered.
 expireStaleApprovals();
 // Questions a bot asked (ask_user) stay answerable across a restart, so bring back their "needs you" state.

@@ -161,6 +161,11 @@
 .mg-field { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-text-tertiary); }
 .mg-search { width: 200px; }
 .mg-stats { font-size: 12px; color: var(--color-text-tertiary); }
+.mg-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.mg-legend__item { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 1px solid var(--color-border, rgba(127,127,127,.3)); border-radius: 999px; background: none; color: inherit; font-size: 12px; cursor: pointer; }
+.mg-legend__item.is-off { opacity: .45; text-decoration: line-through; }
+.mg-legend__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.mg-obsidian { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; color: var(--color-text-tertiary); }
 .mg-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; }
 .mg-canvas { position: relative; min-height: 420px; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--viz-surface); overflow: hidden; cursor: grab; }
 .mg-canvas svg { display: block; width: 100%; height: auto; touch-action: none; }
