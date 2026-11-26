@@ -7,13 +7,15 @@ import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, screenTicket, userFromCookieHeader, type AuthVars } from './lib/auth.js';
-import { allLive, appendRow, clearConversation, clearPendingQuestion, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
+import { allLive, appendRow, clearConversation, clearPendingQuestion, describeCron, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
+import { TemplateError, planFromTemplate, publicTemplates } from './bot-templates.js';
+import { box } from './box.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { cancelClaudeLogin } from './engine-login.js';
-import { retireHarness } from './harness.js';
+import { HARNESSES, harnessInstalled, retireHarness } from './harness.js';
 import { orgo } from './orgo.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
@@ -247,12 +249,37 @@ const ownBot = (userId: string, id: string) => {
 
 api.get('/bots', (c) => c.json({ bots: listBots(c.get('user').id), live: allLive(c.get('user').id) }));
 
+api.get('/bot-templates', (c) => c.json({ templates: publicTemplates() }));
+
+/** A new Bot from a template: its persona and instructions, the agent program it runs on, and its first routine. */
+function createFromTemplate(userId: string, body: any) {
+  const plan = planFromTemplate(String(body.template), body.inputs ?? {}, { name: body.name, timezone: body.timezone });
+  const bot = createBot(userId, { ...plan.bot, avatarShape: body.avatarShape, avatarImage: body.avatarImage, mode: body.mode });
+
+  const def = HARNESSES.find((h) => h.id === plan.harness);
+  if (def && def.id !== 'hermes' && box.local && harnessInstalled(def)) {
+    db.prepare('UPDATE bots SET harness=?, harness_model=NULL, updated_at=? WHERE id=?').run(def.id, now(), bot.id);
+  } else if (def && def.id !== 'hermes') {
+    appendRow(bot.id, 'notice', { type: 'notice', tone: 'warn', text: `${def.name} is not installed on the computer, so this Bot runs on Hermes for now. Switch it in the Engine panel once ${def.name} is installed.` });
+  }
+
+  const id = newId('rt');
+  const r = plan.routine;
+  db.prepare('INSERT INTO routines(id,bot_id,name,prompt,schedule,timezone,enabled,created_at) VALUES (?,?,?,?,?,?,1,?)').run(id, bot.id, r.name, r.prompt, r.schedule, r.timezone, now());
+  scheduleRoutine(toRoutine(db.prepare('SELECT * FROM routines WHERE id=?').get(id)));
+  appendRow(bot.id, 'event', { type: 'event', event: 'routine-created', text: `Routine created: ${r.name} · ${describeCron(r.schedule)}`, ref: id });
+  hub.emit(userId, { type: 'routines', botId: bot.id });
+  return getBot(bot.id)!;
+}
+
 api.post('/bots', async (c) => {
   const body = await c.req.json();
   try {
-    return c.json({ bot: createBot(c.get('user').id, body) });
+    const userId = c.get('user').id;
+    return c.json({ bot: body?.template ? createFromTemplate(userId, body) : createBot(userId, body) });
   } catch (e: any) {
     if (e instanceof UserError) return c.json({ error: e.message }, 409);
+    if (e instanceof TemplateError) return c.json({ error: e.message }, 400);
     throw e;
   }
 });

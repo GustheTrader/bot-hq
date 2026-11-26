@@ -133,3 +133,11 @@
 .team-people__email { font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
 .team-people__add { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .team-people__add .text-input { flex: 1; min-width: 0; }
+
+/* Create Bot: a template's description and its fields */
+.template-form { display: flex; flex-direction: column; gap: 10px; width: 407px; max-width: 100%; }
+.template-form__blurb { margin: 0; font-size: 13px; line-height: 18px; color: var(--color-ink); }
+.template-form__meta { margin: 0; font-size: 12px; line-height: 16px; color: var(--color-text-tertiary); }
+.template-form__field { display: flex; flex-direction: column; gap: 4px; }
+.template-form__label { font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-ink); }
+.template-form__help { font-size: 11px; line-height: 15px; color: var(--color-text-tertiary); }
