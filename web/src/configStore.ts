@@ -25,7 +25,7 @@ export type BotSettingsTab = 'general' | 'skills' | 'memories' | 'routines';
  * their git worktrees, the files bots made, and a bot's chat opened in place.
  */
 export type WorkTab = 'launch' | 'attention' | 'all' | 'projects' | 'worktrees' | 'github' | 'artifacts' | 'chat';
-export type AppSection = 'general' | 'computer' | 'subscriptions' | 'wiki' | 'permissions' | 'apps' | 'account';
+export type AppSection = 'general' | 'computer' | 'subscriptions' | 'models' | 'wiki' | 'permissions' | 'apps' | 'account';
 
 interface ConfigUI {
   botSettings: { botId: string; tab: BotSettingsTab } | null;

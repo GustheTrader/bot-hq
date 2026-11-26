@@ -17,6 +17,7 @@ import { listMemories } from './engine-memory.js';
 import { cancelClaudeLogin, finishClaudeLogin, startClaudeLogin } from './engine-login.js';
 import { idleConfig, viewerCount } from './idle.js';
 import { listSubscriptions } from './subscriptions.js';
+import { addRouterKey, isRouterFeature, removeRouterKey, ROUTER_EXCLUDED, ROUTER_FEATURES, ROUTER_MODELS, ROUTER_PROVIDERS, routerStatus, RouterUserError, setRouterFeature, testModel } from './ninerouter.js';
 import { HARNESSES, harnessInstalled, harnessModels, isHarnessId, stopHarness } from './harness.js';
 import { interrupt } from './agent/loop.js';
 import { checkBot } from './engine-check.js';
@@ -370,6 +371,41 @@ configApi.get('/bots/:id/files/raw', (c) => {
 });
 
 // ---------- computer: screens, reset, hibernation ----------
+
+// ---------- 9Router (Settings > Models) ----------
+
+/** What Settings shows for 9Router: catalog, connected providers (never their keys), model groups, switches. */
+configApi.get('/computer/models-router', async (c) => {
+  return c.json({ status: await routerStatus(), providers: ROUTER_PROVIDERS, excluded: ROUTER_EXCLUDED, features: ROUTER_FEATURES, models: ROUTER_MODELS });
+});
+
+configApi.post('/computer/models-router/keys', async (c) => {
+  const p = await c.req.json().catch(() => ({}));
+  try {
+    return c.json(await addRouterKey(String(p.provider ?? ''), String(p.apiKey ?? ''), { accountId: typeof p.accountId === 'string' ? p.accountId : undefined }));
+  } catch (e: any) {
+    return c.json({ error: String(e?.message ?? e) }, e instanceof RouterUserError ? 400 : 502);
+  }
+});
+
+configApi.delete('/computer/models-router/keys/:id', async (c) => {
+  try { await removeRouterKey(c.req.param('id')); return c.json({ ok: true }); }
+  catch (e: any) { return c.json({ error: String(e?.message ?? e) }, e instanceof RouterUserError ? 400 : 502); }
+});
+
+configApi.patch('/computer/models-router/features', async (c) => {
+  const p = await c.req.json().catch(() => ({}));
+  if (!isRouterFeature(p.feature) || typeof p.on !== 'boolean') return c.json({ error: 'Unknown switch.' }, 400);
+  try { await setRouterFeature(p.feature, p.on); return c.json({ ok: true }); }
+  catch (e: any) { return c.json({ error: String(e?.message ?? e) }, 502); }
+});
+
+configApi.post('/computer/models-router/test', async (c) => {
+  const p = await c.req.json().catch(() => ({}));
+  const model = String(p.model ?? '');
+  if (!(ROUTER_MODELS as readonly string[]).includes(model)) return c.json({ error: 'Unknown model group.' }, 400);
+  return c.json(await testModel(model));
+});
 
 /** Model subscriptions and keys on the bots' computer: plan, renewal and which harnesses are signed in. */
 configApi.get('/computer/subscriptions', async (c) => {

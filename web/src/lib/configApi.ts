@@ -57,6 +57,19 @@ export interface GtmCompany { id: string | null; name: string | null; domain: st
 
 export type BotPatch =Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode'>>;
 
+/** 9Router (Settings > Models). Mirrors server/src/ninerouter.ts; never carries a key back. */
+export interface RouterProviderDef { id: string; name: string; group: 'google' | 'free' | 'paid'; note: string; keyUrl: string; extra?: { field: 'accountId'; label: string } }
+export interface RouterConnection { id: string; provider: string; name: string; active: boolean; status: string | null; lastError: string | null }
+export type RouterFeature = 'rtkEnabled' | 'cavemanEnabled' | 'ponytailEnabled';
+export interface RouterInfo {
+  status: { configured: boolean; up: boolean; error: string | null; connections: RouterConnection[]; combos: { name: string; models: number }[]; features: Record<RouterFeature, boolean>; exposed: { cloudSync: boolean; tunnel: boolean; requireApiKey: boolean } };
+  providers: RouterProviderDef[];
+  excluded: { name: string; why: string }[];
+  features: Record<RouterFeature, { name: string; note: string }>;
+  models: string[];
+}
+export interface RouterTest { ok: boolean; detail: string }
+
 export const configApi = {
   settings: (botId: string) => req<BotSettingsBundle>('GET', `/bots/${botId}/settings`),
   macroStatus: () => req<{ enabled: boolean; signedIn: boolean; expiresAt: number | null; signingIn: boolean }>('GET', '/macro'),
@@ -132,6 +145,11 @@ export const configApi = {
   downloadFile: (botId: string, path: string) => req<{ url: string }>('POST', `/bots/${botId}/files/download`, { path }),
 
   computerDetails: () => req<ComputerDetails>('GET', '/computer/details'),
+  modelsRouter: () => req<RouterInfo>('GET', '/computer/models-router'),
+  addRouterKey: (provider: string, apiKey: string, accountId?: string) => req<{ connection: RouterConnection | null; test: RouterTest }>('POST', '/computer/models-router/keys', { provider, apiKey, accountId }),
+  removeRouterKey: (id: string) => req<{ ok: true }>('DELETE', `/computer/models-router/keys/${encodeURIComponent(id)}`),
+  setRouterFeature: (feature: RouterFeature, on: boolean) => req<{ ok: true }>('PATCH', '/computer/models-router/features', { feature, on }),
+  testRouterModel: (model: string) => req<RouterTest>('POST', '/computer/models-router/test', { model }),
   subscriptions: () => req<{ subscriptions: Subscription[]; local: boolean }>('GET', '/computer/subscriptions'),
   wake: () => req<{ computer: ComputerState }>('POST', '/computer/ensure'),
   sleep: () => req<{ computer: ComputerState }>('POST', '/computer/suspend'),
