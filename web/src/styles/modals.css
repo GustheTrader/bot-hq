@@ -141,3 +141,4 @@
 .template-form__field { display: flex; flex-direction: column; gap: 4px; }
 .template-form__label { font-size: 12px; font-weight: 500; line-height: 16px; color: var(--color-ink); }
 .template-form__help { font-size: 11px; line-height: 15px; color: var(--color-text-tertiary); }
+.template-pick { display: flex; flex-direction: column; gap: 4px; width: 407px; max-width: 100%; }

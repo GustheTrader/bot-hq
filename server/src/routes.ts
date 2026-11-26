@@ -8,7 +8,8 @@ import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, screenTicket, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, clearPendingQuestion, describeCron, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
-import { TemplateError, planFromTemplate, publicTemplates } from './bot-templates.js';
+import { TemplateError, planFromTemplate, publicTemplates, type Requirement } from './bot-templates.js';
+import { buildflowEnabled } from './buildflow.js';
 import { box } from './box.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
@@ -249,11 +250,14 @@ const ownBot = (userId: string, id: string) => {
 
 api.get('/bots', (c) => c.json({ bots: listBots(c.get('user').id), live: allLive(c.get('user').id) }));
 
-api.get('/bot-templates', (c) => c.json({ templates: publicTemplates() }));
+/** Connections set up on this server that templates may require. */
+const templateConnections = (): ReadonlySet<Requirement> => new Set<Requirement>(buildflowEnabled() ? ['buildflow'] : []);
+
+api.get('/bot-templates', (c) => c.json({ templates: publicTemplates(templateConnections()) }));
 
 /** A new Bot from a template: its persona and instructions, the agent program it runs on, and its first routine. */
 function createFromTemplate(userId: string, body: any) {
-  const plan = planFromTemplate(String(body.template), body.inputs ?? {}, { name: body.name, timezone: body.timezone });
+  const plan = planFromTemplate(String(body.template), body.inputs ?? {}, { name: body.name, timezone: body.timezone, available: templateConnections() });
   const bot = createBot(userId, { ...plan.bot, avatarShape: body.avatarShape, avatarImage: body.avatarImage, mode: body.mode });
 
   const def = HARNESSES.find((h) => h.id === plan.harness);
