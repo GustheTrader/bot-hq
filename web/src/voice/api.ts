@@ -2,10 +2,14 @@ import type { VoiceOption } from '@shared/types';
 
 export interface VoiceSession {
   callId: string;
+  /** Which backend minted this call: xAI Grok voice, or the OpenAI realtime fallback. */
+  provider?: 'xai' | 'openai';
   clientSecret: string;
   expiresAt: number;
   model: string;
   websocketUrl: string;
+  /** Exact `Sec-WebSocket-Protocol` list the socket needs; differs per provider. */
+  authSubprotocols?: string[];
   sampleRate: number;
   instructions: string;
   voice: string;

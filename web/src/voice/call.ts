@@ -121,7 +121,9 @@ class VoiceCall {
   }
 
   private connect(sess: VoiceSession) {
-    const ws = new WebSocket(sess.websocketUrl, [`xai-client-secret.${sess.clientSecret}`]);
+    // xAI authenticates with a subprotocol carrying the secret; OpenAI realtime wants `realtime` + the key.
+    const protocols = sess.authSubprotocols?.length ? sess.authSubprotocols : [`xai-client-secret.${sess.clientSecret}`];
+    const ws = new WebSocket(sess.websocketUrl, protocols);
     this.ws = ws;
     this.connectTimer = setTimeout(() => { if (!this.ready) this.end('Couldn’t connect the call'); }, 15000);
     ws.onopen = () => this.send({ type: 'session.update', session: sess.session });

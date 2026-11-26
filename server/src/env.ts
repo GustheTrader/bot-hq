@@ -35,6 +35,10 @@ export const env = {
   publicWsUrl: (process.env.PUBLIC_WS_URL ?? '').replace(/\/+$/, ''),
   xaiKey: req('XAI_API_KEY'),
   xaiModel: process.env.XAI_MODEL ?? 'grok-4.7',
+  /** Optional OpenAI key: voice falls back to OpenAI realtime/TTS/STT when xAI runs dry. */
+  openaiKey: (process.env.OPENAI_API_KEY?.trim() || (process.env.OPENAI_API_KEY_FILE ? fs.readFileSync(process.env.OPENAI_API_KEY_FILE, 'utf8').trim() : '')),
+  /** 'auto' (default) tries xAI then OpenAI; 'xai' or 'openai' pins one. */
+  voiceProvider: (process.env.VOICE_PROVIDER ?? 'auto').toLowerCase(),
   composioKey: req('COMPOSIO_API_KEY'),
   computerProvider,
   orgoKey: computerProvider === 'orgo' ? secret('ORGO_API_KEY') : (process.env.ORGO_API_KEY ?? ''),
