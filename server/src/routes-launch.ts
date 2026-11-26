@@ -41,8 +41,8 @@ export function startWork(userId: string, input: StartInput, deps: StartDeps = r
   const hasProject = input.projectId !== undefined && input.projectId !== null && input.projectId !== '';
   const project = hasProject ? (typeof input.projectId === 'string' ? getProject(userId, input.projectId) : null) : null;
   if (hasProject && !project) throw new ProjectError('Project not found.', 404);
-  // A workspace's project notes and skills go only to its own bots (and the main bot).
-  if (project?.spaceId && !fitsSpace(bot, project.spaceId)) throw new ProjectError('That project belongs to another workspace. Pick a bot from its workspace.', 409);
+  // A project's notes and skills go only to bots of its workspace (General counts as one) and the main bot.
+  if (project && !fitsSpace(bot, project.spaceId)) throw new ProjectError('That project belongs to another workspace. Pick a bot from its workspace.', 409);
 
   const picked = Array.isArray(input.skills) ? [...new Set(input.skills)] : [];
   if (picked.length > MAX_PICKED_SKILLS) throw new ProjectError(`Pick up to ${MAX_PICKED_SKILLS} skills.`);

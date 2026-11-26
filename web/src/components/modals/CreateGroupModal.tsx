@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { api } from '../../lib/api';
-import { newSpaceId, useStore } from '../../store';
+import { newSpaceId, shownSpace, useStore } from '../../store';
 import { SpaceSelect } from '../Spaces';
 import { Icon } from '../Icon';
 import { Modal } from './Modal';
@@ -12,7 +12,7 @@ interface Person { name: string; email: string }
 export function CreateGroupModal() {
   const setModal = useStore((s) => s.setModal);
   const allBots = useStore((s) => s.bots);
-  const [spaceId, setSpaceId] = useState<string | null>(() => newSpaceId(useStore.getState().activeSpace));
+  const [spaceId, setSpaceId] = useState<string | null>(() => newSpaceId(shownSpace(useStore.getState())));
   // A team stays inside one workspace; the main bot can join any.
   const bots = allBots.filter((b) => b.kind !== 'team' && (b.isPrimary || (b.spaceId ?? null) === spaceId));
   const [name, setName] = useState('');

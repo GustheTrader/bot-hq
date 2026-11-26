@@ -1,7 +1,8 @@
 import { Hono, type Context } from 'hono';
 import { requireUser, type AuthVars } from './lib/auth.js';
 import { hub } from './lib/hub.js';
-import { SpaceError, createSpace, deleteSpace, listSpaces, updateSpace } from './spaces.js';
+import { SpaceError, createSpace, deleteSpace, getSpace, listSpaces, updateSpace } from './spaces.js';
+import { workspaceFolder } from './obsidian.js';
 
 /** /api/spaces: the workspaces (one per business or project) of the signed-in account. */
 export const spacesApi = new Hono<AuthVars>();
@@ -31,7 +32,13 @@ spacesApi.post('/', (c) => guard(c, async () => {
 
 spacesApi.patch('/:id', (c) => guard(c, async () => {
   const userId = c.get('user').id;
-  const space = updateSpace(userId, c.req.param('id'), await body(c));
+  const patch = await body(c);
+  const before = getSpace(userId, c.req.param('id'));
+  const renaming = before && typeof patch.name === 'string' && patch.name.trim().toLowerCase() !== before.name.toLowerCase();
+  const folder = renaming ? workspaceFolder(userId, before.name) : null;
+  // Notes are matched to a workspace by folder name, so a rename would silently stop them syncing.
+  if (folder) throw new SpaceError(`The Obsidian vault has notes in ${folder}. Rename or remove that folder first.`, 409);
+  const space = updateSpace(userId, c.req.param('id'), patch);
   changed(userId);
   return c.json({ space });
 }));

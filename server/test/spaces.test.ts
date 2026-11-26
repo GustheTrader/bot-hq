@@ -15,13 +15,15 @@ process.env.ORGO_API_KEY = 'test';
 
 const { db, now } = await import('../src/db.js');
 const { newId } = await import('../src/lib/ids.js');
-const { initRooms, createTeam, outsiders, teamSpace } = await import('../src/agent/rooms.js');
+const { initRooms, createTeam, outsiders, postToRoom, teamSpace } = await import('../src/agent/rooms.js');
 const { initSubagents, createSubagent } = await import('../src/agent/subagents.js');
 const S = await import('../src/spaces.js');
 const M = await import('../src/memory-banks.js');
 const P = await import('../src/projects.js');
 const { startWork } = await import('../src/routes-launch.js');
-const { routeNote } = await import('../src/obsidian.js');
+const { routeNote, workspaceFolder } = await import('../src/obsidian.js');
+const { findBot } = await import('../src/agent/tools.js');
+const { addMember, initTeamMembers } = await import('../src/team-members.js');
 const { TEMPLATES, planFromTemplate } = await import('../src/bot-templates.js');
 const { isPortraitPreset } = await import('../src/portraits.js');
 
@@ -109,6 +111,9 @@ test('moving a bot is refused while a team would mix workspaces; the main bot ne
 test('only an empty workspace can be deleted', () => {
   const { user, a } = world();
   assert.throws(() => S.deleteSpace(user, a.id), /Move or delete/);
+  const onlyProjects = S.createSpace(user, { name: 'Only projects' });
+  P.createProject(user, { name: 'Plan', spaceId: onlyProjects.id });
+  assert.throws(() => S.deleteSpace(user, onlyProjects.id), /Move or delete/);
   const empty = S.createSpace(user, { name: 'Empty' });
   S.deleteSpace(user, empty.id);
   assert.equal(S.getSpace(user, empty.id), null);
@@ -126,6 +131,88 @@ test('a workspace project starts only on its own bots or the main bot', () => {
   start(chief);
   assert.throws(() => start(botB), /another workspace/);
   assert.throws(() => start(general), /another workspace/);
+  const open = P.createProject(user, { name: 'General notes' });
+  const startOpen = (botId: string) => startWork(user, { botId, projectId: open.id, prompt: 'go' }, deps);
+  startOpen(general);
+  startOpen(chief);
+  assert.throws(() => startOpen(botA), /another workspace/);
+});
+
+test('template bot names stay unique however many are made', () => {
+  const { user, a } = world();
+  const names = [1, 2, 3, 4].map(() => {
+    const name = S.unusedBotName(user, 'Dispatch Lead', a.name);
+    mkBot(user, name, a.id);
+    return name;
+  });
+  assert.deepEqual(names, ['Dispatch Lead', 'Dispatch Lead (Sierra Home Pros)', 'Dispatch Lead (Sierra Home Pros) 2', 'Dispatch Lead (Sierra Home Pros) 3']);
+  const long = 'W'.repeat(60);
+  const longNames = [1, 2, 3, 4].map(() => {
+    const name = S.unusedBotName(user, 'Estimate & Margin Watch', long);
+    mkBot(user, name);
+    return name;
+  });
+  assert.equal(new Set(longNames).size, 4);
+  assert.ok(longNames.every((n) => n.length <= 60));
+  mkBot(user, 'Solo');
+  assert.equal(S.unusedBotName(user, 'Solo', null), 'Solo 2');
+});
+
+test('a new main bot leaves its workspace; a main bot on a workspace team cannot be replaced', () => {
+  const { user, chief, botA, botB } = world();
+  const team = createTeam(user, 'Ops', { botIds: [botA, chief] });
+  assert.throws(() => S.makePrimary(user, botB), /Take Chief off Ops/);
+  db.prepare('DELETE FROM team_members WHERE team_id=? AND member_id=?').run(team, chief);
+  S.makePrimary(user, botB);
+  assert.deepEqual(bankIds(user, botB), [botB, M.SHARED]);
+});
+
+test('same-named bots and teams are reported, not guessed, and their ids work', () => {
+  const { user, a, chief, botA, botB, general } = world();
+  const twin = mkBot(user, 'Dispatch', S.createSpace(user, { name: 'Third' }).id);
+  const asChief = findBot(user, chief, 'dispatch');
+  assert.ok(!asChief.bot && asChief.ambiguous?.includes(botA) && asChief.ambiguous.includes(twin));
+  assert.equal(findBot(user, chief, twin).bot.id, twin);
+  assert.equal(findBot(user, botB, botA).bot, undefined);
+  assert.equal(findBot(user, general, 'Chief').bot.id, chief);
+  const one = createTeam(user, 'Ops', { botIds: [botA, chief] });
+  const two = createTeam(user, 'Ops', { botIds: [twin, chief] });
+  assert.match(postToRoom(chief, 'Ops', 'hi'), /several teams/);
+  assert.equal(postToRoom(chief, two, 'hi'), 'Posted to the team.');
+  assert.equal(postToRoom(botA, 'Ops', 'hi'), 'Posted to the team.');
+  assert.ok(one);
+  assert.ok(a);
+});
+
+test("merging accounts keeps workspace names unique", () => {
+  const owner = mkUser();
+  const member = mkUser();
+  S.createSpace(owner, { name: 'Acme' });
+  const theirs = S.createSpace(member, { name: 'Acme' });
+  initTeamMembers(db);
+  addMember(db, owner, `${member}@example.com`);
+  assert.equal(S.getSpace(owner, theirs.id)?.name, 'Acme 2');
+});
+
+test('workspace names that would not survive as vault folders are refused', () => {
+  const user = mkUser();
+  for (const name of ['-Acme', 'Acme-', '.Acme']) assert.throws(() => S.createSpace(user, { name }), /Leave out/);
+});
+
+test('a vault folder for a workspace is found by name, for the vault owner only', () => {
+  const { user, a } = world();
+  const vault = path.join(dir, 'vault');
+  fs.mkdirSync(path.join(vault, 'workspace', 'Businesses', a.name.toUpperCase()), { recursive: true });
+  process.env.OBSIDIAN_VAULT = vault;
+  process.env.OBSIDIAN_WORKSPACE = user;
+  try {
+    assert.match(workspaceFolder(user, a.name) ?? '', /^workspace\/Businesses\//);
+    assert.equal(workspaceFolder(mkUser(), a.name), null);
+    assert.equal(workspaceFolder(user, 'Nobody'), null);
+  } finally {
+    delete process.env.OBSIDIAN_VAULT;
+    delete process.env.OBSIDIAN_WORKSPACE;
+  }
 });
 
 test('vault notes under Businesses/<workspace>/ go to that workspace', () => {

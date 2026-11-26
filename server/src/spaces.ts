@@ -57,8 +57,8 @@ export interface SpaceInput { name?: unknown; kind?: unknown; description?: unkn
 function checkName(userId: string, raw: unknown, ownId = ''): string {
   const name = line(raw, SPACE_LIMITS.name);
   if (!name) throw new SpaceError('A workspace needs a name.');
-  if (/[\\/:*?"<>|#^[\]]/.test(name) || name.startsWith('.') || name.endsWith('.')) {
-    throw new SpaceError('Leave out these characters from the name: \\ / : * ? " < > | # ^ [ ] and leading or trailing dots.');
+  if (/[\\/:*?"<>|#^[\]]/.test(name) || /^[.-]|[.-]$/.test(name)) {
+    throw new SpaceError('Leave out these characters from the name: \\ / : * ? " < > | # ^ [ ] and leading or trailing dots or dashes.');
   }
   const taken = listSpaces(userId).some((s) => s.id !== ownId && s.name.toLowerCase() === name.toLowerCase());
   if (taken || ['general', 'shared'].includes(name.toLowerCase())) throw new SpaceError('A workspace with that name already exists.', 409);
@@ -96,6 +96,19 @@ export function updateSpace(userId: string, id: string, patch: SpaceInput): Spac
   return getSpace(userId, id)!;
 }
 
+/** A bot name nobody in the account uses yet, since bots are addressed by name: "X", "X (Workspace)", "X (Workspace) 2"… */
+export function unusedBotName(userId: string, base: string, spaceName: string | null, max = 60): string {
+  const taken = (n: string) => !!db.prepare('SELECT 1 FROM bots WHERE user_id=? AND lower(name)=lower(?)').get(userId, n);
+  if (!taken(base)) return base;
+  // A long workspace name is shortened so the number that makes the name unique is never cut off.
+  const place = spaceName ? ` (${spaceName.slice(0, 40)})` : '';
+  for (let i = 1; ; i++) {
+    const suffix = `${place}${i === 1 && place ? '' : ` ${place ? i : i + 1}`}`;
+    const name = `${base.slice(0, Math.max(0, max - suffix.length))}${suffix}`.slice(0, max);
+    if (!taken(name)) return name;
+  }
+}
+
 /** Only an empty workspace can go: moving its bots to General silently would change which memory they read. */
 export function deleteSpace(userId: string, id: string): void {
   const s = getSpace(userId, id);
@@ -105,6 +118,32 @@ export function deleteSpace(userId: string, id: string): void {
 }
 
 // ---------- who can reach whom ----------
+
+/**
+ * Makes a bot the primary one. The primary bot lives in General, so the new one leaves its workspace.
+ * Refused while the outgoing one sits on a workspace's team, which only a primary bot may do from outside.
+ */
+export function makePrimary(userId: string, botId: string): void {
+  const next = db.prepare('SELECT id, kind FROM bots WHERE id=? AND user_id=?').get(botId, userId) as any;
+  if (!next) throw new SpaceError('Bot not found.', 404);
+  const stuck = db.prepare(
+    `SELECT b.name AS bot, t.name AS team FROM bots b
+     JOIN team_members tm ON tm.member_kind='bot' AND tm.member_id=b.id
+     JOIN bots t ON t.id = tm.team_id
+     WHERE b.user_id=? AND b.is_primary=1 AND b.id<>? AND t.space_id IS NOT b.space_id`,
+  ).all(userId, botId) as { bot: string; team: string }[];
+  if (stuck.length) throw new SpaceError(`Take ${stuck[0].bot} off ${stuck.map((s) => s.team).join(', ')} first: only the main bot can be on another workspace's team.`, 409);
+  db.transaction(() => {
+    db.prepare('UPDATE bots SET is_primary = (id = ?) WHERE user_id=?').run(botId, userId);
+    if (next.kind !== 'team') setSpace(botId, null);
+  })();
+}
+
+/** Puts a bot in a workspace, with its helpers (subagents), so they read the same memory and can still report back. */
+function setSpace(botId: string, spaceId: string | null) {
+  const helpers = (db.prepare('PRAGMA table_info(bots)').all() as { name: string }[]).some((c) => c.name === 'parent_bot_id');
+  db.prepare(`UPDATE bots SET space_id=?, updated_at=? WHERE id=?${helpers ? ' OR parent_bot_id=?' : ''}`).run(spaceId, now(), botId, ...(helpers ? [botId] : []));
+}
 
 interface Placed { space_id?: string | null; is_primary?: number | boolean | null }
 
@@ -137,7 +176,5 @@ export function moveBot(userId: string, botId: string, raw: unknown): void {
     const outside = teams.filter((t) => (t.space_id ?? null) !== target).map((t) => t.name);
     if (outside.length) throw new SpaceError(`Take this bot off ${outside.join(', ')} first.`, 409);
   }
-  // Its helpers (subagents) go with it, so they keep reading the same memory and can still report back.
-  const helpers = (db.prepare('PRAGMA table_info(bots)').all() as { name: string }[]).some((c) => c.name === 'parent_bot_id');
-  db.prepare(`UPDATE bots SET space_id=?, updated_at=? WHERE id=?${helpers ? ' OR parent_bot_id=?' : ''}`).run(target, now(), botId, ...(helpers ? [botId] : []));
+  setSpace(botId, target);
 }

@@ -4,7 +4,7 @@ import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
 import type { Bot } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
-import { displayName, inSpace, useStore } from '../store';
+import { displayName, inSpace, shownSpace, useStore } from '../store';
 import { SpaceSwitcher, SpaceTag } from './Spaces';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
@@ -71,8 +71,9 @@ export function Sidebar() {
 
   const { working, needs } = useActiveBotCount();
   const primary = bots.find((b) => b.isPrimary);
-  const activeSpace = useStore((s) => s.activeSpace);
-  const others = bots.filter((b) => !b.isPrimary && inSpace(b, activeSpace)).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  const activeSpace = useStore(shownSpace);
+  // The collapsed rail has no switcher, so it shows every bot rather than hiding some without saying so.
+  const others = bots.filter((b) => !b.isPrimary && (collapsed || inSpace(b, activeSpace))).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
 
   return (
     <aside className={`sidebar${collapsed ? ' is-collapsed' : ''}`}>

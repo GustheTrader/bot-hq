@@ -283,10 +283,19 @@ export function dispatchRoomMessage(teamId: string, text: string, enqueue: (botI
         briefLine(team.id) +
         `Recent team messages:\n${recent}\n\n` +
         (others.length ? `If this is not your job, message the right member directly instead of guessing: ${others.map((o) => o.name).join(', ')}.\n` : '') +
-        `Reply to the team by calling post_to_group with group_name "${team.name}" (use your tools first if the request needs real work). ` +
+        `Reply to the team by calling post_to_group with group_name "${postName(m.id, team)}" (use your tools first if the request needs real work). ` +
         `Keep it short and don't repeat what other Bots already said. If you have nothing to add, call stay_silent. Do not write a normal reply.`,
     });
   }
+}
+
+/** What a bot passes as group_name: the team's name, or its id when the bot is on two teams of that name. */
+function postName(botId: string, team: { id: string; name: string }): string {
+  const twins = db.prepare(
+    `SELECT COUNT(*) n FROM bots t JOIN team_members m ON m.team_id=t.id AND m.member_kind='bot' AND m.member_id=?
+     WHERE t.kind='team' AND lower(t.name)=lower(?)`,
+  ).get(botId, team.name) as { n: number };
+  return twins.n > 1 ? team.id : team.name;
 }
 
 /** A person has no agent, so an @mention becomes a notice on the team channel. */
@@ -302,12 +311,12 @@ function notifyHuman(teamId: string, human: TeamMember, _text: string) {
 /** Post a message into a team you are a member of. */
 export function postToRoom(fromBotId: string, teamName: string, text: string) {
   const from = db.prepare('SELECT id, user_id, name FROM bots WHERE id=?').get(fromBotId) as any;
-  const team = db.prepare('SELECT * FROM bots WHERE id=? AND user_id=?').get(
-    // Two workspaces may each have a team of this name; the one the sender is on is meant.
-    (db.prepare(`SELECT id FROM bots WHERE user_id=? AND kind='team' AND lower(name)=lower(?)
-      ORDER BY EXISTS(SELECT 1 FROM team_members m WHERE m.team_id=bots.id AND m.member_kind='bot' AND m.member_id=?) DESC`).get(from.user_id, teamName.trim(), fromBotId) as any)?.id ?? '',
-    from.user_id,
-  ) as any;
+  const wanted = teamName.trim();
+  const named = db.prepare("SELECT * FROM bots WHERE user_id=? AND kind='team' AND (id=? OR lower(name)=lower(?))").all(from.user_id, wanted, wanted) as any[];
+  // Two workspaces may each have a team of this name: the one the sender is on is meant, if there is only one.
+  const mine = named.filter((t) => teamMembers(t.id).some((m) => m.kind === 'bot' && m.id === fromBotId));
+  if (mine.length > 1) return `You are on several teams named "${teamName}". Use the id as group_name: ${mine.map((t) => t.id).join(', ')}.`;
+  const team = mine[0] ?? named[0];
   if (!team) return `No team named "${teamName}".`;
   const member = teamMembers(team.id).find((m) => m.kind === 'bot' && m.id === fromBotId);
   if (!member) return `You're not a member of "${team.name}".`;

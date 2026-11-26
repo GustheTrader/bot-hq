@@ -1,6 +1,6 @@
 import type { Space } from '@shared/types';
 import { palette } from '../lib/colors';
-import { useStore } from '../store';
+import { shownSpace, useStore } from '../store';
 
 /** The coloured dot and name that say which business or project something belongs to. */
 export function SpaceTag({ spaceId }: { spaceId?: string | null }) {
@@ -38,7 +38,7 @@ export function SpaceSelect({ value, onChange, label = 'Workspace', id }: { valu
 /** The sidebar's view filter: everything, General, or one business or project. */
 export function SpaceSwitcher() {
   const spaces = useStore((s) => s.spaces);
-  const active = useStore((s) => s.activeSpace);
+  const active = useStore(shownSpace);
   const set = useStore((s) => s.set);
   const setModal = useStore((s) => s.setModal);
   return (

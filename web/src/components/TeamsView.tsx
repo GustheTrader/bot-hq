@@ -3,7 +3,7 @@ import type { Bot, TeamMember } from '@shared/types';
 import { api, type Human, type TeamsResponse } from '../lib/api';
 import { BotAvatarFor } from '../avatar/BotAvatar';
 import { relativeShort } from '../lib/time';
-import { displayName, inSpace, useStore } from '../store';
+import { displayName, inSpace, shownSpace, useStore } from '../store';
 import { SpaceSwitcher, SpaceTag } from './Spaces';
 import { useConfigUI } from '../configStore';
 import { Icon } from './Icon';
@@ -37,7 +37,7 @@ export function TeamsView() {
 
   useEffect(load, [load]);
 
-  const activeSpace = useStore((s) => s.activeSpace);
+  const activeSpace = useStore(shownSpace);
   const spaceOf = (id: string) => bots.find((b) => b.id === id)?.spaceId ?? null;
   // A team stays inside one workspace, so the first bot picked narrows the rest to its workspace.
   const pickedSpace = newBots.length ? spaceOf(newBots[0]) : undefined;

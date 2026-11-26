@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Space, SpaceKind } from '@shared/types';
 import { api } from '../../lib/api';
 import { useStore } from '../../store';
@@ -14,6 +14,8 @@ function SpaceRow({ space, onError }: { space: Space; onError: (e: string | null
     onError(null);
     try { await fn(); await useStore.getState().loadSpaces(); } catch (e) { onError((e as Error).message); }
   };
+  const renamed = !!name.trim() && name.trim() !== space.name;
+  const rename = () => run(() => api.updateSpace(space.id, { name }));
   return (
     <li className="space-list__row">
       <div className="space-list__head">
@@ -21,8 +23,16 @@ function SpaceRow({ space, onError }: { space: Space; onError: (e: string | null
         <span className="space-list__meta">{space.kind === 'business' ? 'Business' : 'Project'} · Bots and teams: {space.botCount} · Projects: {space.projectCount}</span>
       </div>
       <div className="space-list__edit">
-        <input className="text-input" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} aria-label={`Name of ${space.name}`} />
-        {name.trim() && name.trim() !== space.name && <button type="button" className="btn btn--secondary btn--sm" onClick={() => run(() => api.updateSpace(space.id, { name }))}>Rename</button>}
+        <input
+          className="text-input"
+          value={name}
+          maxLength={60}
+          onChange={(e) => setName(e.target.value)}
+          // Enter here renames; it must not submit the dialog's "new workspace" form.
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (renamed) void rename(); } }}
+          aria-label={`Name of ${space.name}`}
+        />
+        {renamed && <button type="button" className="btn btn--secondary btn--sm" onClick={rename}>Rename</button>}
         <button
           type="button"
           className="btn btn--secondary btn--sm"
@@ -47,6 +57,8 @@ export function SpacesModal() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const close = useCallback(() => setModal(null), [setModal]);
+  // Counts may be stale: bots and projects can have moved since they were last read.
+  useEffect(() => { useStore.getState().loadSpaces().catch((e) => setError((e as Error).message)); }, []);
 
   const create = async (thenAddBot: boolean) => {
     if (!name.trim() || busy) return;

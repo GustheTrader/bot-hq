@@ -11,12 +11,13 @@ import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relatio
  *
  *   <vault>/workspace/            people write here; bots learn it
  *     Shared/…                    → the `shared` bank (every bot in General)
- *     Businesses/<workspace>/…    → that workspace's bank
+ *     Businesses/<workspace name>/… → that workspace's bank (matched by name, not id)
  *     Teams/<team name>/…         → that team's bank
  *     Bots/<bot name>/…           → that bot's own bank
  *   <vault>/Memory/               Bot HQ writes here; never read back
  *     Ontology.md
- *     Shared/, Teams/<team name>/, Bots/<bot name>/   each: 00 <name>.md + <type plural>/<entity>.md
+ *     Shared/, Businesses/<workspace name>/, Teams/<team name>/, Bots/<bot name>/
+ *                                 each: 00 <name>.md + <type plural>/<entity>.md
  *
  * In: each changed note is saved to its bank as one document (its path's hash is the document id,
  * so an edit replaces the old version and a deleted note is forgotten). Its `type:` and link fields
@@ -28,7 +29,7 @@ import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relatio
  * is named `Memory` because the zo-vaults indexer already skips folders of that name.
  *
  * The vault belongs to one workspace (OBSIDIAN_WORKSPACE: an account id or email; by default the
- * only account that has bots). Only that account's bots, teams and `shared` are synced, and only
+ * only account that has bots). Only that account's bots, teams, workspaces and `shared` are synced, and only
  * that account (or its workspace members) can see the sync or start it.
  */
 
@@ -124,6 +125,17 @@ export function noteText(n: Note): string {
 }
 
 // ---------- which bank a note goes to ----------
+
+/** The vault folder (`Businesses/<name>`) holding this account's notes for a workspace of that name, if there is one. */
+export function workspaceFolder(userId: string, name: string): string | null {
+  const vault = vaultPath();
+  const owner = vaultOwner();
+  if (!vault || !('id' in owner) || owner.id !== userId) return null;
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(path.join(vault, 'workspace', 'Businesses'), { withFileTypes: true }); } catch { return null; }
+  const hit = entries.find((e) => e.isDirectory() && e.name.trim().toLowerCase() === name.toLowerCase());
+  return hit ? `workspace/Businesses/${hit.name}` : null;
+}
 
 function bankByName(userId: string, kind: 'team' | 'agent', name: string): Bank | null | 'ambiguous' {
   const rows = db.prepare("SELECT id FROM bots WHERE user_id=? AND lower(name)=lower(?) AND COALESCE(kind,'agent')=? AND COALESCE(hidden,0)=0").all(userId, name.trim(), kind) as any[];

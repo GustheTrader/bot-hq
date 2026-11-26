@@ -259,8 +259,8 @@ CREATE TABLE IF NOT EXISTS spaces (
 );
 CREATE INDEX IF NOT EXISTS spaces_user ON spaces(user_id, created_at);
 `);
-addColumn('bots', 'space_id', 'TEXT');
-addColumn('projects', 'space_id', 'TEXT');
+addColumn('bots', 'space_id', 'TEXT REFERENCES spaces(id)');
+addColumn('projects', 'space_id', 'TEXT REFERENCES spaces(id)');
 
 
 // Legacy group chats were kind='room' with a JSON members list of bot ids. Promote them to

@@ -44,6 +44,27 @@ export function listMembers(db: Database.Database, workspaceId: string): Member[
 const tableHas = (db: Database.Database, table: string, col: string) =>
   (db.prepare('SELECT COUNT(*) n FROM pragma_table_info(?) WHERE name=?').get(table, col) as any).n > 0;
 
+/** The most workspaces one account may hold (spaces.ts SPACE_LIMITS, repeated so this module stays database-only). */
+const MAX_SPACES = 50;
+
+/** Before a newcomer's workspaces move across: refuses past the limit and renames any whose name is already used. */
+function mergeSpaceNames(db: Database.Database, ownerId: string, memberId: string) {
+  const names = (id: string) => db.prepare('SELECT id, name FROM spaces WHERE user_id=? ORDER BY created_at').all(id) as { id: string; name: string }[];
+  const mine = names(ownerId);
+  const theirs = names(memberId);
+  if (mine.length + theirs.length > MAX_SPACES) throw new TeamError(`Together you would have more than ${MAX_SPACES} workspaces. Delete some empty ones first.`);
+  const used = new Set(mine.map((s) => s.name.toLowerCase()));
+  const all = new Set([...used, ...theirs.map((s) => s.name.toLowerCase())]);
+  for (const s of theirs) {
+    if (!used.has(s.name.toLowerCase())) { used.add(s.name.toLowerCase()); continue; }
+    let name = s.name;
+    for (let i = 2; all.has(name.toLowerCase()); i++) name = `${s.name.slice(0, 54)} ${i}`;
+    db.prepare('UPDATE spaces SET name=? WHERE id=?').run(name, s.id);
+    used.add(name.toLowerCase());
+    all.add(name.toLowerCase());
+  }
+}
+
 /**
  * Brings the person with this email into `workspaceId`. They must have signed in once (so they have an account)
  * and must not already be in a workspace or have members of their own. Returns the new member and how many of
@@ -61,6 +82,7 @@ export function addMember(db: Database.Database, workspaceId: string, email: str
 
   let botsMoved = 0;
   db.transaction(() => {
+    if (tableHas(db, 'spaces', 'user_id')) mergeSpaceNames(db, workspaceId, u.id);
     for (const t of MOVE) {
       if (!tableHas(db, t, 'user_id')) continue;
       const r = db.prepare(`UPDATE ${t} SET user_id=? WHERE user_id=?`).run(workspaceId, u.id);

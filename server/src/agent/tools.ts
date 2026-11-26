@@ -52,10 +52,22 @@ function reachable(userId: string, fromBotId: string): any[] {
   return all.filter((b) => canReach(from, b));
 }
 
-/** A bot by name, among those the asking bot can reach; one in its own workspace wins. */
-function botByName(userId: string, fromBotId: string, name: string) {
-  const wanted = name.trim().toLowerCase();
-  return reachable(userId, fromBotId).find((b) => String(b.name).toLowerCase() === wanted);
+/**
+ * A bot by id or name, among those the asking bot can reach; one in its own workspace wins over others.
+ * Several equally good matches are reported, never picked from.
+ */
+export function findBot(userId: string, fromBotId: string, nameOrId: string): { bot?: any; ambiguous?: string } {
+  const wanted = String(nameOrId ?? '').trim();
+  const all = reachable(userId, fromBotId);
+  const byId = all.find((b) => b.id === wanted);
+  if (byId) return { bot: byId };
+  const named = all.filter((b) => String(b.name).toLowerCase() === wanted.toLowerCase());
+  const own = (db.prepare('SELECT space_id FROM bots WHERE id=?').get(fromBotId) as any)?.space_id ?? null;
+  const near = named.filter((b) => (b.space_id ?? null) === own);
+  const best = near.length ? near : named;
+  if (best.length < 2) return { bot: best[0] };
+  const where = (id: string | null) => (id ? (db.prepare('SELECT name FROM spaces WHERE id=?').get(id) as any)?.name : null) ?? 'General';
+  return { ambiguous: `Several Bots are named "${wanted}". Use the id instead: ${best.map((b) => `${b.id} (${where(b.space_id)})`).join(', ')}.` };
 }
 
 /** Live X research through xAI's search tool. Returns the answer text followed by the posts it cites. */
@@ -472,12 +484,13 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'send_to_bot',
-    description: "Send a message to another Bot on the user's team (by name) to delegate work or ask a question. Their reply will arrive later as a new message to you.",
+    description: "Send a message to another Bot on the user's team (by name, or by id when two share a name) to delegate work or ask a question. Their reply will arrive later as a new message to you.",
     parameters: obj({ bot_name: { type: 'string' }, message: { type: 'string' } }, ['bot_name', 'message']),
     activity: 'messaging_named',
     label: 'Messaging a Bot',
     impl: async (a, ctx) => {
-      const target = botByName(ctx.userId, ctx.botId, a.bot_name);
+      const { bot: target, ambiguous } = findBot(ctx.userId, ctx.botId, a.bot_name);
+      if (ambiguous) return { output: ambiguous };
       if (!target) return { output: `No bot named "${a.bot_name}". Team: ${reachable(ctx.userId, ctx.botId).map((b) => b.name).join(', ')}` };
       if (target.id === ctx.botId) return { output: 'That is you.' };
       if (target.kind === 'team') return { output: `"${target.name}" is a team channel; use post_to_group instead.` };
@@ -496,7 +509,8 @@ export const TOOLS: ToolDef[] = [
       const ids: string[] = [];
       const missing: string[] = [];
       for (const n of (a.bot_names ?? []) as string[]) {
-        const b = botByName(ctx.userId, ctx.botId, n);
+        const { bot: b, ambiguous } = findBot(ctx.userId, ctx.botId, n);
+        if (ambiguous) return { output: ambiguous };
         if (b && b.kind !== 'team') ids.push(b.id); else missing.push(n);
       }
       if (ids.length < 2) return { output: `A team needs at least 2 Bots. Not found: ${missing.join(', ') || 'none'}.` };

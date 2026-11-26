@@ -4,7 +4,7 @@ import { portraitPreset } from '@shared/portraits';
 import { BotAvatarFor, PortraitPresets } from '../../avatar/BotAvatar';
 import { api, type PublicTemplate } from '../../lib/api';
 import { COLOR_ORDER, palette } from '../../lib/colors';
-import { newSpaceId, useStore } from '../../store';
+import { newSpaceId, shownSpace, useStore } from '../../store';
 import { SpaceSelect } from '../Spaces';
 import { Icon } from '../Icon';
 import { Modal } from './Modal';
@@ -23,7 +23,7 @@ export function CreateBotModal() {
   const [templates, setTemplates] = useState<PublicTemplate[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
-  const [spaceId, setSpaceId] = useState<string | null>(() => newSpaceId(useStore.getState().activeSpace));
+  const [spaceId, setSpaceId] = useState<string | null>(() => newSpaceId(shownSpace(useStore.getState())));
   const spaces = useStore((s) => s.spaces);
   const blankPortrait = `preset:${1 + peerCount % 5}`;
   const close = useCallback(() => setModal(null), [setModal]);

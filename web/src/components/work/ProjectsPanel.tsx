@@ -6,7 +6,7 @@ import { Glyph } from '../config/glyphs';
 import { Composer } from './Composer';
 import { EnginePicker } from './EnginePicker';
 import { engineLabel, errText, t3Url, useHarnesses } from './shared';
-import { inSpace, newSpaceId, useStore } from '../../store';
+import { inSpace, newSpaceId, shownSpace, useStore } from '../../store';
 import { SpaceSelect, SpaceSwitcher, SpaceTag } from '../Spaces';
 
 function SkillForm({ initial, onSave, onCancel, onDelete }: {
@@ -77,6 +77,15 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
     finally { setSaving(null); }
   };
 
+  /** Moves only the project's workspace, leaving unsaved edits in the settings form alone. */
+  const moveToSpace = async (spaceId: string | null) => {
+    setError(null);
+    try {
+      setProject((await configApi.updateProject(id, { spaceId })).project);
+      await useStore.getState().loadSpaces();
+    } catch (e) { setError(errText(e, 'Could not move the project')); }
+  };
+
   /** Registers the folder with the Code workspace (T3), which has real terminals, then opens it. */
   const openInCode = async () => {
     setCode('adding');
@@ -105,7 +114,7 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
       </div>
       <label className="proj-space">
         <span className="section-label">Workspace</span>
-        <SpaceSelect value={project.spaceId ?? null} onChange={(spaceId) => { void save('settings', { spaceId }); }} />
+        <SpaceSelect value={project.spaceId ?? null} onChange={(spaceId) => { void moveToSpace(spaceId); }} />
       </label>
       {project.description && <p className="proj-detail__desc">{project.description}</p>}
       {project.folder && <p className="proj-detail__folder">{project.folder}</p>}
@@ -214,7 +223,7 @@ export function ProjectsPanel() {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ name: '', folder: '', description: '' });
   const [busy, setBusy] = useState(false);
-  const activeSpace = useStore((s) => s.activeSpace);
+  const activeSpace = useStore(shownSpace);
 
   const load = useCallback(() => {
     configApi.projects().then((r) => { setProjects(r.projects); setError(null); }).catch((e) => setError(errText(e, 'Could not load projects')));
@@ -230,6 +239,7 @@ export function ProjectsPanel() {
       setDraft({ name: '', folder: '', description: '' });
       setCreating(false);
       setOpenId(r.project.id);
+      useStore.getState().loadSpaces().catch(() => {});
     } catch (e) { setError(errText(e, 'Could not create the project')); }
     finally { setBusy(false); }
   };

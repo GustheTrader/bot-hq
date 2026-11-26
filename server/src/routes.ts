@@ -9,7 +9,7 @@ import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, screenTicket, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, clearPendingQuestion, describeCron, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { TemplateError, planFromTemplate, publicTemplates, type Requirement } from './bot-templates.js';
-import { SpaceError, getSpace, moveBot, spaceIdFrom } from './spaces.js';
+import { SpaceError, getSpace, makePrimary, moveBot, spaceIdFrom, unusedBotName } from './spaces.js';
 import { buildflowEnabled } from './buildflow.js';
 import { box } from './box.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
@@ -262,9 +262,7 @@ function createFromTemplate(userId: string, body: any) {
   const plan = planFromTemplate(String(body.template), body.inputs ?? {}, { name: body.name, timezone: body.timezone, available: templateConnections() });
   // Two businesses using one template would otherwise both get a "Dispatch Lead", and bots are addressed by name.
   const spaceId = spaceIdFrom(userId, body.spaceId);
-  const taken = !!db.prepare('SELECT 1 FROM bots WHERE user_id=? AND lower(name)=lower(?)').get(userId, plan.bot.name);
-  const suffix = spaceId ? ` (${getSpace(userId, spaceId)!.name})` : '';
-  const name = taken && suffix ? `${plan.bot.name.slice(0, Math.max(0, 60 - suffix.length))}${suffix}` : plan.bot.name;
+  const name = unusedBotName(userId, plan.bot.name, spaceId ? getSpace(userId, spaceId)!.name : null);
   const bot = createBot(userId, { ...plan.bot, name, avatarShape: body.avatarShape, avatarImage: body.avatarImage ?? plan.bot.avatarImage, mode: body.mode, spaceId });
 
   const def = HARNESSES.find((h) => h.id === plan.harness);
@@ -327,6 +325,8 @@ api.patch('/bots/:id', async (c) => {
     }
   }
   emitBot(b.id);
+  // Workspace counts changed with the move.
+  if (p.spaceId !== undefined) hub.emit(b.user_id, { type: 'roster' });
   return c.json({ bot: getBot(b.id) });
 });
 
@@ -356,7 +356,10 @@ api.post('/bots/:id/primary', (c) => {
   const user = c.get('user');
   const b = ownBot(user.id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  db.prepare('UPDATE bots SET is_primary = (id = ?) WHERE user_id=?').run(b.id, user.id);
+  try { makePrimary(user.id, b.id); } catch (e) {
+    if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
   hub.emit(user.id, { type: 'roster' });
   return c.json({ ok: true });
 });

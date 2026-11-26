@@ -24,7 +24,7 @@ export function createSubagent(parentId: string, goal: string, label?: string) {
   const name = `${p.name} · ${(label || goal).replace(/\s+/g, ' ').slice(0, 32)}`;
   const instructions =
     `You are a subagent of ${p.name}, working on one delegated goal:\n${goal}\n\n` +
-    `Work independently with your own tools and computer. When you finish (or get blocked), call send_to_bot with bot_name "${p.name}" and a concise result, then stop. Do not message the user directly.` +
+    `Work independently with your own tools and computer. When you finish (or get blocked), call send_to_bot with bot_name "${p.id}" (${p.name}) and a concise result, then stop. Do not message the user directly.` +
     (p.instructions ? `\n\nYour parent's standing instructions:\n${p.instructions}` : '');
   db.prepare(
     `INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,is_primary,effort,parent_bot_id,hidden,space_id,created_at,updated_at)

@@ -215,6 +215,10 @@ export function sortedRows(t: Transcript | undefined): Row[] {
 export const inSpace = (item: { spaceId?: string | null }, active: string) =>
   active === 'all' || (active === 'general' ? !item.spaceId : item.spaceId === active);
 
+/** The filter in force: a stored id that names no known workspace shows everything. */
+export const shownSpace = (s: { activeSpace: string; spaces: Space[] }) =>
+  s.activeSpace === 'general' || s.spaces.some((x) => x.id === s.activeSpace) ? s.activeSpace : 'all';
+
 /** The workspace new things go into under the current filter (null = General). */
 export const newSpaceId = (active: string) => (active === 'all' || active === 'general' ? null : active);
 
