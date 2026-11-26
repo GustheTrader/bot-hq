@@ -245,6 +245,23 @@ CREATE TABLE IF NOT EXISTS project_skills (
 CREATE INDEX IF NOT EXISTS project_skills_project ON project_skills(project_id, created_at);
 `);
 
+// Workspaces, one per business or project (spaces.ts). A bot, team or project with no space_id is "General".
+db.exec(`
+CREATE TABLE IF NOT EXISTS spaces (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'business',
+  description TEXT NOT NULL DEFAULT '',
+  color TEXT NOT NULL DEFAULT 'blue',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS spaces_user ON spaces(user_id, created_at);
+`);
+addColumn('bots', 'space_id', 'TEXT');
+addColumn('projects', 'space_id', 'TEXT');
+
 
 // Legacy group chats were kind='room' with a JSON members list of bot ids. Promote them to
 // teams (with team_members rows) once, then leave 'room' behind. Idempotent: the UPDATE only

@@ -9,6 +9,7 @@ import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, screenTicket, userFromCookieHeader, type AuthVars } from './lib/auth.js';
 import { allLive, appendRow, clearConversation, clearPendingQuestion, describeCron, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
 import { TemplateError, planFromTemplate, publicTemplates, type Requirement } from './bot-templates.js';
+import { SpaceError, getSpace, moveBot, spaceIdFrom } from './spaces.js';
 import { buildflowEnabled } from './buildflow.js';
 import { box } from './box.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
@@ -46,7 +47,8 @@ class UserError extends Error {}
 
 const agentCount = () => (db.prepare("SELECT COUNT(*) n FROM bots WHERE COALESCE(kind,'agent')<>'team' AND COALESCE(hidden,0)=0").get() as any).n as number;
 
-function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; avatarImage?: string; mode?: string; isPrimary?: boolean }) {
+function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; avatarImage?: string; mode?: string; isPrimary?: boolean; spaceId?: unknown }) {
+  const spaceId = b.isPrimary ? null : spaceIdFrom(userId, b.spaceId);
   // Every bot needs a screen of its own on the one shared computer.
   if (agentCount() >= env.maxBots) throw new UserError(`The team is full: the computer has room for ${env.maxBots} bots. Remove one to add another.`);
   const id = newId('bot');
@@ -54,8 +56,8 @@ function createBot(userId: string, b: { name: string; label?: string; descriptio
   const color = COLORS.includes(b.avatarColor as AvatarColor) ? b.avatarColor : hashPick(id, COLORS.filter((c) => c !== 'black'));
   const image = isPortraitPreset(b.avatarImage) ? b.avatarImage : null;
   db.prepare(
-    'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,avatar_image,mode,is_primary,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-  ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, image, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, now(), now());
+    'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,avatar_image,mode,is_primary,space_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, image, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, spaceId, now(), now());
   // The first bot is the agent that already runs on the computer; the others get an engine of their own.
   if (assignEngine(id) === 'managed') provisionEngine(id);
   hub.emit(userId, { type: 'roster' });
@@ -258,7 +260,12 @@ api.get('/bot-templates', (c) => c.json({ templates: publicTemplates(templateCon
 /** A new Bot from a template: its persona and instructions, the agent program it runs on, and its first routine. */
 function createFromTemplate(userId: string, body: any) {
   const plan = planFromTemplate(String(body.template), body.inputs ?? {}, { name: body.name, timezone: body.timezone, available: templateConnections() });
-  const bot = createBot(userId, { ...plan.bot, avatarShape: body.avatarShape, avatarImage: body.avatarImage, mode: body.mode });
+  // Two businesses using one template would otherwise both get a "Dispatch Lead", and bots are addressed by name.
+  const spaceId = spaceIdFrom(userId, body.spaceId);
+  const taken = !!db.prepare('SELECT 1 FROM bots WHERE user_id=? AND lower(name)=lower(?)').get(userId, plan.bot.name);
+  const suffix = spaceId ? ` (${getSpace(userId, spaceId)!.name})` : '';
+  const name = taken && suffix ? `${plan.bot.name.slice(0, Math.max(0, 60 - suffix.length))}${suffix}` : plan.bot.name;
+  const bot = createBot(userId, { ...plan.bot, name, avatarShape: body.avatarShape, avatarImage: body.avatarImage ?? plan.bot.avatarImage, mode: body.mode, spaceId });
 
   const def = HARNESSES.find((h) => h.id === plan.harness);
   if (def && def.id !== 'hermes' && box.local && harnessInstalled(def)) {
@@ -284,6 +291,7 @@ api.post('/bots', async (c) => {
   } catch (e: any) {
     if (e instanceof UserError) return c.json({ error: e.message }, 409);
     if (e instanceof TemplateError) return c.json({ error: e.message }, 400);
+    if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
     throw e;
   }
 });
@@ -300,11 +308,18 @@ api.patch('/bots/:id', async (c) => {
   }
   const cols: Record<string, string> = { name: 'name', label: 'label', description: 'description', instructions: 'instructions', avatarShape: 'avatar_shape', avatarColor: 'avatar_color', mode: 'mode', effort: 'effort', pinned: 'pinned', voice: 'voice', voiceSpeed: 'voice_speed', voiceLanguage: 'voice_language' };
   cols.avatarImage = 'avatar_image';
+  // First, so a refused move changes nothing else.
+  if (p.spaceId !== undefined) {
+    try { moveBot(c.get('user').id, b.id, p.spaceId); } catch (e) {
+      if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
+      throw e;
+    }
+  }
   for (const [k, col] of Object.entries(cols)) {
     if (p[k] !== undefined) db.prepare(`UPDATE bots SET ${col}=?, updated_at=? WHERE id=?`).run(typeof p[k] === 'boolean' ? (p[k] ? 1 : 0) : p[k], now(), b.id);
   }
   if (b.kind !== 'team') {
-    if (['name', 'label', 'description'].some((k) => p[k] !== undefined)) syncPersona(b.id);
+    if (['name', 'label', 'description', 'spaceId'].some((k) => p[k] !== undefined)) syncPersona(b.id);
     // Its desktop carries its name and colour: dress the screen again, if it has one.
     const looks = ['name', 'label', 'avatarShape', 'avatarColor'].some((k) => p[k] !== undefined);
     if (looks && db.prepare('SELECT 1 FROM screens WHERE bot_id=?').get(b.id)) {

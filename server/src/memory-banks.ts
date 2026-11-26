@@ -5,7 +5,10 @@ import { db, now } from './db.js';
  *
  * - a bot's own bank, named after the bot's id (`bot_…`): what that one agent learned;
  * - a team's bank, named after the team's id (`team_…`): decisions and outcomes the team shares;
- * - `shared`: what every bot on the computer knows (Hermes' own memory provider writes here too).
+ * - `shared`: what every bot in General knows (Hermes' own memory provider writes here too).
+ *
+ * A workspace (spaces.ts) has a bank of its own (`spc_…`) that takes the place of `shared` for its bots,
+ * so one business's facts do not reach another's.
  *
  * Who may use which bank is worked out from the roster, not stored a second time: a bot uses its
  * own bank, the banks of the teams it is on (read only when it is an observer there) and `shared`.
@@ -32,27 +35,34 @@ type Fetch = (url: string, init?: { method?: string; headers?: Record<string, st
   Promise<{ ok: boolean; status: number; json(): Promise<any>; text(): Promise<string> }>;
 
 const sharedBank = (): Bank => ({ id: SHARED, layer: 'everyone', label: 'Everyone (shared)', writable: true, ownerId: SHARED });
+const spaceBank = (s: { id: string; name: string }): Bank => ({ id: s.id, layer: 'everyone', label: `Everyone at ${s.name}`, writable: true, ownerId: s.id });
+const spaceRow = (userId: string, id: string) => db.prepare('SELECT id, name FROM spaces WHERE id=? AND user_id=?').get(id, userId) as { id: string; name: string } | undefined;
 
 // ---------- who may use which bank ----------
 
-/** The teams a bot is on (in its owner's account), with its role there. */
+/** The teams a bot is on (in its owner's account), with its role there. Only the primary bot's reach crosses workspaces. */
 function teamsOf(userId: string, botId: string): { id: string; name: string; role: string }[] {
   return db.prepare(
-    `SELECT t.id, t.name, tm.role FROM team_members tm JOIN bots t ON t.id = tm.team_id
-     WHERE tm.member_kind = 'bot' AND tm.member_id = ? AND t.user_id = ? AND t.kind = 'team' ORDER BY t.created_at`,
+    `SELECT t.id, t.name, tm.role FROM team_members tm JOIN bots t ON t.id = tm.team_id JOIN bots b ON b.id = tm.member_id
+     WHERE tm.member_kind = 'bot' AND tm.member_id = ? AND t.user_id = ? AND t.kind = 'team'
+       AND (b.is_primary = 1 OR t.space_id IS b.space_id) ORDER BY t.created_at`,
   ).all(botId, userId) as { id: string; name: string; role: string }[];
 }
 
 /** Every bank this bot may read, in the order recall searches them (its own first). */
 export function banksForBot(userId: string, botId: string): Bank[] {
-  const bot = db.prepare("SELECT id, name FROM bots WHERE id=? AND user_id=? AND COALESCE(kind,'agent')<>'team'").get(botId, userId) as { id: string; name: string } | undefined;
+  const bot = db.prepare("SELECT id, name, space_id, is_primary FROM bots WHERE id=? AND user_id=? AND COALESCE(kind,'agent')<>'team'").get(botId, userId) as { id: string; name: string; space_id: string | null; is_primary: number } | undefined;
   if (!bot) return [];
   const out: Bank[] = [];
   if (BANK_RE.test(bot.id)) out.push({ id: bot.id, layer: 'me', label: `${bot.name} (own)`, writable: true, ownerId: bot.id });
   for (const t of teamsOf(userId, botId)) {
     if (BANK_RE.test(t.id)) out.push({ id: t.id, layer: 'team', label: `Team ${t.name}`, writable: t.role !== 'observer', ownerId: t.id });
   }
-  out.push(sharedBank());
+  if (bot.space_id && !bot.is_primary) {
+    // A workspace that cannot be found gives no common bank at all, never the account-wide one.
+    const space = spaceRow(userId, bot.space_id);
+    if (space) out.push(spaceBank(space));
+  } else out.push(sharedBank());
   return out;
 }
 
@@ -60,6 +70,7 @@ export function banksForBot(userId: string, botId: string): Bank[] {
 export function banksForUser(userId: string): { id: string; layer: Layer; label: string }[] {
   const rows = db.prepare("SELECT id, name, COALESCE(kind,'agent') kind FROM bots WHERE user_id=? AND COALESCE(hidden,0)=0 ORDER BY created_at").all(userId) as any[];
   const out: { id: string; layer: Layer; label: string }[] = [{ id: SHARED, layer: 'everyone', label: 'Everyone (shared)' }];
+  for (const s of db.prepare('SELECT id, name FROM spaces WHERE user_id=? ORDER BY created_at').all(userId) as { id: string; name: string }[]) out.push(spaceBank(s));
   for (const r of rows) {
     if (!BANK_RE.test(r.id)) continue;
     out.push(r.kind === 'team' ? { id: r.id, layer: 'team', label: `Team ${r.name}` } : { id: r.id, layer: 'me', label: r.name });
@@ -81,6 +92,8 @@ export function userMayView(userId: string, bankId: string): boolean {
 /** A bank in one account by id, as the app labels it (for writes the app makes, not on a bot's behalf). */
 export function bankById(userId: string, bankId: string): Bank | null {
   if (bankId === SHARED) return sharedBank();
+  const space = spaceRow(userId, bankId);
+  if (space) return spaceBank(space);
   const r = db.prepare("SELECT id, name, COALESCE(kind,'agent') kind FROM bots WHERE id=? AND user_id=?").get(bankId, userId) as any;
   if (!r || !BANK_RE.test(r.id)) return null;
   return r.kind === 'team'
@@ -141,6 +154,7 @@ async function call(path: string, method: string, body: unknown, fetchFn: Fetch,
 const ready = new Set<string>([SHARED]);
 
 function missionFor(bank: Bank): string {
+  if (bank.layer === 'everyone') return `What the bots of one workspace all know (${bank.label.replace(/^Everyone at /, '')}).`;
   return bank.layer === 'team'
     ? `Shared memory of ${bank.label}: decisions, outcomes and facts the team's agents learned while working.`
     : `Memory of ${bank.label.replace(/ \(own\)$/, '')}, one AI agent on the team: what it learned while working.`;

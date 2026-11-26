@@ -3,7 +3,8 @@ import type { Bot, TeamMember } from '@shared/types';
 import { api, type Human, type TeamsResponse } from '../lib/api';
 import { BotAvatarFor } from '../avatar/BotAvatar';
 import { relativeShort } from '../lib/time';
-import { displayName, useStore } from '../store';
+import { displayName, inSpace, useStore } from '../store';
+import { SpaceSwitcher, SpaceTag } from './Spaces';
 import { useConfigUI } from '../configStore';
 import { Icon } from './Icon';
 import { LiveSignal } from './LiveSignal';
@@ -36,8 +37,15 @@ export function TeamsView() {
 
   useEffect(load, [load]);
 
-  const candidateBots = bots.filter((b) => b.kind !== 'team' && !b.isPrimary);
-  const team = data?.teams.find((t) => t.id === selected) ?? null;
+  const activeSpace = useStore((s) => s.activeSpace);
+  const spaceOf = (id: string) => bots.find((b) => b.id === id)?.spaceId ?? null;
+  // A team stays inside one workspace, so the first bot picked narrows the rest to its workspace.
+  const pickedSpace = newBots.length ? spaceOf(newBots[0]) : undefined;
+  const candidateBots = bots.filter((b) => b.kind !== 'team' && !b.isPrimary && inSpace(b, activeSpace) && (pickedSpace === undefined || (b.spaceId ?? null) === pickedSpace));
+  const shown = data?.teams.filter((t) => inSpace({ spaceId: spaceOf(t.id) }, activeSpace)) ?? [];
+  const team = shown.find((t) => t.id === selected) ?? shown[0] ?? null;
+  // A pick made under another filter would be hidden but still sent.
+  useEffect(() => { setNewBots([]); }, [activeSpace]);
 
   const createTeam = async () => {
     if (!newName.trim() || newBots.length === 0) return;
@@ -64,6 +72,7 @@ export function TeamsView() {
       <header className="teams-view__header">
         <div className="teams-view__title">Teams</div>
         <div className="teams-view__sub">Bots and people working the same roster</div>
+        <SpaceSwitcher />
       </header>
       <div className="teams-view__scroll">
         <div className="teams-view__inner">
@@ -89,6 +98,7 @@ export function TeamsView() {
                   >
                     <BotAvatarFor bot={b} size={18} />
                     <span>{b.name}</span>
+                    {activeSpace === 'all' && <SpaceTag spaceId={b.spaceId} />}
                   </button>
                 ))}
                 {candidateBots.length === 0 && <div className="teams-new__empty">Create a Bot first — a team needs at least one.</div>}
@@ -101,7 +111,7 @@ export function TeamsView() {
 
           {data === null ? (
             <div className="cfg-empty">Loading…</div>
-          ) : data.teams.length === 0 ? (
+          ) : shown.length === 0 ? (
             <div className="tasks-empty">
               <Glyph name="tasks" size={28} opacity={0.35} />
               <div className="tasks-empty__title">No teams yet</div>
@@ -110,17 +120,19 @@ export function TeamsView() {
           ) : (
             <>
               <div className="teams-tabs">
-                {data.teams.map((t) => (
-                  <button key={t.id} type="button" className={`teams-tab${t.id === selected ? ' is-active' : ''}`} onClick={() => setSelected(t.id)}>
+                {shown.map((t) => (
+                  <button key={t.id} type="button" className={`teams-tab${t.id === team?.id ? ' is-active' : ''}`} onClick={() => setSelected(t.id)}>
                     {t.name}
+                    {activeSpace === 'all' && <SpaceTag spaceId={spaceOf(t.id)} />}
                     <span className="teams-tab__count">{t.members.length}</span>
                   </button>
                 ))}
               </div>
               {team && (
                 <TeamDetail
+                  key={team.id}
                   team={team}
-                  bots={bots}
+                  bots={bots.filter((b) => b.isPrimary || (b.spaceId ?? null) === spaceOf(team.id))}
                   humans={data.humans}
                   onOpenChat={() => openTeamChat(team.id)}
                   onChanged={load}

@@ -8,7 +8,10 @@ Status: built on branch `claude/memory-banks`, not deployed. Nothing changes on 
 |---|---|---|---|
 | A bot's own | the bot's HQ id (`bot_…`) | that bot | that bot |
 | A team's | the team's id (`team_…`) | every bot on the team | members; **observers read only** |
-| Global | `shared` (already live, ~760 facts) | every bot | every bot, and Hermes' own memory provider |
+| Global | `shared` (already live, ~760 facts) | every bot in General | every bot in General, and Hermes' own memory provider |
+| A workspace's | the workspace's id (`spc_…`) | the bots of that workspace | the bots of that workspace |
+
+**Workspaces** (`server/src/spaces.ts`): one per business or project. For a bot in a workspace, its bank takes the place of `shared`, so `everyone` means that workspace and nothing is read from or written to the global bank. The primary bot stays in General, reads `shared`, and may join teams in any workspace. A bot's own bank moves with it, including what it learned before the move. App connections, Build-flow and the computer's files are not separated.
 
 Access is worked out from the roster each time (`server/src/memory-banks.ts`), not stored a second time. Another account's bots and teams are never in reach. A bot's or team's bank is created on its first save (`PUT`, idempotent). `shared` is never re-created by the app.
 
@@ -48,11 +51,12 @@ It extends `Projects/unified-memory/ONTOLOGY.md` (v1, proposed, not deployed): t
 <OBSIDIAN_VAULT>/
   workspace/                you write; bots learn it
     Shared/…                → shared
+    Businesses/<workspace>/… → that workspace's bank
     Teams/<team name>/…     → that team's bank
     Bots/<bot name>/…       → that bot's bank
   Memory/                   generated; never read back
     Ontology.md
-    Shared/, Teams/<team>/, Bots/<bot>/   00 <name>.md + <type plural>/<entity>.md
+    Shared/, Businesses/<workspace>/, Teams/<team>/, Bots/<bot>/   00 <name>.md + <type plural>/<entity>.md
 ```
 
 - **In:** only changed notes are sent (content hash in `obsidian_notes`). The document id is a hash of the note's path, so an edit **replaces** the old version. A deleted note, or one moved to another bank, is forgotten from the old bank. `type:` and link fields become entity hints plus plain statements ("Dana works at Acme"). Hidden entries and names containing "secret" are skipped. A note over 256 KB, or whose text sent to Hindsight (title, type and relation lines, then the body) is over 60,000 characters, is skipped, and its earlier version is forgotten so nothing stale stays. Each changed note costs one fact-extraction LLM call in Hindsight.

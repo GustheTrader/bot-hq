@@ -27,9 +27,9 @@ export function createSubagent(parentId: string, goal: string, label?: string) {
     `Work independently with your own tools and computer. When you finish (or get blocked), call send_to_bot with bot_name "${p.name}" and a concise result, then stop. Do not message the user directly.` +
     (p.instructions ? `\n\nYour parent's standing instructions:\n${p.instructions}` : '');
   db.prepare(
-    `INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,is_primary,effort,parent_bot_id,hidden,created_at,updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,0,?,?,1,?,?)`,
-  ).run(id, p.user_id, name, 'Subagent', `Subagent of ${p.name}`, instructions, p.avatar_shape, p.avatar_color, p.mode, p.effort, parentId, now(), now());
+    `INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,mode,is_primary,effort,parent_bot_id,hidden,space_id,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,?,0,?,?,1,?,?,?)`,
+  ).run(id, p.user_id, name, 'Subagent', `Subagent of ${p.name}`, instructions, p.avatar_shape, p.avatar_color, p.mode, p.effort, parentId, p.space_id ?? null, now(), now());
   return { id, name, parentName: p.name as string, userId: p.user_id as string };
 }
 

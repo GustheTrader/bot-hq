@@ -8,7 +8,8 @@ import { executeComposio, innerToolSlugs, isReadOnlySlug, toolkitInfo } from '..
 import { scheduleRoutine, unscheduleRoutine } from '../routines.js';
 import { createEventRoutine, deleteEventTrigger, describeEvent, listTriggerTypes } from '../triggers.js';
 import { setCheckins } from '../proactive.js';
-import { createRoom, postToRoom } from './rooms.js';
+import { createRoom, outsiders, postToRoom, teamSpace } from './rooms.js';
+import { canReach } from '../spaces.js';
 import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
 import { dataGrep, dataList, dataRead, dataSearch, DataError, defaultConfig, warmCatalog } from '../dataplane/fs.js';
@@ -43,8 +44,18 @@ interface ToolDef {
 
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
-function botByName(userId: string, name: string) {
-  return db.prepare('SELECT * FROM bots WHERE user_id=? AND lower(name)=lower(?)').get(userId, name.trim()) as any;
+/** The bots one bot can see: its own workspace and the main bot; the main bot sees all (spaces.ts). */
+function reachable(userId: string, fromBotId: string): any[] {
+  const from = db.prepare('SELECT space_id, is_primary FROM bots WHERE id=? AND user_id=?').get(fromBotId, userId) as any;
+  if (!from) return [];
+  const all = db.prepare('SELECT * FROM bots WHERE user_id=? ORDER BY (space_id IS ?) DESC, created_at').all(userId, from.space_id ?? null) as any[];
+  return all.filter((b) => canReach(from, b));
+}
+
+/** A bot by name, among those the asking bot can reach; one in its own workspace wins. */
+function botByName(userId: string, fromBotId: string, name: string) {
+  const wanted = name.trim().toLowerCase();
+  return reachable(userId, fromBotId).find((b) => String(b.name).toLowerCase() === wanted);
 }
 
 /** Live X research through xAI's search tool. Returns the answer text followed by the posts it cites. */
@@ -168,7 +179,7 @@ const bankTool = (fn: Impl): Impl => async (a, ctx) => {
 const scopeParam = (all: boolean) => ({
   type: 'string',
   enum: all ? ['all', 'me', 'team', 'everyone'] : ['me', 'team', 'everyone'],
-  description: `me = your own memory, team = the memory of a team you are on, everyone = memory shared by every bot${all ? ', all = all of them (default)' : ' (default: me)'}.`,
+  description: `me = your own memory, team = the memory of a team you are on, everyone = memory shared by every bot in your workspace${all ? ', all = all of them (default)' : ' (default: me)'}.`,
 });
 const MEMORY_TOOLS: ToolDef[] = [
   {
@@ -188,7 +199,7 @@ const MEMORY_TOOLS: ToolDef[] = [
   },
   {
     name: 'memory_save',
-    description: "Save a fact, decision or outcome to long-term memory so it is there in later conversations. scope=team when the whole team should know it (a decision, a client fact, a task's result); scope=everyone only for something every bot needs. Write one self-contained statement with names and dates, not \"he said yes\". Your own notes file (memory tool) still holds short working notes; this is for knowledge worth searching later.",
+    description: "Save a fact, decision or outcome to long-term memory so it is there in later conversations. scope=team when the whole team should know it (a decision, a client fact, a task's result); scope=everyone only for something every bot in your workspace needs. Write one self-contained statement with names and dates, not \"he said yes\". Your own notes file (memory tool) still holds short working notes; this is for knowledge worth searching later.",
     parameters: obj({
       text: { type: 'string', description: 'The fact, in one or a few sentences (at most 8000 characters; split longer material into separate facts).' },
       scope: scopeParam(false),
@@ -466,8 +477,8 @@ export const TOOLS: ToolDef[] = [
     activity: 'messaging_named',
     label: 'Messaging a Bot',
     impl: async (a, ctx) => {
-      const target = botByName(ctx.userId, a.bot_name);
-      if (!target) return { output: `No bot named "${a.bot_name}". Team: ${(db.prepare('SELECT name FROM bots WHERE user_id=?').all(ctx.userId) as any[]).map((b) => b.name).join(', ')}` };
+      const target = botByName(ctx.userId, ctx.botId, a.bot_name);
+      if (!target) return { output: `No bot named "${a.bot_name}". Team: ${reachable(ctx.userId, ctx.botId).map((b) => b.name).join(', ')}` };
       if (target.id === ctx.botId) return { output: 'That is you.' };
       if (target.kind === 'team') return { output: `"${target.name}" is a team channel; use post_to_group instead.` };
       if (ctx.depth >= 3) return { output: 'Too many hops between bots; answer the user directly instead.' };
@@ -485,10 +496,12 @@ export const TOOLS: ToolDef[] = [
       const ids: string[] = [];
       const missing: string[] = [];
       for (const n of (a.bot_names ?? []) as string[]) {
-        const b = botByName(ctx.userId, n);
+        const b = botByName(ctx.userId, ctx.botId, n);
         if (b && b.kind !== 'team') ids.push(b.id); else missing.push(n);
       }
       if (ids.length < 2) return { output: `A team needs at least 2 Bots. Not found: ${missing.join(', ') || 'none'}.` };
+      const mixed = outsiders(ids, teamSpace(ids));
+      if (mixed.length) return { output: `A group stays inside one workspace. Not in it: ${mixed.join(', ')}.` };
       const id = createRoom(ctx.userId, String(a.name), [...new Set(ids)]);
       appendRow(id, 'event', { type: 'event', event: 'bot-message', text: `Team created with ${(a.bot_names as string[]).filter((n) => !missing.includes(n)).join(', ')}` });
       return { output: JSON.stringify({ ok: true, group_id: id, missing }), summary: `Created team ${a.name}` };

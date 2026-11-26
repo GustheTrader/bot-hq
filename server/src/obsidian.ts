@@ -10,7 +10,8 @@ import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relatio
  * Bot memory and an Obsidian vault, both ways (OBSIDIAN_VAULT, off when unset):
  *
  *   <vault>/workspace/            people write here; bots learn it
- *     Shared/…                    → the `shared` bank (every bot)
+ *     Shared/…                    → the `shared` bank (every bot in General)
+ *     Businesses/<workspace>/…    → that workspace's bank
  *     Teams/<team name>/…         → that team's bank
  *     Bots/<bot name>/…           → that bot's own bank
  *   <vault>/Memory/               Bot HQ writes here; never read back
@@ -134,12 +135,16 @@ function bankByName(userId: string, kind: 'team' | 'agent', name: string): Bank 
 export function routeNote(userId: string, rel: string): Bank | { skip: string } {
   const parts = rel.split('/');
   if (parts[0] === 'Shared' && parts.length > 1) return bankById(userId, SHARED)!;
+  if (parts[0] === 'Businesses' && parts.length > 2) {
+    const s = db.prepare('SELECT id FROM spaces WHERE user_id=? AND lower(name)=lower(?)').get(userId, parts[1].trim()) as { id: string } | undefined;
+    return (s && bankById(userId, s.id)) || { skip: `no workspace named "${parts[1]}"` };
+  }
   if ((parts[0] === 'Teams' || parts[0] === 'Bots') && parts.length > 2) {
     const b = bankByName(userId, parts[0] === 'Teams' ? 'team' : 'agent', parts[1]);
     if (b === 'ambiguous') return { skip: `more than one ${parts[0] === 'Teams' ? 'team' : 'bot'} is named "${parts[1]}"` };
     return b ?? { skip: `no ${parts[0] === 'Teams' ? 'team' : 'bot'} named "${parts[1]}"` };
   }
-  return { skip: 'not under Shared/, Teams/<team>/ or Bots/<bot>/' };
+  return { skip: 'not under Shared/, Businesses/<workspace>/, Teams/<team>/ or Bots/<bot>/' };
 }
 
 /**
@@ -401,8 +406,9 @@ export async function exportBanks(vault: string, userId: string, banks: Bank[], 
 
   for (const bank of banks) {
     // Same names as the workspace folders: Memory/Shared, Memory/Teams/<team>, Memory/Bots/<bot>.
-    const label = bank.layer === 'everyone' ? 'Shared' : bank.label.replace(/ \(own\)$/, '').replace(/^Team /, '');
-    const folder = bank.layer === 'everyone' ? 'Memory/Shared' : `Memory/${LAYER_DIRS[bank.layer]}/${safeName(label)}`;
+    const ofSpace = bank.layer === 'everyone' && bank.id !== SHARED;
+    const label = ofSpace ? bank.label.replace(/^Everyone at /, '') : bank.layer === 'everyone' ? 'Shared' : bank.label.replace(/ \(own\)$/, '').replace(/^Team /, '');
+    const folder = ofSpace ? `Memory/Businesses/${safeName(label)}` : bank.layer === 'everyone' ? 'Memory/Shared' : `Memory/${LAYER_DIRS[bank.layer]}/${safeName(label)}`;
     const raw = await memoryGraph(bank.id, opts.limit ?? 250, opts.fetchFn);
     const kept = raw.nodes.filter((n) => !ignore.has(n.label.toLowerCase()));
     const keep = new Set(kept.map((n) => n.id));
@@ -501,7 +507,8 @@ export function syncStatus(userId: string): SyncStatus {
 /** Shared plus each of the account's bots and teams whose bank has facts. */
 async function exportable(userId: string): Promise<Bank[]> {
   const live = new Map((await listBanks()).map((b) => [b.id, b.facts]));
-  const ids = [SHARED, ...(db.prepare("SELECT id FROM bots WHERE user_id=? AND COALESCE(hidden,0)=0 ORDER BY created_at").all(userId) as any[]).map((r) => r.id as string)];
+  const spaces = (db.prepare('SELECT id FROM spaces WHERE user_id=? ORDER BY created_at').all(userId) as any[]).map((r) => r.id as string);
+  const ids = [SHARED, ...spaces, ...(db.prepare("SELECT id FROM bots WHERE user_id=? AND COALESCE(hidden,0)=0 ORDER BY created_at").all(userId) as any[]).map((r) => r.id as string)];
   return ids.filter((id) => (live.get(id) ?? 0) > 0).map((id) => bankById(userId, id)).filter((b): b is Bank => !!b);
 }
 

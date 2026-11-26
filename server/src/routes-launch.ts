@@ -4,6 +4,7 @@ import { appendRow, getBotRow } from './store.js';
 import { enqueue } from './agent/loop.js';
 import { LIMITS, ProjectError, buildProjectPrompt, cleanLine, getProject, listProjectSkills } from './projects.js';
 import { SkillError, listLibrarySkills, readLibrarySkill } from './skill-library.js';
+import { fitsSpace } from './spaces.js';
 
 /**
  * The launch page: the skills available on this computer, and one way to start work on a bot.
@@ -22,7 +23,7 @@ export interface StartInput { botId?: unknown; prompt?: unknown; projectId?: unk
 
 /** What startWork touches outside the database, so a test can watch it without running a real agent turn. */
 export interface StartDeps {
-  getBotRow: (id: string) => { id: string; user_id: string; kind?: string | null } | null | undefined;
+  getBotRow: (id: string) => { id: string; user_id: string; kind?: string | null; space_id?: string | null; is_primary?: number | null } | null | undefined;
   appendRow: (botId: string, kind: 'message', body: { type: 'message'; role: 'user'; text: string }) => unknown;
   enqueue: (botId: string, trigger: { type: 'user'; text: string }) => unknown;
 }
@@ -40,6 +41,8 @@ export function startWork(userId: string, input: StartInput, deps: StartDeps = r
   const hasProject = input.projectId !== undefined && input.projectId !== null && input.projectId !== '';
   const project = hasProject ? (typeof input.projectId === 'string' ? getProject(userId, input.projectId) : null) : null;
   if (hasProject && !project) throw new ProjectError('Project not found.', 404);
+  // A workspace's project notes and skills go only to its own bots (and the main bot).
+  if (project?.spaceId && !fitsSpace(bot, project.spaceId)) throw new ProjectError('That project belongs to another workspace. Pick a bot from its workspace.', 409);
 
   const picked = Array.isArray(input.skills) ? [...new Set(input.skills)] : [];
   if (picked.length > MAX_PICKED_SKILLS) throw new ProjectError(`Pick up to ${MAX_PICKED_SKILLS} skills.`);

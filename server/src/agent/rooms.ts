@@ -2,6 +2,7 @@ import { db, now } from '../db.js';
 import { newId } from '../lib/ids.js';
 import { hub } from '../lib/hub.js';
 import { appendRow } from '../store.js';
+import { fitsSpace } from '../spaces.js';
 import type { TeamMember } from '../types.js';
 
 /**
@@ -99,6 +100,23 @@ function addMember(teamId: string, kind: 'bot' | 'human' | 'user', id: string, r
   ).run(teamId, kind, id, role, teamId, kind, id, now());
 }
 
+/** The workspace a set of bots shares, ignoring the primary bot (General when there is no other). */
+export function teamSpace(botIds: string[]): string | null {
+  for (const id of botIds) {
+    const b = db.prepare('SELECT space_id, is_primary FROM bots WHERE id=?').get(id) as { space_id: string | null; is_primary: number } | undefined;
+    if (b && !b.is_primary) return b.space_id ?? null;
+  }
+  return null;
+}
+
+/** The names of the bots that cannot sit on a team of this workspace. */
+export function outsiders(botIds: string[], spaceId: string | null): string[] {
+  return botIds.flatMap((id) => {
+    const b = db.prepare('SELECT name, space_id, is_primary FROM bots WHERE id=?').get(id) as any;
+    return b && !fitsSpace(b, spaceId) ? [b.name as string] : [];
+  });
+}
+
 export function createTeam(
   userId: string,
   name: string,
@@ -108,17 +126,20 @@ export function createTeam(
     /** New teammates created inline (name + optional email). */
     humans?: { name: string; email?: string | null }[];
     includeUser?: boolean;
+    /** The team's workspace. Left out, it is the one its bots share. */
+    spaceId?: string | null;
   } = {},
 ) {
   const id = newId('team');
   const botIds = [...new Set(members.botIds ?? [])];
+  const spaceId = members.spaceId !== undefined ? members.spaceId : teamSpace(botIds);
   const humanIds = [...new Set(members.humanIds ?? [])];
   const inline = members.humans ?? [];
   const peopleCount = humanIds.length + inline.length + (members.includeUser ? 1 : 0);
   db.prepare(
-    `INSERT INTO bots(id,user_id,name,label,description,avatar_shape,avatar_color,kind,created_at,updated_at)
-     VALUES (?,?,?,?,?,?,?,'team',?,?)`,
-  ).run(id, userId, name.slice(0, 60), 'Team', `Team of ${botIds.length} Bot${botIds.length === 1 ? '' : 's'}${peopleCount ? ` and ${peopleCount} ${peopleCount === 1 ? 'person' : 'people'}` : ''}`, 'cloud', 'gray', now(), now());
+    `INSERT INTO bots(id,user_id,name,label,description,avatar_shape,avatar_color,kind,space_id,created_at,updated_at)
+     VALUES (?,?,?,?,?,?,?,'team',?,?,?)`,
+  ).run(id, userId, name.slice(0, 60), 'Team', `Team of ${botIds.length} Bot${botIds.length === 1 ? '' : 's'}${peopleCount ? ` and ${peopleCount} ${peopleCount === 1 ? 'person' : 'people'}` : ''}`, 'cloud', 'gray', spaceId, now(), now());
   // The first bot on the roster leads, so a team message always has someone to answer it.
   botIds.forEach((bid, i) => addMember(id, 'bot', bid, i === 0 ? 'lead' : 'member'));
   humanIds.forEach((hid) => addMember(id, 'human', hid, 'member'));
@@ -269,7 +290,7 @@ export function dispatchRoomMessage(teamId: string, text: string, enqueue: (botI
 }
 
 /** A person has no agent, so an @mention becomes a notice on the team channel. */
-function notifyHuman(teamId: string, human: TeamMember, text: string) {
+function notifyHuman(teamId: string, human: TeamMember, _text: string) {
   appendRow(teamId, 'event', {
     type: 'event',
     event: 'bot-message',
@@ -282,7 +303,9 @@ function notifyHuman(teamId: string, human: TeamMember, text: string) {
 export function postToRoom(fromBotId: string, teamName: string, text: string) {
   const from = db.prepare('SELECT id, user_id, name FROM bots WHERE id=?').get(fromBotId) as any;
   const team = db.prepare('SELECT * FROM bots WHERE id=? AND user_id=?').get(
-    (db.prepare("SELECT id FROM bots WHERE user_id=? AND kind='team' AND lower(name)=lower(?)").get(from.user_id, teamName.trim()) as any)?.id ?? '',
+    // Two workspaces may each have a team of this name; the one the sender is on is meant.
+    (db.prepare(`SELECT id FROM bots WHERE user_id=? AND kind='team' AND lower(name)=lower(?)
+      ORDER BY EXISTS(SELECT 1 FROM team_members m WHERE m.team_id=bots.id AND m.member_kind='bot' AND m.member_id=?) DESC`).get(from.user_id, teamName.trim(), fromBotId) as any)?.id ?? '',
     from.user_id,
   ) as any;
   if (!team) return `No team named "${teamName}".`;

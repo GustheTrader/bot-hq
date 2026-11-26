@@ -6,6 +6,8 @@ import { Glyph } from '../config/glyphs';
 import { Composer } from './Composer';
 import { EnginePicker } from './EnginePicker';
 import { engineLabel, errText, t3Url, useHarnesses } from './shared';
+import { inSpace, newSpaceId, useStore } from '../../store';
+import { SpaceSelect, SpaceSwitcher, SpaceTag } from '../Spaces';
 
 function SkillForm({ initial, onSave, onCancel, onDelete }: {
   initial?: ProjectSkill;
@@ -101,6 +103,10 @@ function ProjectDetail({ id, onBack }: { id: string; onBack: () => void }) {
         <h2 className="proj-detail__name">{project.name}</h2>
         <span className="proj-chip">{engineLabel(harnesses, project.harness, project.harnessModel)}</span>
       </div>
+      <label className="proj-space">
+        <span className="section-label">Workspace</span>
+        <SpaceSelect value={project.spaceId ?? null} onChange={(spaceId) => { void save('settings', { spaceId }); }} />
+      </label>
       {project.description && <p className="proj-detail__desc">{project.description}</p>}
       {project.folder && <p className="proj-detail__folder">{project.folder}</p>}
 
@@ -208,6 +214,7 @@ export function ProjectsPanel() {
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ name: '', folder: '', description: '' });
   const [busy, setBusy] = useState(false);
+  const activeSpace = useStore((s) => s.activeSpace);
 
   const load = useCallback(() => {
     configApi.projects().then((r) => { setProjects(r.projects); setError(null); }).catch((e) => setError(errText(e, 'Could not load projects')));
@@ -219,7 +226,7 @@ export function ProjectsPanel() {
     setBusy(true);
     setError(null);
     try {
-      const r = await configApi.createProject({ name: draft.name, folder: draft.folder, description: draft.description, instructions: '', harness: 'hermes', harnessModel: null });
+      const r = await configApi.createProject({ name: draft.name, folder: draft.folder, description: draft.description, instructions: '', harness: 'hermes', harnessModel: null, spaceId: newSpaceId(activeSpace) });
       setDraft({ name: '', folder: '', description: '' });
       setCreating(false);
       setOpenId(r.project.id);
@@ -229,13 +236,15 @@ export function ProjectsPanel() {
 
   if (openId) return <ProjectDetail id={openId} onBack={() => { setOpenId(null); load(); }} />;
   if (projects === null && !error) return <div className="cfg-empty">Loading…</div>;
+  const shown = projects?.filter((p) => inSpace(p, activeSpace)) ?? null;
 
   return (
     <>
       <div className="section-label section-label--row">
-        <span>Projects{projects && projects.length > 0 ? ` · ${projects.length}` : ''}</span>
+        <span>Projects{shown && shown.length > 0 ? ` · ${shown.length}` : ''}</span>
         {!creating && <button type="button" className="link-btn link-btn--small" onClick={() => setCreating(true)}>New project</button>}
       </div>
+      <SpaceSwitcher />
       {creating && (
         <div className="panel-card proj-new">
           <input className="text-input" placeholder="Project name" value={draft.name} autoFocus onChange={(e) => setDraft({ ...draft, name: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') void create(); }} aria-label="Project name" />
@@ -248,7 +257,7 @@ export function ProjectsPanel() {
         </div>
       )}
       {error && <div className="card__error" role="alert">{error}</div>}
-      {projects && projects.length === 0 && !creating ? (
+      {shown && shown.length === 0 && !creating ? (
         <div className="tasks-empty">
           <Glyph name="tasks" size={28} opacity={0.35} />
           <div className="tasks-empty__title">No projects yet</div>
@@ -257,12 +266,13 @@ export function ProjectsPanel() {
         </div>
       ) : (
         <div className="proj-grid">
-          {projects?.map((p) => (
+          {shown?.map((p) => (
             <button key={p.id} type="button" className="proj-card" onClick={() => setOpenId(p.id)}>
               <span className="proj-card__top">
                 <span className="proj-card__name">{p.name}</span>
                 <span className="proj-chip">{engineLabel(harnesses, p.harness, p.harnessModel)}</span>
               </span>
+              {activeSpace === 'all' && <SpaceTag spaceId={p.spaceId} />}
               {p.description && <span className="proj-card__desc">{p.description}</span>}
               <span className="proj-card__meta">
                 {p.skillCount} {p.skillCount === 1 ? 'skill' : 'skills'}

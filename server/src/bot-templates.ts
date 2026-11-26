@@ -1,6 +1,7 @@
 import { Cron } from 'croner';
 import type { AvatarColor } from './types.js';
 import type { HarnessId } from './harness.js';
+import { portraitPreset } from './portraits.js';
 
 /**
  * Bot templates: a ready-made role a new Bot can start from. A template fills in the Bot's name, label,
@@ -37,6 +38,8 @@ export interface BotTemplate {
   worksWith: string[];
   harness: HarnessId;
   defaults: { name: string; label: string; avatarColor: AvatarColor };
+  /** Name of the preset portrait (portraits.ts) its bots start with. */
+  portrait: string;
   inputs: TemplateInput[];
   describe: (v: Record<string, string>) => string;
   instructions: (v: Record<string, string>) => string;
@@ -59,7 +62,7 @@ export type PublicTemplate = Omit<BotTemplate, 'describe' | 'instructions' | 'ro
 export interface TemplatePlan {
   templateId: string;
   harness: HarnessId;
-  bot: { name: string; label: string; description: string; instructions: string; avatarColor: AvatarColor };
+  bot: { name: string; label: string; description: string; instructions: string; avatarColor: AvatarColor; avatarImage: string };
   routine: { name: string; prompt: string; schedule: string; timezone: string };
 }
 
@@ -78,6 +81,7 @@ const softwareFactory: BotTemplate = {
   worksWith: ['GitHub (gh signed in on the computer)'],
   harness: 'claude-code',
   defaults: { name: 'Software Factory', label: 'Engineering', avatarColor: 'orange' },
+  portrait: 'Android Composer',
   inputs: [
     { key: 'repo', label: 'Repository', placeholder: 'owner/name', required: true, help: 'The GitHub repository it works in.' },
     { key: 'area', label: 'Product area', placeholder: 'e.g. the checkout flow, or web/src/components/revopt', required: true, help: 'Where it looks for work. A feature, a folder, or both.' },
@@ -152,6 +156,7 @@ const scheduleInput = (def: string, what: string): TemplateInput => ({ key: 'sch
 
 const productEngineer = engTemplate({
   id: 'product-engineer',
+  portrait: 'Neon Hacker',
   title: 'Product Engineer',
   category: 'Engineering',
   blurb: 'Builds features and fixes bugs from GitHub issues you label for it, taking each one all the way to a tested pull request and seeing it through review.',
@@ -173,6 +178,7 @@ const productEngineer = engTemplate({
 
 const qaEngineer = engTemplate({
   id: 'qa-engineer',
+  portrait: 'Tokyo Detective',
   title: 'QA Engineer',
   category: 'Quality',
   blurb: 'Tests each new pull request: runs the suite and walks the changed screens in a real browser on its computer, then posts pass or fail on the pull request with the steps and screenshots.',
@@ -195,6 +201,7 @@ const qaEngineer = engTemplate({
 
 const codeReaper = engTemplate({
   id: 'code-reaper',
+  portrait: 'Chrome Skull',
   title: 'Code Reaper',
   category: 'Quality',
   blurb: 'Finds code nothing uses any more (dead files, unused exports, stale scripts) and removes it in small, safe pull requests, once a week.',
@@ -213,6 +220,7 @@ const codeReaper = engTemplate({
 
 const latencyOptimizer = engTemplate({
   id: 'latency-optimizer',
+  portrait: 'Racing Engineer',
   title: 'Latency Optimizer',
   category: 'Quality',
   blurb: 'Finds the slowest endpoints, jobs and queries, and each week tries a fix for the worst one, opening a pull request with before and after timings.',
@@ -231,6 +239,7 @@ const latencyOptimizer = engTemplate({
 
 const codeHealth = engTemplate({
   id: 'code-health',
+  portrait: 'Arcane Scientist',
   title: 'Code Health Engineer',
   category: 'Quality',
   blurb: 'Once a month: patches known vulnerabilities, updates old dependencies and removes stale feature flags, in small pull requests that each say why the change is safe.',
@@ -249,6 +258,7 @@ const codeHealth = engTemplate({
 
 const technicalWriter = engTemplate({
   id: 'technical-writer',
+  portrait: 'Lime Archivist',
   title: 'Technical Writer',
   category: 'Knowledge',
   blurb: "Keeps the repo's README, docs and diagrams in step with main: after merges that change behaviour, it opens a pull request updating the docs.",
@@ -270,6 +280,7 @@ const technicalWriter = engTemplate({
 
 const migrationEngineer = engTemplate({
   id: 'migration-engineer',
+  portrait: 'Fox Scout',
   title: 'Migration Engineer',
   category: 'Engineering',
   blurb: 'Owns one big migration and ships it as small, tracked pull requests, keeping one tracking issue current with progress and what is stuck.',
@@ -325,6 +336,7 @@ const wholeNumber = (v: Record<string, string>, key: string, label: string, min:
 
 const dispatchLead = homeTemplate({
   id: 'home-dispatch-lead',
+  portrait: 'Scarlet Pilot',
   title: 'Dispatch Lead',
   blurb: "Runs the morning dispatch huddle: ranks today's jobs by risk (cost pace vs. progress, weather, schedule slips), writes a crew checklist for each, and flags what needs a person before vans roll.",
   defaults: { name: 'Dispatch Lead', label: 'Home Service', avatarColor: 'blue' },
@@ -343,6 +355,7 @@ const dispatchLead = homeTemplate({
 
 const marginWatch = homeTemplate({
   id: 'home-margin-watch',
+  portrait: 'Gold Monocle',
   title: 'Estimate & Margin Watch',
   blurb: "Compares every active job's spend against its written estimate, flags jobs whose cost is running ahead of progress, and drafts written add-on change orders for extra scope so no work starts unpriced.",
   defaults: { name: 'Margin Watch', label: 'Home Service', avatarColor: 'green' },
@@ -364,6 +377,7 @@ const marginWatch = homeTemplate({
 
 const leadFollowUp = homeTemplate({
   id: 'home-lead-follow-up',
+  portrait: 'Indigo Strategist',
   title: 'Lead Follow-up',
   blurb: 'Works the sales pipeline: finds leads that have gone quiet, moves stages, adds notes, and drafts the next message and the written estimate for a person to send.',
   defaults: { name: 'Lead Follow-up', label: 'Home Service', avatarColor: 'violet' },
@@ -386,6 +400,7 @@ const leadFollowUp = homeTemplate({
 
 const maintenancePlans = homeTemplate({
   id: 'home-maintenance-plans',
+  portrait: 'Volt Mechanic',
   title: 'Maintenance Plans',
   blurb: 'Keeps recurring maintenance-plan members on schedule: books seasonal visits, batches nearby homes onto one van day to cut drive time, and flags renewals coming due.',
   defaults: { name: 'Maintenance Plans', label: 'Home Service', avatarColor: 'cyan' },
@@ -456,6 +471,7 @@ export function planFromTemplate(
       description: t.describe(v),
       instructions: t.instructions(v),
       avatarColor: t.defaults.avatarColor,
+      avatarImage: portraitPreset(t.portrait),
     },
     routine: { ...routine, timezone },
   };

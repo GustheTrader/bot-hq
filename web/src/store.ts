@@ -1,8 +1,8 @@
 import { create } from 'zustand';
-import type { Bot, ComputerState, LiveState, Routine, Row, ServerEvent, User } from '@shared/types';
+import type { Bot, ComputerState, LiveState, Routine, Row, ServerEvent, Space, User } from '@shared/types';
 import { api } from './lib/api';
 
-export type ModalKind = 'create' | 'search' | 'apps' | 'group' | null;
+export type ModalKind = 'create' | 'search' | 'apps' | 'group' | 'spaces' | null;
 
 interface Transcript { generation: number; bySeq: Record<number, Row>; loaded: boolean }
 
@@ -12,6 +12,10 @@ interface State {
   authChecked: boolean;
 
   bots: Bot[];
+  /** Workspaces, one per business or project. */
+  spaces: Space[];
+  /** What the lists show: 'all', 'general', or a workspace id. A view filter only. */
+  activeSpace: string;
   live: Record<string, LiveState>;
   selectedBotId: string | null;
   transcripts: Record<string, Transcript>;
@@ -32,6 +36,7 @@ interface State {
 
   checkAuth(): Promise<void>;
   loadBots(): Promise<void>;
+  loadSpaces(): Promise<void>;
   selectBot(id: string): void;
   loadRows(id: string): Promise<void>;
   loadRoutines(id: string): Promise<void>;
@@ -45,6 +50,7 @@ interface State {
 const LS_SELECTED = 'grokbot.selectedBot';
 const LS_DETAILS = 'grokbot.detailsOpen';
 const LS_SIDEBAR = 'grokbot.sidebarCollapsed';
+const LS_SPACE = 'grokbot.activeSpace';
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
 
@@ -53,6 +59,8 @@ export const useStore = create<State>((set, get) => ({
   devLogin: false,
   authChecked: false,
   bots: [],
+  spaces: [],
+  activeSpace: lsGet(LS_SPACE) ?? 'all',
   live: {},
   selectedBotId: lsGet(LS_SELECTED),
   transcripts: {},
@@ -76,7 +84,15 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
+  async loadSpaces() {
+    const { spaces } = await api.spaces();
+    set({ spaces });
+    const active = get().activeSpace;
+    if (active !== 'all' && active !== 'general' && !spaces.some((s) => s.id === active)) get().set({ activeSpace: 'all' });
+  },
+
   async loadBots() {
+    get().loadSpaces().catch(console.error);
     const { bots, live } = await api.bots();
     const liveMap: Record<string, LiveState> = {};
     for (const l of live) liveMap[l.botId] = l;
@@ -184,6 +200,7 @@ export const useStore = create<State>((set, get) => ({
   set(p) {
     if (p.detailsOpen !== undefined) lsSet(LS_DETAILS, p.detailsOpen ? '1' : '0');
     if (p.sidebarCollapsed !== undefined) lsSet(LS_SIDEBAR, p.sidebarCollapsed ? '1' : '0');
+    if (p.activeSpace !== undefined) lsSet(LS_SPACE, p.activeSpace);
     set(p);
   },
 }));
@@ -193,6 +210,13 @@ export function sortedRows(t: Transcript | undefined): Row[] {
   if (!t) return [];
   return Object.values(t.bySeq).sort((a, b) => a.seq - b.seq);
 }
+
+/** Whether something shows under the current workspace filter. */
+export const inSpace = (item: { spaceId?: string | null }, active: string) =>
+  active === 'all' || (active === 'general' ? !item.spaceId : item.spaceId === active);
+
+/** The workspace new things go into under the current filter (null = General). */
+export const newSpaceId = (active: string) => (active === 'all' || active === 'general' ? null : active);
 
 export const displayName = (b: Pick<Bot, 'name' | 'label'>) => (b.label ? `${b.name} · ${b.label}` : b.name);
 

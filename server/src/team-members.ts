@@ -16,7 +16,7 @@ import type Database from 'better-sqlite3';
 export class TeamError extends Error {}
 
 /** Tables whose rows follow a person into the workspace (`user_id` re-pointed). */
-const MOVE = ['bots', 'screens', 'humans', 'revopt_tasks', 'projects', 'grok_jobs'];
+const MOVE = ['bots', 'screens', 'humans', 'revopt_tasks', 'projects', 'spaces', 'grok_jobs'];
 /** Per-account rows the member no longer uses once they share the workspace's. */
 const DROP = ['computers', 'composio_sessions', 'proactivity', 'policies'];
 

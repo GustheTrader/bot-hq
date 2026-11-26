@@ -4,7 +4,8 @@ import { useConfigUI } from '../configStore';
 import { TasksIsland } from './config/TasksView';
 import type { Bot } from '@shared/types';
 import { BotAvatarFor } from '../avatar/BotAvatar';
-import { displayName, useStore } from '../store';
+import { displayName, inSpace, useStore } from '../store';
+import { SpaceSwitcher, SpaceTag } from './Spaces';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
 import { Menu } from './Menu';
@@ -32,7 +33,7 @@ function previewFor(bot: Bot, running: boolean, awaiting: string | null) {
   return bot.lastPreview ?? 'No messages yet';
 }
 
-const BotRow = memo(function BotRow({ bot, selected, running, awaiting, onSelect }: { bot: Bot; selected: boolean; running: boolean; awaiting: string | null; onSelect: (id: string) => void }) {
+const BotRow = memo(function BotRow({ bot, selected, running, awaiting, tagged, onSelect }: { bot: Bot; selected: boolean; running: boolean; awaiting: string | null; tagged: boolean; onSelect: (id: string) => void }) {
   return (
     <button type="button" className={`bot-row${selected ? ' is-selected' : ''}`} onClick={() => onSelect(bot.id)} aria-current={selected || undefined}>
       <span className="bot-row__avatar">
@@ -43,6 +44,7 @@ const BotRow = memo(function BotRow({ bot, selected, running, awaiting, onSelect
       </span>
       <span className="bot-row__text">
         <span className="bot-row__name">{displayName(bot)}</span>
+        {tagged && <SpaceTag spaceId={bot.spaceId} />}
         {running || awaiting
           ? <LiveSignal botId={bot.id} />
           : <span className="bot-row__preview">{previewFor(bot, running, awaiting)}</span>}
@@ -69,7 +71,8 @@ export function Sidebar() {
 
   const { working, needs } = useActiveBotCount();
   const primary = bots.find((b) => b.isPrimary);
-  const others = bots.filter((b) => !b.isPrimary).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
+  const activeSpace = useStore((s) => s.activeSpace);
+  const others = bots.filter((b) => !b.isPrimary && inSpace(b, activeSpace)).sort((a, b) => b.lastActivityAt - a.lastActivityAt);
 
   return (
     <aside className={`sidebar${collapsed ? ' is-collapsed' : ''}`}>
@@ -135,6 +138,7 @@ export function Sidebar() {
             </button>
           </div>
         )}
+        {!collapsed && <SpaceSwitcher />}
         <div className="bot-list">
           {others.map((b) =>
             collapsed ? (
@@ -142,7 +146,7 @@ export function Sidebar() {
                 <BotAvatarFor bot={b} size={36} />
               </button>
             ) : (
-              <BotRow key={b.id} bot={b} selected={selectedBotId === b.id} running={!!live[b.id]?.isRunning} awaiting={live[b.id]?.awaiting?.reason ?? null} onSelect={selectBot} />
+              <BotRow key={b.id} bot={b} selected={selectedBotId === b.id} running={!!live[b.id]?.isRunning} awaiting={live[b.id]?.awaiting?.reason ?? null} tagged={activeSpace === 'all'} onSelect={selectBot} />
             ),
           )}
           {!collapsed && others.length === 0 && (
