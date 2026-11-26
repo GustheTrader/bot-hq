@@ -90,15 +90,20 @@ export function MemoryGraphView() {
     api.memoryOntology().then(setOntology).catch(() => {});
     api.obsidianStatus().then(setObsidian).catch(() => {});
   }, []);
-  // While a sync runs, check on it every two seconds; reload the banks and graph once it ends.
+  // Check the sync's state every 2 s while one runs, every 30 s otherwise (the server's timer starts
+  // syncs too). Whenever a sync finishes (its time changes), reload the banks and the graph.
+  const lastAt = useRef<number | null>(null);
   useEffect(() => {
-    if (!obsidian?.running) return;
-    const t = setInterval(() => api.obsidianStatus().then((s) => {
-      setObsidian(s);
-      if (!s.running) { api.memoryBanks().then((r) => setBanks(r.banks)).catch(() => {}); setReload((n) => n + 1); }
-    }).catch(() => {}), 2000);
+    if (!obsidian?.enabled || !obsidian.mine) return;
+    const t = setInterval(() => api.obsidianStatus().then(setObsidian).catch(() => {}), obsidian.running ? 2000 : 30_000);
     return () => clearInterval(t);
-  }, [obsidian?.running]);
+  }, [obsidian?.enabled, obsidian?.mine, obsidian?.running]);
+  useEffect(() => {
+    const at = obsidian?.running ? null : obsidian?.last?.at ?? null;
+    if (at == null) return;
+    if (lastAt.current != null && at !== lastAt.current) { api.memoryBanks().then((r) => setBanks(r.banks)).catch(() => {}); setReload((n) => n + 1); }
+    lastAt.current = at;
+  }, [obsidian?.running, obsidian?.last?.at]);
   const syncNow = () => { setSyncError(null); api.obsidianSync().then(setObsidian).catch((e) => setSyncError(e instanceof Error ? e.message : 'Could not start the sync')); };
   const colorOf = useMemo(() => new Map((ontology?.types ?? []).map((t) => [t.id, t.color])), [ontology]);
 
@@ -185,7 +190,15 @@ export function MemoryGraphView() {
             const off = hiddenTypes.has(t.id);
             return (
               <button key={t.id} type="button" className={`mg-legend__item${off ? ' is-off' : ''}`} aria-pressed={!off} title={t.about}
-                onClick={() => setHiddenTypes((h) => { const n = new Set(h); if (off) n.delete(t.id); else n.add(t.id); return n; })}>
+                onClick={() => {
+                  setHiddenTypes((h) => { const n = new Set(h); if (off) n.delete(t.id); else n.add(t.id); return n; });
+                  // Hiding the selected entity's type drops the selection, so the graph is not left dimmed around a node it no longer draws.
+                  if (!off) {
+                    const typeOfNode = (id: string | null) => (id ? all.find((p) => p.id === id)?.type ?? 'entity' : null);
+                    if (typeOfNode(picked) === t.id) setPicked(null);
+                    if (typeOfNode(hover) === t.id) setHover(null);
+                  }
+                }}>
                 <span className="mg-legend__dot" style={{ background: t.color }} />{t.plural} {typeCounts.get(t.id)}
               </button>
             );
@@ -210,7 +223,7 @@ export function MemoryGraphView() {
                   const showLabel = p.id === focus || near?.has(p.id) || labelled.has(p.id) || hit;
                   return (
                     <g key={p.id} className={`mg-node${dim ? ' is-dim' : ''}${p.id === focus ? ' is-focus' : ''}${hit ? ' is-hit' : ''}`}>
-                      <circle cx={p.x} cy={p.y} r={p.r} style={colorOf.get(p.type ?? 'entity') ? { fill: colorOf.get(p.type ?? 'entity') } : undefined} onPointerEnter={() => setHover(p.id)} onPointerLeave={() => setHover(null)} onClick={() => setPicked(p.id === picked ? null : p.id)}>
+                      <circle cx={p.x} cy={p.y} r={p.r} style={colorOf.get(p.type ?? 'entity') ? ({ '--mg-type': colorOf.get(p.type ?? 'entity') } as React.CSSProperties) : undefined} onPointerEnter={() => setHover(p.id)} onPointerLeave={() => setHover(null)} onClick={() => setPicked(p.id === picked ? null : p.id)}>
                         <title>{`${p.label} · ${ontology?.types.find((t) => t.id === (p.type ?? 'entity'))?.label ?? 'Entity'} · ${p.mentions} mentions`}</title>
                       </circle>
                       {showLabel && <text x={p.x} y={p.y - p.r - 4 / view.k} textAnchor="middle" style={{ fontSize: 11 / view.k }}>{p.label}</text>}
@@ -243,14 +256,17 @@ export function MemoryGraphView() {
       <div className="mg-obsidian" aria-live="polite">
         {!obsidian ? null : !obsidian.enabled ? (
           <span>Obsidian sync is off. Set OBSIDIAN_VAULT on the server to a vault folder to have bots learn from its notes and see their memory there.</span>
+        ) : !obsidian.mine ? (
+          <span>{obsidian.problem ?? 'The Obsidian vault belongs to another workspace.'}</span>
         ) : (
           <>
             <span>
               Obsidian · {obsidian.vault}
               {obsidian.running ? ' · syncing…' : obsidian.last ? (obsidian.last.error ? ` · last sync failed: ${obsidian.last.error}` : ` · synced ${new Date(obsidian.last.at).toLocaleString()}: ${obsidian.last.ingest?.saved.length ?? 0} notes learned, ${obsidian.last.ingest?.forgotten.length ?? 0} forgotten, ${obsidian.last.export?.banks.reduce((s, b) => s + b.entities, 0) ?? 0} entities written`) : ' · not synced yet'}
               {obsidian.everyMinutes ? ` · every ${obsidian.everyMinutes} min` : ''}
+              {obsidian.problem ? ` · ${obsidian.problem}` : ''}
             </span>
-            <button type="button" className="link-btn link-btn--small" disabled={obsidian.running} onClick={syncNow}>Sync now</button>
+            <button type="button" className="link-btn link-btn--small" disabled={obsidian.running || !!obsidian.problem} onClick={syncNow}>Sync now</button>
             {syncError && <span className="card__error" role="alert">{syncError}</span>}
           </>
         )}

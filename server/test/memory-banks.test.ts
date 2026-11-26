@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'banks-'));
+test.after(() => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* the DB may still be open on Windows */ } });
 process.env.DB_PATH = path.join(dir, 'test.db');
 process.env.XAI_API_KEY = 'test';
 process.env.COMPOSIO_API_KEY = 'test';
@@ -114,9 +115,10 @@ test('shared is never re-created; recall merges banks and treats a bank never wr
   createTeam(user, 'Desk', { botIds: [bot, mkBot(user, 'Pal')] });
   const banks = M.pickBanks(user, bot, {});
   const s = fakeStore({ shared: ['The office closes Dec 24.'], [bot]: ['Reader prefers short replies.'] });
-  const hits = await M.recall(banks, 'holiday', s.fn);
-  assert.equal(hits.length, 2);
-  const text = M.formatRecall(hits, banks);
+  const res = await M.recall(banks, 'holiday', s.fn);
+  assert.equal(res.hits.length, 2);
+  assert.equal(res.failed.length, 0);
+  const text = M.formatRecall(res, banks);
   assert.match(text, /## Reader \(own\)\n- Reader prefers short replies\. \(2026-11-20\)/);
   assert.match(text, /## Everyone \(shared\)\n- The office closes Dec 24\./);
   assert.doesNotMatch(text, /Team Desk/);
@@ -124,7 +126,7 @@ test('shared is never re-created; recall merges banks and treats a bank never wr
   const sharedBank = banks.find((b) => b.id === 'shared')!;
   await M.retain(sharedBank, 'Global fact.', { by: 'Reader (bot)' }, s.fn);
   assert.ok(!s.calls.some((c) => c.method === 'PUT' && c.url.endsWith('/banks/shared')));
-  assert.equal(M.formatRecall([], banks.slice(0, 1)), 'Nothing found in Reader (own).');
+  assert.equal(M.formatRecall({ hits: [], failed: [] }, banks.slice(0, 1)), 'Nothing found in Reader (own).');
 });
 
 test('an unreachable store says so', async () => {
@@ -132,4 +134,70 @@ test('an unreachable store says so', async () => {
   const bot = mkBot(user, 'Lonely');
   const down = (async () => { throw new Error('ECONNREFUSED'); }) as any;
   await assert.rejects(M.recall(M.pickBanks(user, bot, {}), 'x', down), /not answering/);
+});
+
+test('teams are picked by name or id; a team alone means save to that team; duplicate names need the id', () => {
+  const user = mkUser();
+  const bot = mkBot(user, 'Dup');
+  const a = createTeam(user, 'Ops', { botIds: [bot, mkBot(user, 'P1')] });
+  const b = createTeam(user, 'Ops', { botIds: [bot, mkBot(user, 'P2')] });
+  const solo = mkBot(user, 'Solo');
+  const only = createTeam(user, 'Desk', { botIds: [solo, mkBot(user, 'P3')] });
+  assert.equal(M.pickBanks(user, solo, { team: 'desk', write: true })[0].id, only, 'team without scope saves to that team');
+  assert.throws(() => M.pickBanks(user, bot, { team: 'Ops', write: true }), (e: any) => e.message.includes(a) && e.message.includes(b) && /pass its id/.test(e.message));
+  assert.equal(M.pickBanks(user, bot, { team: b, write: true })[0].id, b);
+  assert.equal(M.pickBanks(user, bot, { team: 'Ops' }).length, 2, 'recall searches both');
+});
+
+test('retain refuses text over the limit instead of cutting it', async () => {
+  const user = mkUser();
+  const bot = mkBot(user, 'Long');
+  const [bank] = M.pickBanks(user, bot, { write: true });
+  await assert.rejects(M.retain(bank, 'x'.repeat(M.MAX_MEMORY + 1), { by: 'Long (bot)' }, fakeStore().fn), /8001 characters; one memory holds at most 8000/);
+});
+
+test('recall keeps the banks that answered when one fails, and fails only when all do', async () => {
+  const user = mkUser();
+  const bot = mkBot(user, 'Half');
+  const banks = M.pickBanks(user, bot, {});
+  const fn = (async (url: string) => url.includes('/banks/shared/')
+    ? { ok: false, status: 500, json: async () => ({}), text: async () => 'boom' }
+    : { ok: true, status: 200, json: async () => ({ results: [{ text: 'Own fact.' }] }), text: async () => '' }) as any;
+  const res = await M.recall(banks, 'q', fn);
+  assert.deepEqual(res.hits.map((h) => h.text), ['Own fact.']);
+  assert.deepEqual(res.failed.map((b) => b.id), ['shared']);
+  assert.match(M.formatRecall(res, banks), /Own fact\.\n\(Could not search Everyone \(shared\) just now\.\)/);
+  const down = (async () => ({ ok: false, status: 503, json: async () => ({}), text: async () => '' })) as any;
+  await assert.rejects(M.recall(banks, 'q', down), (e: any) => e.status === 503);
+});
+
+test('forgetting checks the HTTP status, not the words in the error body', async () => {
+  const gone = (async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => '' })) as any;
+  await M.forgetDocument('shared', 'doc', gone); // already gone: fine
+  const broken = (async () => ({ ok: false, status: 500, json: async () => ({}), text: async () => 'upstream said 404 earlier' })) as any;
+  await assert.rejects(M.forgetDocument('shared', 'doc', broken), (e: any) => e.status === 500);
+});
+
+test('bankById is scoped to one account', () => {
+  const a = mkUser(), b = mkUser();
+  const theirs = mkBot(b, 'Theirs');
+  assert.equal(M.bankById(a, theirs), null);
+  assert.equal(M.bankById(b, theirs)?.id, theirs);
+  assert.equal(M.bankById(a, 'shared')?.id, 'shared');
+});
+
+test('a durable save waits through an outage and is delivered by the retry, once, under one document id', async () => {
+  const user = mkUser();
+  const t = createTeam(user, 'Retry', { botIds: [mkBot(user, 'R1'), mkBot(user, 'R2')] });
+  const bank = M.teamBank(user, t)!;
+  const down = (async () => { throw new Error('ECONNREFUSED'); }) as any;
+  await M.retainDurably(user, bank, 'Task finished: renewal sent.', { by: 'Test', documentId: 'revopt-task1' }, down);
+  assert.equal((db.prepare("SELECT attempts FROM memory_pending WHERE document_id='revopt-task1'").get() as any).attempts, 1);
+  const s = fakeStore();
+  const r = await M.retryPending(s.fn);
+  assert.deepEqual(r, { delivered: 1, waiting: 0 });
+  const post = s.calls.find((c) => c.method === 'POST')!;
+  assert.equal(post.body.items[0].document_id, 'revopt-task1');
+  assert.equal(post.body.items[0].update_mode, 'replace');
+  assert.deepEqual(await M.retryPending(s.fn), { delivered: 0, waiting: 0 });
 });

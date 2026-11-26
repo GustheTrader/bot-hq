@@ -177,7 +177,7 @@ const MEMORY_TOOLS: ToolDef[] = [
     parameters: obj({
       query: { type: 'string', description: 'What to recall, in plain words.' },
       scope: scopeParam(true),
-      team: { type: 'string', description: 'Only this team (by name), when you are on several.' },
+      team: { type: 'string', description: 'Only this team, by name (or its id when two of your teams share a name).' },
     }, ['query']),
     activity: 'remembering',
     label: 'Searching memory',
@@ -190,15 +190,15 @@ const MEMORY_TOOLS: ToolDef[] = [
     name: 'memory_save',
     description: "Save a fact, decision or outcome to long-term memory so it is there in later conversations. scope=team when the whole team should know it (a decision, a client fact, a task's result); scope=everyone only for something every bot needs. Write one self-contained statement with names and dates, not \"he said yes\". Your own notes file (memory tool) still holds short working notes; this is for knowledge worth searching later.",
     parameters: obj({
-      text: { type: 'string', description: 'The fact, in one or a few sentences.' },
+      text: { type: 'string', description: 'The fact, in one or a few sentences (at most 8000 characters; split longer material into separate facts).' },
       scope: scopeParam(false),
-      team: { type: 'string', description: 'Which team, by name, when you are on several.' },
+      team: { type: 'string', description: 'Which team, by name (or its id when two share a name). Giving a team saves to that team even without scope.' },
       tags: { type: 'array', items: { type: 'string' }, description: 'Optional short tags, e.g. a client or project name.' },
     }, ['text']),
     activity: 'remembering',
     label: 'Saving to memory',
     impl: bankTool(async (a, ctx) => {
-      const [bank] = pickBanks(ctx.userId, ctx.botId, { layer: a.scope ?? 'me', team: a.team, write: true });
+      const [bank] = pickBanks(ctx.userId, ctx.botId, { layer: a.scope, team: a.team, write: true });
       const tags = (Array.isArray(a.tags) ? a.tags : []).map((t: unknown) => String(t).trim().slice(0, 40)).filter(Boolean).slice(0, 8);
       const r = await retain(bank, String(a.text ?? ''), { by: `${getBotName(ctx.botId)} (bot)`, tags });
       return { output: JSON.stringify({ ok: true, saved_to: bank.label, ...r }), summary: `Saved to ${bank.label}` };

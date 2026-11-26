@@ -18,12 +18,12 @@ Each bot's short working notes still live in its Hermes home (`memories/MEMORY.m
 
 ### Bot tools
 
-- `memory_recall { query, scope?: all|me|team|everyone, team? }` searches the banks in parallel and groups the results by bank. A bank never written to counts as empty.
-- `memory_save { text, scope?: me|team|everyone, team?, tags? }` saves to the bot's own bank by default. A bot on several teams must name the team.
+- `memory_recall { query, scope?: all|me|team|everyone, team? }` searches the banks in parallel and groups the results by bank. A bank never written to counts as empty. If one bank fails, the others still answer and the reply says which bank could not be searched.
+- `memory_save { text, scope?: me|team|everyone, team?, tags? }` saves to the bot's own bank by default; giving `team` alone saves to that team. A bot on several teams must name the team, by its id when two teams share a name. Text over 8,000 characters is refused (split into separate facts), never cut.
 
 ### Automatic team memory
 
-When a RevOpt task is marked **done**, its title, target, Build-flow job and details are saved to its team's bank in the background (`rememberDone` in `routes-revopt.ts`). A slow store never holds up the status change.
+When a RevOpt task is marked **done** (or created already done), its team's bank gets the title, target, Build-flow job, the brief and the outcome. The outcome is the team bots' last two replies in the team channel after the task was dispatched (`rememberDone` and `taskOutcome` in `routes-revopt.ts`). Each task is one document (`revopt-<task id>`), so re-finishing a reopened task replaces its memory. The save is queued in `memory_pending` and retried every 10 minutes until Hindsight takes it, so a brief outage loses nothing and never holds up the status change.
 
 ### Memory graph (RevOpt → Memory graph)
 
@@ -35,7 +35,11 @@ It extends `Projects/unified-memory/ONTOLOGY.md` (v1, proposed, not deployed): t
 
 - **Types:** person, company, deal, project, job (Build-flow), bot, team, decision, task, service, incident, document. Anything else shows as "Entity" until typed.
 - **Link fields** (frontmatter): works_at, owns, decided, assigned_to, about, part_of, affects, plus v1's member_of, works_on, belongs_to, authored_by, cites, supports, contradicts, supersedes, derived_from, related_to.
-- Hindsight does not store entity types, so `memory_entity_types` keeps them. Sources, in increasing priority: a bare job number is a job; then the app's bots and teams; then typed Obsidian notes; then (later) user edits.
+- Hindsight does not store entity types, so `memory_entity_types` keeps them. In increasing priority:
+  - a name in Build-flow's job-number format (`JOB-1001`, `#3333`) is a job;
+  - the account's own bots and teams, by name;
+  - typed Obsidian notes, re-derived on every sync: a deleted note stops typing its entity, and when two notes type one name differently the first by path wins and the sync reports the conflict;
+  - `Types.md`.
 - v1's evidence kinds and lesson promotion stay in Gnoesis. Nothing here validates or promotes.
 
 ## Obsidian, both ways (`server/src/obsidian.ts`)
@@ -51,11 +55,12 @@ It extends `Projects/unified-memory/ONTOLOGY.md` (v1, proposed, not deployed): t
     Shared/, Teams/<team>/, Bots/<bot>/   00 <name>.md + <type plural>/<entity>.md
 ```
 
-- **In:** only changed notes are sent (content hash in `obsidian_notes`). The document id is a hash of the note's path, so an edit **replaces** the old version. A deleted note, or one moved to another bank, is forgotten from the old bank. `type:` and link fields become entity hints plus plain statements ("Dana works at Acme"). Hidden entries, names containing "secret", and notes over 256 KB are skipped. Each changed note costs one fact-extraction LLM call in Hindsight.
-- **Out:** each bank's top entities (250) become typed notes with their facts and path wikilinks to what they come up with, so Obsidian's graph view matches the Memory graph. Only files carrying `generated: bot-hq` are ever overwritten or removed. Unchanged files are not rewritten.
+- **In:** only changed notes are sent (content hash in `obsidian_notes`). The document id is a hash of the note's path, so an edit **replaces** the old version. A deleted note, or one moved to another bank, is forgotten from the old bank. `type:` and link fields become entity hints plus plain statements ("Dana works at Acme"). Hidden entries and names containing "secret" are skipped. A note over 256 KB or 60,000 characters is skipped, and its earlier version is forgotten so nothing stale stays. Each changed note costs one fact-extraction LLM call in Hindsight.
+- **Never forgets by accident:** an unreadable folder, or a missing `workspace/` that was synced before, stops the sync with an error. A vault over 4,000 notes is synced up to that point, and nothing is forgotten that run (`truncated` in the result).
+- **Out:** each bank's top entities (250) become typed notes with their facts and path wikilinks to what they come up with, so Obsidian's graph view matches the Memory graph. Only files carrying `generated: bot-hq` are ever written over or removed; somebody's own file at a generated path is left alone and listed as `kept`. Unchanged files are not rewritten. Two labels that clean up to one file name get distinct files (the less-mentioned gets a short entity id). If an entity's facts cannot be read, its existing note is kept as it was.
 - **`Types.md`** at the vault root (outside `workspace/`, so never sent into memory): `## <type>` headings (`## People`, `## service`, …) with `- name` lines, and `## ignore` for names to leave out of the graph (Hindsight's `user`, `assistant`). It is the whole of the person's typing. Each sync replaces the earlier entries, so removing a name untypes it, and a retyped entity's note moves folder.
 - **Graph colours:** if the vault has no `.obsidian/graph.json`, the export writes one with a colour group per type (`[type:person]`, …) matching the Memory graph, filtered to `Memory/`. Existing graph settings are never touched.
-- **Secrets:** a fact that looks like a key, token, password URL, private key or long opaque string (40+ letters and digits, no slash) is not written to the vault. The note says how many were withheld; they stay in Hindsight and the Memory graph.
+- **Secrets:** a fact is not written to the vault when it looks like a known key or token format (`sk-`, `ghp_`, `zo_sk_`, `AKIA`, JWTs…), a URL with a password, a private key, or a long opaque string: 40+ characters of letters **and digits** with no slash or space. That covers hashes and base64 keys; an all-letter run is not caught, because it is far more often a word or slug. The note says how many were withheld; they stay in Hindsight and the Memory graph.
 - The folder is named `Memory/` because the zo-vaults indexer (`Vaults/docs/DESIGN.md`) already skips folders of that name, so generated notes cannot loop back in through that path either.
 - Measured against the live `shared` bank on Zo (read-only, scratch copy): 40 entities exported in 3.4 s.
 
@@ -64,10 +69,13 @@ It extends `Projects/unified-memory/ONTOLOGY.md` (v1, proposed, not deployed): t
 | env | meaning |
 |---|---|
 | `OBSIDIAN_VAULT` | the vault folder, e.g. `/home/workspace/Vaults/bot-memory`. Unset = off |
-| `OBSIDIAN_SYNC_MINUTES` | background sync interval. Unset/0 = only "Sync now" in the Memory graph |
+| `OBSIDIAN_SYNC_MINUTES` | background sync interval. Unset/0 = only "Sync now" in the Memory graph. Off when `GROKBOT_NO_SCHEDULER=1` |
+| `OBSIDIAN_WORKSPACE` | the account the vault belongs to (account id or email). Default: the only account that has bots; required when there are several |
 | `HINDSIGHT_URL` | default `http://127.0.0.1:8888` |
 
-Before pointing it into the `zo-vaults` git repo, decide whether `Memory/` is committed. It holds what the bots remember (client names, deal facts) and would be pushed to GitHub. `bot-memory/Memory/` in `.gitignore` keeps it on Zo only.
+The vault belongs to one workspace. Only that account's bots, teams and `shared` are synced, and only that account (and its workspace members) sees the sync's details or can start it. Other accounts see that the vault belongs to another workspace.
+
+Before pointing it into the `zo-vaults` git repo, decide whether `Memory/` is committed. It holds what the bots remember (client names, deal facts), and a commit would push it to GitHub. **This repo does not add any ignore rule there.** To keep it on Zo only, add `bot-memory/Memory/` to the zo-vaults `.gitignore` yourself before the first commit.
 
 API (session-gated, under `/api/revopt`): `GET /memory/banks`, `GET /memory/graph?bank=`, `GET /memory/entities/:id?bank=`, `GET /memory/ontology`, `GET /memory/obsidian`, `POST /memory/obsidian/sync` (202, poll the GET).
 
@@ -75,4 +83,4 @@ API (session-gated, under `/api/revopt`): `GET /memory/banks`, `GET /memory/grap
 
 - Gnoesis `policy.json` still lists only `hermes`, `research-agent` and `coding-agent`. Bot HQ enforces bank access itself; mirroring it into Gnoesis waits for the unified-memory auth work (DO-NOT-DEPLOY today).
 - Deleting a bot or team leaves its bank in Hindsight.
-- No UI yet for correcting an entity's type (the table supports `source='user'`).
+- Typing is done in `Types.md`; there is no in-app editor for it yet.

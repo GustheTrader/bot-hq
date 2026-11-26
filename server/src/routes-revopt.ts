@@ -9,9 +9,9 @@ import { env } from './env.js';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './types.js';
 import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
 import { MemoryGraphError, checkBank, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
-import { banksForUser, retain, teamBank, userMayView } from './memory-banks.js';
+import { banksForUser, retainDurably, teamBank, userMayView } from './memory-banks.js';
 import { ENTITY_TYPES, RELATIONS, UNTYPED, entityTyper } from './ontology.js';
-import { syncStatus, syncVault } from './obsidian.js';
+import { syncProblem, syncStatus, syncVault } from './obsidian.js';
 import { SupersetError, enableEmbedding, guestToken, listDashboards, supersetConfig } from './superset.js';
 import { bf, buildflowEnabled, jobBrief, jobByNumber, looksLikeJobNumber, type JobRef } from './buildflow.js';
 
@@ -215,26 +215,52 @@ revoptApi.post('/tasks', async (c) => {
     (body.status as string) ?? 'todo', cleaned.patch.priority ?? 'normal',
     JSON.stringify(body.payload ?? {}), t, t, body.dueAt ?? null,
   );
+  // A task logged as already finished is remembered too.
+  if (body.status === 'done') rememberDone(userId, db.prepare('SELECT * FROM revopt_tasks WHERE id=?').get(id) as TaskRow, u.name);
   return c.json({ id });
 });
 
 /**
+ * What the team said about a dispatched task: the bots' last replies in the team channel after the
+ * task was posted there (newest last, at most two), or '' when it was never dispatched.
+ */
+export function taskOutcome(t: Pick<TaskRow, 'team_id' | 'row_seq'>): string {
+  if (t.row_seq == null) return '';
+  const rows = db.prepare(
+    `SELECT body FROM rows WHERE bot_id=? AND kind='message' AND seq>? AND generation=(SELECT generation FROM bots WHERE id=?)
+     ORDER BY seq DESC LIMIT 20`,
+  ).all(t.team_id, t.row_seq, t.team_id) as { body: string }[];
+  const replies: string[] = [];
+  for (const r of rows) {
+    let b: any;
+    try { b = JSON.parse(r.body); } catch { continue; }
+    if (b?.role !== 'assistant' || !b.text) continue;
+    replies.unshift(`${b.from?.name ? `${b.from.name}: ` : ''}${String(b.text).replace(/\s+/g, ' ').trim()}`);
+    if (replies.length === 2) break;
+  }
+  return replies.join(' / ').slice(0, 3000);
+}
+
+/**
  * A finished task becomes part of its team's memory, so the next task about the same client or
- * deal starts from what this one found. Runs in the background: a slow or absent memory store
- * never holds up the status change.
+ * deal starts from what this one found: the brief, and what the team replied. One document per task
+ * (re-finishing a reopened task replaces it), kept until Hindsight takes it, in the background, so
+ * a slow or absent memory store never holds up the status change.
  */
 function rememberDone(userId: string, t: TaskRow, by: string) {
   const bank = teamBank(userId, t.team_id);
   if (!bank) return;
   const job = (toTask(t).payload as any)?.buildflowJob;
+  const outcome = taskOutcome(t);
   const text = [
     `RevOpt ${t.kind} task finished on ${new Date().toISOString().slice(0, 10)}: ${t.title}.`,
     t.target ? `Target: ${t.target}.` : '',
     job?.number ? `Build-flow job ${job.number}${job.name ? ` (${job.name})` : ''}.` : '',
-    t.detail ? `Details: ${t.detail.slice(0, 3000)}` : '',
+    t.detail ? `Brief: ${t.detail.slice(0, 3000)}` : '',
+    outcome ? `Outcome, from the team: ${outcome}` : 'No outcome was posted in the team channel.',
   ].filter(Boolean).join(' ');
-  retain(bank, text, { by, context: `RevOpt task ${t.id} marked done`, tags: ['revopt', t.kind] })
-    .catch((e) => console.warn(`[memory] could not save finished task ${t.id} to ${bank.id}: ${e instanceof Error ? e.message : e}`));
+  retainDurably(userId, bank, text, { by, context: `RevOpt task ${t.id} marked done`, tags: ['revopt', t.kind], documentId: `revopt-${t.id}` })
+    .catch((e) => console.warn(`[memory] could not save finished task ${t.id} to ${bank.id} (will retry): ${e instanceof Error ? e.message : e}`));
 }
 
 /** Update a task (status, priority, title, detail, target, payload, dueAt). */
@@ -392,13 +418,17 @@ revoptApi.get('/memory/ontology', (c) => c.json({
 }));
 
 /** Obsidian sync: its state, and "sync now" (runs in the background; poll the state). */
-revoptApi.get('/memory/obsidian', (c) => c.json(syncStatus()));
+// The vault belongs to one workspace: only that account sees the details or can start a sync.
+revoptApi.get('/memory/obsidian', (c) => c.json(syncStatus(c.get('user').id)));
 revoptApi.post('/memory/obsidian/sync', (c) => {
-  const s = syncStatus();
-  if (!s.enabled) return c.json({ error: 'Obsidian sync is off: set OBSIDIAN_VAULT on the server to the vault folder.' }, 400);
+  const userId = c.get('user').id;
+  const s = syncStatus(userId);
+  if (s.enabled && !s.mine) return c.json({ error: 'The Obsidian vault belongs to another workspace.' }, 403);
+  const problem = syncProblem();
+  if (problem) return c.json({ error: problem }, 400);
   if (s.running) return c.json(s, 202);
   syncVault().catch((e) => console.warn(`[obsidian] sync failed: ${e instanceof Error ? e.message : e}`));
-  return c.json(syncStatus(), 202);
+  return c.json(syncStatus(userId), 202);
 });
 
 // ---------- BI (Apache Superset, embedded) ----------

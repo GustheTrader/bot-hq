@@ -108,6 +108,10 @@ export interface MemoryOntology {
 /** Two-way sync between the bots' memory and an Obsidian vault on the server. */
 export interface ObsidianStatus {
   enabled: boolean;
+  /** Whether the vault belongs to this workspace; other workspaces see no details. */
+  mine: boolean;
+  /** Why a sync cannot run right now (no folder, no owner account), when it cannot. */
+  problem: string | null;
   vault: string | null;
   everyMinutes: number;
   running: boolean;

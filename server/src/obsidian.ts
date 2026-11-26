@@ -4,7 +4,7 @@ import { db, now } from './db.js';
 import { sha256 } from './lib/ids.js';
 import { SHARED, bankById, forgetDocument, retain, type Bank } from './memory-banks.js';
 import { entityFacts, listBanks, memoryGraph } from './memory-graph.js';
-import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relationOf, setEntityType, typeOf, type EntityType } from './ontology.js';
+import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relationOf, replaceNoteTypes, setEntityType, typeOf, type EntityType } from './ontology.js';
 
 /**
  * Bot memory and an Obsidian vault, both ways (OBSIDIAN_VAULT, off when unset):
@@ -25,14 +25,32 @@ import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relatio
  * links to the entities it comes up with, so Obsidian's graph view shows what the bots know.
  * Generated notes carry `generated: bot-hq`; only those are ever overwritten or removed. The folder
  * is named `Memory` because the zo-vaults indexer already skips folders of that name.
+ *
+ * The vault belongs to one workspace (OBSIDIAN_WORKSPACE: an account id or email; by default the
+ * only account that has bots). Only that account's bots, teams and `shared` are synced, and only
+ * that account (or its workspace members) can see the sync or start it.
  */
 
 export const vaultPath = () => (process.env.OBSIDIAN_VAULT ?? '').trim() || null;
 const MAX_NOTE = 256 * 1024;
 const MAX_NOTES = 4000;
+/** The longest note text sent to Hindsight as one document. */
+const MAX_NOTE_TEXT = 60_000;
 const LAYER_DIRS = { everyone: 'Shared', team: 'Teams', me: 'Bots' } as const;
 
 export class ObsidianError extends Error {}
+
+/** The account the vault belongs to, or why there is none. */
+export function vaultOwner(): { id: string } | { error: string } {
+  const want = (process.env.OBSIDIAN_WORKSPACE ?? '').trim();
+  if (want) {
+    const u = db.prepare('SELECT id FROM users WHERE id=? OR lower(email)=lower(?)').get(want, want) as { id: string } | undefined;
+    return u ? { id: u.id } : { error: `OBSIDIAN_WORKSPACE names no account (${want}).` };
+  }
+  const owners = db.prepare("SELECT DISTINCT user_id FROM bots WHERE COALESCE(hidden,0)=0").all() as { user_id: string }[];
+  if (owners.length === 1) return { id: owners[0].user_id };
+  return { error: owners.length ? 'More than one account has bots: set OBSIDIAN_WORKSPACE to the account the vault belongs to.' : 'No account has bots yet.' };
+}
 
 let ready = false;
 export function initObsidian() {
@@ -106,68 +124,108 @@ export function noteText(n: Note): string {
 
 // ---------- which bank a note goes to ----------
 
-function bankByName(kind: 'team' | 'agent', name: string): Bank | null | 'ambiguous' {
-  const rows = db.prepare("SELECT id FROM bots WHERE lower(name)=lower(?) AND COALESCE(kind,'agent')=? AND COALESCE(hidden,0)=0").all(name.trim(), kind) as any[];
+function bankByName(userId: string, kind: 'team' | 'agent', name: string): Bank | null | 'ambiguous' {
+  const rows = db.prepare("SELECT id FROM bots WHERE user_id=? AND lower(name)=lower(?) AND COALESCE(kind,'agent')=? AND COALESCE(hidden,0)=0").all(userId, name.trim(), kind) as any[];
   if (rows.length > 1) return 'ambiguous';
-  return rows.length ? bankById(rows[0].id) : null;
+  return rows.length ? bankById(userId, rows[0].id) : null;
 }
 
-/** `Shared/…` → shared, `Teams/<name>/…` → that team, `Bots/<name>/…` → that bot. Anything else is not synced. */
-export function routeNote(rel: string): Bank | { skip: string } {
+/** `Shared/…` → shared, `Teams/<name>/…` → that team, `Bots/<name>/…` → that bot, all in the vault's account. Anything else is not synced. */
+export function routeNote(userId: string, rel: string): Bank | { skip: string } {
   const parts = rel.split('/');
-  if (parts[0] === 'Shared' && parts.length > 1) return bankById(SHARED)!;
+  if (parts[0] === 'Shared' && parts.length > 1) return bankById(userId, SHARED)!;
   if ((parts[0] === 'Teams' || parts[0] === 'Bots') && parts.length > 2) {
-    const b = bankByName(parts[0] === 'Teams' ? 'team' : 'agent', parts[1]);
+    const b = bankByName(userId, parts[0] === 'Teams' ? 'team' : 'agent', parts[1]);
     if (b === 'ambiguous') return { skip: `more than one ${parts[0] === 'Teams' ? 'team' : 'bot'} is named "${parts[1]}"` };
     return b ?? { skip: `no ${parts[0] === 'Teams' ? 'team' : 'bot'} named "${parts[1]}"` };
   }
   return { skip: 'not under Shared/, Teams/<team>/ or Bots/<bot>/' };
 }
 
-function walk(root: string, dir = '', out: string[] = []): string[] {
+/**
+ * Every note under `root`, in sorted path order. A folder that cannot be read stops the sync (it
+ * must not look like its notes were deleted). Hitting MAX_NOTES sets `truncated`, telling the
+ * caller the list is incomplete, so nothing missing from it may be forgotten.
+ */
+function walk(root: string, dir = '', acc = { files: [] as string[], truncated: false }): { files: string[]; truncated: boolean } {
   let entries: fs.Dirent[];
-  try { entries = fs.readdirSync(path.join(root, dir), { withFileTypes: true }); } catch { return out; }
+  try { entries = fs.readdirSync(path.join(root, dir), { withFileTypes: true }); } catch (e) {
+    throw new ObsidianError(`Could not read the vault folder workspace/${dir}: ${e instanceof Error ? e.message : e}`);
+  }
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of entries) {
-    if (out.length >= MAX_NOTES) break;
+    if (acc.files.length >= MAX_NOTES) { acc.truncated = true; break; }
     if (e.name.startsWith('.') || /secret/i.test(e.name)) continue; // the zo-vaults rules: no hidden entries, nothing named "secret"
     const rel = dir ? `${dir}/${e.name}` : e.name;
-    if (e.isDirectory()) walk(root, rel, out);
-    else if (e.isFile() && e.name.endsWith('.md')) out.push(rel);
+    if (e.isDirectory()) walk(root, rel, acc);
+    else if (e.isFile() && e.name.endsWith('.md')) acc.files.push(rel);
   }
-  return out;
+  return acc;
 }
 
 // ---------- in: notes → banks ----------
 
-export interface IngestResult { saved: string[]; unchanged: number; forgotten: string[]; skipped: { path: string; why: string }[] }
+export interface IngestResult {
+  saved: string[];
+  unchanged: number;
+  forgotten: string[];
+  skipped: { path: string; why: string }[];
+  /** Names two notes typed differently: the first by path wins. */
+  typeConflicts: { name: string; path: string; type: string; kept: string; keptFrom: string }[];
+  /** The vault has more than MAX_NOTES notes: the rest were not read, and nothing was forgotten. */
+  truncated: boolean;
+}
 
-export async function ingestVault(vault: string, fetchFn?: Parameters<typeof retain>[3]): Promise<IngestResult> {
+export async function ingestVault(vault: string, userId: string, fetchFn?: Parameters<typeof retain>[3]): Promise<IngestResult> {
   initObsidian();
   const root = path.join(vault, 'workspace');
-  const res: IngestResult = { saved: [], unchanged: 0, forgotten: [], skipped: [] };
-  const seen = new Set<string>();
+  const res: IngestResult = { saved: [], unchanged: 0, forgotten: [], skipped: [], typeConflicts: [], truncated: false };
   const rows = new Map((db.prepare('SELECT * FROM obsidian_notes').all() as any[]).map((r) => [r.path, r]));
+  if (!fs.existsSync(root)) {
+    if (rows.size) throw new ObsidianError('The vault has no workspace/ folder, but notes were synced from it before. Not forgetting them; check the vault path.');
+    return res;
+  }
+  const scan = walk(root);
+  res.truncated = scan.truncated;
 
-  for (const rel of walk(root)) {
-    const file = path.join(root, rel);
-    const size = fs.statSync(file).size;
-    if (size > MAX_NOTE) { res.skipped.push({ path: rel, why: 'larger than 256 KB' }); continue; }
-    const route = routeNote(rel);
-    if ('skip' in route) { res.skipped.push({ path: rel, why: route.skip }); continue; }
+  /** Drops what an earlier version of a note left in memory, when the note can no longer be synced. */
+  const forget = async (rel: string, why: string) => {
+    res.skipped.push({ path: rel, why });
+    const prev = rows.get(rel);
+    if (!prev) return;
+    await forgetDocument(prev.bank, prev.document_id, fetchFn as any);
+    db.prepare('DELETE FROM obsidian_notes WHERE path=?').run(rel);
+    res.forgotten.push(rel);
+  };
+
+  // Read every note first, so types come from all of them (changed or not) before anything is sent.
+  const notes: { rel: string; route: Bank; src: string; note: Note }[] = [];
+  const seen = new Set<string>();
+  for (const rel of scan.files) {
     seen.add(rel);
+    const file = path.join(root, rel);
+    if (fs.statSync(file).size > MAX_NOTE) { await forget(rel, 'larger than 256 KB'); continue; }
+    const route = routeNote(userId, rel);
+    if ('skip' in route) { res.skipped.push({ path: rel, why: route.skip }); continue; }
     const src = fs.readFileSync(file, 'utf8');
+    notes.push({ rel, route, src, note: readNote(rel, src) });
+  }
+  res.typeConflicts = replaceNoteTypes(notes.filter((n) => n.note.type).map((n) => ({ name: n.note.title, type: n.note.type!.id, path: n.rel })));
+
+  const typer = entityTyper(userId);
+  const hint = (name: string) => { const t = typer(name); return t === UNTYPED ? undefined : t.hindsight; };
+  for (const { rel, route, src, note } of notes) {
     const hash = sha256(`${route.id}\n${src}`);
     const prev = rows.get(rel);
-    const note = readNote(rel, src);
-    if (note.type) setEntityType(note.title, note.type.id, 'note');
     if (prev?.hash === hash) { res.unchanged++; continue; }
+    const text = noteText(note);
+    if (text.length > MAX_NOTE_TEXT) { await forget(rel, `longer than ${MAX_NOTE_TEXT.toLocaleString('en-US')} characters`); continue; }
 
     const documentId = `obsidian-${sha256(rel).slice(0, 24)}`;
     if (prev && prev.bank !== route.id) await forgetDocument(prev.bank, prev.document_id, fetchFn as any); // the note moved to another bank
-    const typer = entityTyper();
-    const entities = [{ text: note.title, type: note.type?.hindsight }, ...note.links.map((l) => ({ text: l.target, type: typer(l.target) === UNTYPED ? undefined : typer(l.target).hindsight }))];
-    await retain(route, noteText(note), {
-      by: 'Obsidian', context: `Obsidian note workspace/${rel}`, documentId, entities, maxChars: 60_000,
+    const entities = [{ text: note.title, type: note.type?.hindsight ?? hint(note.title) }, ...note.links.map((l) => ({ text: l.target, type: hint(l.target) }))];
+    await retain(route, text, {
+      by: 'Obsidian', context: `Obsidian note workspace/${rel}`, documentId, entities, maxChars: MAX_NOTE_TEXT,
       tags: ['obsidian', ...(note.type ? [`type:${note.type.id}`] : []), ...note.tags].slice(0, 12),
     }, fetchFn);
     db.prepare(`INSERT INTO obsidian_notes(path,hash,bank,document_id,title,synced_at) VALUES (?,?,?,?,?,?)
@@ -176,12 +234,16 @@ export async function ingestVault(vault: string, fetchFn?: Parameters<typeof ret
     res.saved.push(rel);
   }
 
-  // A note that was deleted (or moved out of a synced folder) is forgotten, so bots stop recalling it.
-  for (const [rel, r] of rows) {
-    if (seen.has(rel) || res.skipped.some((s) => s.path === rel)) continue;
-    await forgetDocument(r.bank, r.document_id, fetchFn as any);
-    db.prepare('DELETE FROM obsidian_notes WHERE path=?').run(rel);
-    res.forgotten.push(rel);
+  // A note that was deleted is forgotten, so bots stop recalling it. Not when the scan was cut short:
+  // a note it never reached is not a deleted note. A note moved into a folder that is not synced
+  // keeps its memory until it is deleted.
+  if (!res.truncated) {
+    for (const [rel, r] of rows) {
+      if (seen.has(rel)) continue;
+      await forgetDocument(r.bank, r.document_id, fetchFn as any);
+      db.prepare('DELETE FROM obsidian_notes WHERE path=?').run(rel);
+      res.forgotten.push(rel);
+    }
   }
   return res;
 }
@@ -191,13 +253,23 @@ export async function ingestVault(vault: string, fetchFn?: Parameters<typeof ret
 export const safeName = (s: string) => s.replace(/[\\/:*?"<>|#^[\]\u0000-\u001f]/g, '-').replace(/\s+/g, ' ').replace(/^[.\s-]+|[.\s]+$/g, '').slice(0, 120) || 'untitled';
 const yamlStr = (s: string) => JSON.stringify(s);
 
-/** Writes a file only when its text changed (keeps the vault's git history quiet). */
-function put(file: string, text: string, written: Set<string>) {
+const GENERATED = /^---[\s\S]*?\ngenerated: bot-hq\n[\s\S]*?---/;
+const isGenerated = (text: string) => GENERATED.test(text.slice(0, 2000));
+
+/**
+ * Writes a generated file, only when its text changed (keeps the vault's git history quiet). A file
+ * already there without the `generated: bot-hq` marker is somebody's own: it is left alone and
+ * 'kept' is returned.
+ */
+function put(file: string, text: string, written: Set<string>): 'changed' | 'same' | 'kept' {
+  let old: string | null = null;
+  try { old = fs.readFileSync(file, 'utf8'); } catch { /* new file */ }
+  if (old !== null && !isGenerated(old)) return 'kept';
   written.add(path.resolve(file));
-  try { if (fs.readFileSync(file, 'utf8') === text) return false; } catch { /* new file */ }
+  if (old === text) return 'same';
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text);
-  return true;
+  return 'changed';
 }
 
 /** Removes generated notes this run did not write, and the folders that leaves empty. Hand-written files are never touched. */
@@ -210,7 +282,7 @@ function prune(dir: string, written: Set<string>): number {
     if (e.isDirectory()) {
       n += prune(p, written);
       try { if (!fs.readdirSync(p).length) fs.rmdirSync(p); } catch { /* not empty */ }
-    } else if (e.name.endsWith('.md') && !written.has(path.resolve(p)) && /^---[\s\S]*?\ngenerated: bot-hq\n[\s\S]*?---/.test(fs.readFileSync(p, 'utf8').slice(0, 2000))) {
+    } else if (e.name.endsWith('.md') && !written.has(path.resolve(p)) && isGenerated(fs.readFileSync(p, 'utf8'))) {
       fs.unlinkSync(p);
       n++;
     }
@@ -287,18 +359,46 @@ export function ensureGraphConfig(vault: string): boolean {
   return true;
 }
 
-export interface ExportResult { banks: { bank: string; label: string; entities: number; changed: number; withheld: number }[]; removed: number }
+export interface ExportResult {
+  banks: { bank: string; label: string; entities: number; changed: number; withheld: number; unreadable: number }[];
+  removed: number;
+  /** Files at a generated path that are somebody's own (no `generated: bot-hq`): left as they were. */
+  kept: string[];
+}
 
-export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: number; fetchFn?: any } = {}): Promise<ExportResult> {
+/**
+ * One file name per entity within its type folder. Labels that clean up to the same name (or differ
+ * only in case, which some file systems treat as one) get a short piece of the entity id, the most
+ * mentioned keeping the plain name, so no entity's note overwrites another's.
+ */
+function fileNames<T extends { id: string; label: string; mentions: number; type: EntityType }>(nodes: T[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const used = new Set<string>();
+  for (const n of [...nodes].sort((a, b) => b.mentions - a.mentions || (a.id < b.id ? -1 : 1))) {
+    const plain = safeName(n.label);
+    let name = plain;
+    if (used.has(`${n.type.plural}/${name}`.toLowerCase())) name = `${plain.slice(0, 108)} (${n.id.replace(/[^A-Za-z0-9]/g, '').slice(0, 8)})`;
+    used.add(`${n.type.plural}/${name}`.toLowerCase());
+    out.set(n.id, name);
+  }
+  return out;
+}
+
+export async function exportBanks(vault: string, userId: string, banks: Bank[], opts: { limit?: number; fetchFn?: any } = {}): Promise<ExportResult> {
   initObsidian();
   const root = path.join(vault, 'Memory');
   const written = new Set<string>();
   const ignore = applyTypesNote(vault);
   ensureGraphConfig(vault);
-  const typer = entityTyper();
+  const typer = entityTyper(userId);
   const sources = new Map((db.prepare('SELECT path, title FROM obsidian_notes').all() as any[]).map((r) => [r.title.toLowerCase(), r.path as string]));
-  const res: ExportResult = { banks: [], removed: 0 };
-  put(path.join(root, 'Ontology.md'), ontologyNote(), written);
+  const res: ExportResult = { banks: [], removed: 0, kept: [] };
+  const write = (file: string, text: string) => {
+    const r = put(file, text, written);
+    if (r === 'kept') res.kept.push(path.relative(vault, file).split(path.sep).join('/'));
+    return r === 'changed';
+  };
+  write(path.join(root, 'Ontology.md'), ontologyNote());
 
   for (const bank of banks) {
     // Same names as the workspace folders: Memory/Shared, Memory/Teams/<team>, Memory/Bots/<bot>.
@@ -309,18 +409,34 @@ export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: 
     const keep = new Set(kept.map((n) => n.id));
     const g = { ...raw, nodes: kept, edges: raw.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) };
     let withheld = 0;
-    const facts = await inPool(g.nodes, 6, (n) => entityFacts(bank.id, n.id, opts.fetchFn).catch(() => ({ entity: null, facts: [] as any[] })));
+    let unreadable = 0;
+    // A lookup that fails is null, not "no facts": the entity's existing note is then left as it was.
+    const facts = await inPool(g.nodes, 6, (n) => entityFacts(bank.id, n.id, opts.fetchFn).catch(() => null));
     const typed = g.nodes.map((n, i) => {
-      const all = facts[i].facts as { text: string; date: string | null }[];
-      const safe = all.filter((f) => !looksSecret(f.text));
+      const f = facts[i];
+      const all = (f?.facts ?? []) as { text: string; date: string | null }[];
+      const safe = all.filter((x) => !looksSecret(x.text));
       withheld += all.length - safe.length;
-      return { ...n, type: typer(n.label), facts: safe, hidden: all.length - safe.length, entity: facts[i].entity as any };
+      return { ...n, type: typer(n.label), facts: safe, hidden: all.length - safe.length, entity: (f?.entity ?? null) as any, failed: !f };
     });
-    const link = new Map(typed.map((n) => [n.id, `[[${folder}/${n.type.plural}/${safeName(n.label)}|${n.label}]]`]));
+    const names = fileNames(typed);
+    const fileOf = (n: (typeof typed)[number]) => `${folder}/${n.type.plural}/${names.get(n.id)}`;
+    const link = new Map(typed.map((n) => [n.id, `[[${fileOf(n)}|${n.label}]]`]));
     let changed = 0;
     for (const n of typed) {
+      const file = path.join(vault, `${fileOf(n)}.md`);
+      if (n.failed) {
+        unreadable++;
+        if (fs.existsSync(file)) { written.add(path.resolve(file)); continue; } // keep what it said last time
+      }
       const near = g.edges.filter((e) => e.source === n.id || e.target === n.id).sort((a, b) => b.weight - a.weight).slice(0, 25);
       const src = sources.get(n.label.toLowerCase());
+      const factLines = n.failed
+        ? ['- (the facts could not be read this sync; they will be filled in on the next one)']
+        : [
+          ...(n.facts.length ? n.facts.map((f) => `- ${f.text.replace(/\n+/g, ' ')}${f.date ? ` (${String(f.date).slice(0, 10)})` : ''}`) : ['- (none listed yet)']),
+          ...(n.hidden ? [`- (${n.hidden} fact${n.hidden === 1 ? '' : 's'} withheld: looked like a key or token; see it in the Memory graph)`] : []),
+        ];
       const text = [
         '---', `type: ${n.type.id}`, `bank: ${yamlStr(bank.label)}`, `mentions: ${n.mentions}`,
         ...(n.entity?.firstSeen ? [`first_seen: ${n.entity.firstSeen.slice(0, 10)}`] : []),
@@ -328,12 +444,10 @@ export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: 
         'generated: bot-hq', '---', '',
         `# ${n.label}`, '',
         `${n.type === UNTYPED ? 'Untyped entity' : n.type.label} in ${bank.label}'s memory, mentioned ${n.mentions} time${n.mentions === 1 ? '' : 's'}.${src ? ` Source note: [[workspace/${src.replace(/\.md$/, '')}|${n.label}]].` : ''}`, '',
-        '## Facts', '',
-        ...(n.facts.length ? n.facts.map((f) => `- ${f.text.replace(/\n+/g, ' ')}${f.date ? ` (${String(f.date).slice(0, 10)})` : ''}`) : ['- (none listed yet)']),
-        ...(n.hidden ? [`- (${n.hidden} fact${n.hidden === 1 ? '' : 's'} withheld: looked like a key or token; see it in the Memory graph)`] : []), '',
+        '## Facts', '', ...factLines, '',
         ...(near.length ? ['## Comes up with', '', ...near.map((e) => `- ${link.get(e.source === n.id ? e.target : e.source)} · ${e.weight}×`), ''] : []),
       ].join('\n');
-      if (put(path.join(vault, folder, n.type.plural, `${safeName(n.label)}.md`), text, written)) changed++;
+      if (write(file, text)) changed++;
     }
     const byType = [...ENTITY_TYPES, UNTYPED].map((t) => ({ t, list: typed.filter((n) => n.type.id === t.id).sort((a, b) => b.mentions - a.mentions) })).filter((x) => x.list.length);
     const index = [
@@ -342,8 +456,8 @@ export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: 
       `What the bots remember in this bank: the ${typed.length} most-mentioned of ${g.totalEntities} entities${g.stats ? `, drawn from ${g.stats.facts} facts` : ''}. Generated by Bot HQ; edits here are overwritten. To teach the bots, write a note under \`workspace/\`. Vocabulary: [[Memory/Ontology|Ontology]].`, '',
       ...byType.flatMap(({ t, list }) => [`## ${t.plural} (${list.length})`, '', ...list.slice(0, 40).map((n) => `- ${link.get(n.id)} · ${n.mentions}`), '']),
     ].join('\n');
-    if (put(path.join(vault, folder, `00 ${safeName(label)}.md`), index, written)) changed++;
-    res.banks.push({ bank: bank.id, label: bank.label, entities: typed.length, changed, withheld });
+    if (write(path.join(vault, folder, `00 ${safeName(label)}.md`), index)) changed++;
+    res.banks.push({ bank: bank.id, label: bank.label, entities: typed.length, changed, withheld, unreadable });
   }
   res.removed = prune(root, written);
   return res;
@@ -353,9 +467,13 @@ export async function exportBanks(vault: string, banks: Bank[], opts: { limit?: 
 
 export interface SyncStatus {
   enabled: boolean;
+  /** Whether the asking account is the one the vault belongs to. Others see no details. */
+  mine: boolean;
   vault: string | null;
   everyMinutes: number;
   running: boolean;
+  /** Why the sync cannot run (no owner account, missing folder), when it cannot. */
+  problem: string | null;
   last: null | { at: number; ms: number; ingest?: IngestResult; export?: ExportResult; error?: string };
 }
 
@@ -363,28 +481,43 @@ let running = false;
 let last: SyncStatus['last'] = null;
 const every = () => Math.max(0, Number(process.env.OBSIDIAN_SYNC_MINUTES) || 0);
 
-export function syncStatus(): SyncStatus {
-  return { enabled: !!vaultPath(), vault: vaultPath(), everyMinutes: every(), running, last };
+/** What is wrong before a sync could even start, or null when it can. */
+export function syncProblem(): string | null {
+  const vault = vaultPath();
+  if (!vault) return 'Obsidian sync is off: set OBSIDIAN_VAULT on the server to the vault folder.';
+  if (!fs.existsSync(vault)) return `The vault folder ${vault} does not exist on the server.`;
+  const owner = vaultOwner();
+  return 'error' in owner ? owner.error : null;
 }
 
-/** Every bank worth exporting: shared plus each bot's and team's that has facts. */
-async function exportable(): Promise<Bank[]> {
+/** The sync's state as one account may see it: full for the vault's own account, bare for anyone else. */
+export function syncStatus(userId: string): SyncStatus {
+  const owner = vaultOwner();
+  const mine = 'id' in owner && owner.id === userId;
+  const enabled = !!vaultPath();
+  if (!mine) return { enabled, mine: false, vault: null, everyMinutes: 0, running: false, problem: enabled ? 'The Obsidian vault belongs to another workspace.' : syncProblem(), last: null };
+  return { enabled, mine, vault: vaultPath(), everyMinutes: every(), running, problem: syncProblem(), last };
+}
+
+/** Shared plus each of the account's bots and teams whose bank has facts. */
+async function exportable(userId: string): Promise<Bank[]> {
   const live = new Map((await listBanks()).map((b) => [b.id, b.facts]));
-  const ids = [SHARED, ...(db.prepare("SELECT id FROM bots WHERE COALESCE(hidden,0)=0 ORDER BY created_at").all() as any[]).map((r) => r.id as string)];
-  return ids.filter((id) => (live.get(id) ?? 0) > 0).map((id) => bankById(id)).filter((b): b is Bank => !!b);
+  const ids = [SHARED, ...(db.prepare("SELECT id FROM bots WHERE user_id=? AND COALESCE(hidden,0)=0 ORDER BY created_at").all(userId) as any[]).map((r) => r.id as string)];
+  return ids.filter((id) => (live.get(id) ?? 0) > 0).map((id) => bankById(userId, id)).filter((b): b is Bank => !!b);
 }
 
 export async function syncVault(): Promise<SyncStatus['last']> {
-  const vault = vaultPath();
-  if (!vault) throw new ObsidianError('Obsidian sync is off: set OBSIDIAN_VAULT to the vault folder.');
-  if (!fs.existsSync(vault)) throw new ObsidianError(`The vault folder ${vault} does not exist.`);
   if (running) throw new ObsidianError('A sync is already running.');
   running = true;
   const t0 = Date.now();
   try {
+    const problem = syncProblem();
+    if (problem) throw new ObsidianError(problem);
+    const vault = vaultPath()!;
+    const owner = (vaultOwner() as { id: string }).id;
     fs.mkdirSync(path.join(vault, 'workspace', 'Shared'), { recursive: true });
-    const ingest = await ingestVault(vault);
-    const exp = await exportBanks(vault, await exportable());
+    const ingest = await ingestVault(vault, owner);
+    const exp = await exportBanks(vault, owner, await exportable(owner));
     last = { at: now(), ms: Date.now() - t0, ingest, export: exp };
   } catch (e) {
     last = { at: now(), ms: Date.now() - t0, error: e instanceof Error ? e.message : String(e) };
@@ -395,7 +528,10 @@ export async function syncVault(): Promise<SyncStatus['last']> {
   return last;
 }
 
-/** The background sync, only when OBSIDIAN_SYNC_MINUTES is set. */
+/**
+ * The background sync, only when OBSIDIAN_SYNC_MINUTES is set. The server starts it with the other
+ * schedulers, so GROKBOT_NO_SCHEDULER=1 (a second server on a copy of the database) leaves it off.
+ */
 export function startObsidianSync() {
   initObsidian();
   const m = every();

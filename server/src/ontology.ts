@@ -1,4 +1,5 @@
 import { db, now } from './db.js';
+import { looksLikeJobNumber } from './buildflow.js';
 
 /**
  * The ontology for bot memory: what kinds of things the bots remember and how they relate. It is
@@ -18,8 +19,9 @@ import { db, now } from './db.js';
  * ValidatedLesson, …) and their review rules stay in Gnoesis; nothing here promotes or validates.
  *
  * Hindsight does not keep entity types itself, so the type of each named thing is kept here
- * (`memory_entity_types`), learned from typed notes and from what the app already knows (its bots,
- * teams and Build-flow jobs).
+ * (`memory_entity_types`): from typed Obsidian notes (`source='note'`, re-derived on every sync) and
+ * from the vault's Types.md (`source='user'`, which wins). On top of that, `entityTyper` knows the
+ * account's own bots and teams by name, and a name shaped like a Build-flow job number is a job.
  */
 
 export interface EntityType { id: string; label: string; plural: string; hindsight: string; color: string; about: string }
@@ -88,8 +90,8 @@ export function initOntology() {
 
 const key = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
 
-/** Records what a named thing is. A typed note wins over a guess. */
-export function setEntityType(name: string, type: string, source: 'note' | 'app' | 'user') {
+/** Records what a named thing is. Types.md (`user`) wins over a note. */
+export function setEntityType(name: string, type: string, source: 'note' | 'user') {
   initOntology();
   const t = typeOf(type);
   const k = key(name);
@@ -99,21 +101,47 @@ export function setEntityType(name: string, type: string, source: 'note' | 'app'
     WHERE memory_entity_types.source <> 'user' OR excluded.source = 'user'`).run(k, name.trim(), t.id, source, now());
 }
 
-const JOB_RE = /^(job\s*#?\s*)?\d{2,6}(-\d{1,4})?$/i;
+/**
+ * Replaces every note-derived type with what the notes say now, so a deleted or retyped note stops
+ * typing its entity. When two notes give one name different types, the first by path wins and the
+ * others are returned as conflicts (callers walk notes in sorted path order, so this is stable).
+ */
+export function replaceNoteTypes(entries: { name: string; type: string; path: string }[]): { name: string; path: string; type: string; kept: string; keptFrom: string }[] {
+  initOntology();
+  const chosen = new Map<string, { name: string; type: string; path: string }>();
+  const conflicts: { name: string; path: string; type: string; kept: string; keptFrom: string }[] = [];
+  for (const e of entries) {
+    const t = typeOf(e.type);
+    const k = key(e.name);
+    if (!t || !k || k.length > 200) continue;
+    const prev = chosen.get(k);
+    if (!prev) chosen.set(k, { name: e.name, type: t.id, path: e.path });
+    else if (prev.type !== t.id) conflicts.push({ name: e.name, path: e.path, type: t.id, kept: prev.type, keptFrom: prev.path });
+  }
+  db.transaction(() => {
+    db.prepare("DELETE FROM memory_entity_types WHERE source='note'").run();
+    for (const c of chosen.values()) setEntityType(c.name, c.type, 'note');
+  })();
+  return conflicts;
+}
 
 /**
- * A lookup from entity name to type: typed notes first, then the app's own bots and teams, then
- * the shape of the name (a bare job number is a Build-flow job).
+ * A lookup from entity name to type: Types.md and typed notes first, then the account's own bots
+ * and teams (every account's when no account is given), then the shape of the name (a Build-flow
+ * job number, the same format Build-flow accepts).
  */
-export function entityTyper(): (name: string) => EntityType {
+export function entityTyper(userId?: string): (name: string) => EntityType {
   initOntology();
   const known = new Map<string, string>();
-  for (const r of db.prepare("SELECT name, COALESCE(kind,'agent') kind FROM bots").all() as any[]) known.set(key(r.name), r.kind === 'team' ? 'team' : 'bot');
+  const bots = userId
+    ? db.prepare("SELECT name, COALESCE(kind,'agent') kind FROM bots WHERE user_id=?").all(userId)
+    : db.prepare("SELECT name, COALESCE(kind,'agent') kind FROM bots").all();
+  for (const r of bots as any[]) known.set(key(r.name), r.kind === 'team' ? 'team' : 'bot');
   for (const r of db.prepare('SELECT name_key, type FROM memory_entity_types').all() as any[]) known.set(r.name_key, r.type);
   return (name: string) => {
     const t = known.get(key(name));
     if (t) return byId.get(t) ?? UNTYPED;
-    return JOB_RE.test(name.trim()) ? byId.get('job')! : UNTYPED;
+    return looksLikeJobNumber(name) ? byId.get('job')! : UNTYPED;
   };
 }
 
