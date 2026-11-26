@@ -201,3 +201,13 @@ test('a durable save waits through an outage and is delivered by the retry, once
   assert.equal(post.body.items[0].update_mode, 'replace');
   assert.deepEqual(await M.retryPending(s.fn), { delivered: 0, waiting: 0 });
 });
+
+test('a team with a scope other than team is an error, not a silent switch', () => {
+  const user = mkUser();
+  const bot = mkBot(user, 'Mixed');
+  const t = createTeam(user, 'Ops', { botIds: [bot, mkBot(user, 'Mx2')] });
+  assert.throws(() => M.pickBanks(user, bot, { layer: 'everyone', team: 'Ops', write: true }), /team goes with scope "team"/);
+  assert.throws(() => M.pickBanks(user, bot, { layer: 'me', team: 'Ops' }), /team goes with scope "team"/);
+  assert.equal(M.pickBanks(user, bot, { layer: 'team', team: 'Ops', write: true })[0].id, t);
+  assert.equal(M.pickBanks(user, bot, { layer: 'all', team: 'Ops' })[0].id, t, 'scope all with a team narrows to that team');
+});

@@ -104,6 +104,8 @@ export function pickBanks(userId: string, botId: string, opts: { layer?: string;
   const teams = all.filter((b) => b.layer === 'team');
   const listTeams = (list: Bank[]) => list.map((b) => `${teamName(b)} (${b.id})`).join(', ') || 'none';
   if (team) {
+    // A team only makes sense with scope team (or no scope): "everyone" plus a team is a contradiction, not a choice.
+    if (layer && layer !== 'team') throw new MemoryBankError(`team goes with scope "team"; you asked for scope "${layer}". Drop one of them.`);
     hits = teams.filter((b) => b.id === team || teamName(b).toLowerCase() === team.toLowerCase());
     if (!hits.length) throw new MemoryBankError(`You are not on a team named "${team}". Your teams: ${listTeams(teams)}.`);
   }

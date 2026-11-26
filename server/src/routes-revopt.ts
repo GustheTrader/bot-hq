@@ -9,7 +9,7 @@ import { env } from './env.js';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './types.js';
 import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
 import { MemoryGraphError, checkBank, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
-import { banksForUser, retainDurably, teamBank, userMayView } from './memory-banks.js';
+import { MAX_MEMORY, banksForUser, retainDurably, teamBank, userMayView } from './memory-banks.js';
 import { ENTITY_TYPES, RELATIONS, UNTYPED, entityTyper } from './ontology.js';
 import { syncProblem, syncStatus, syncVault } from './obsidian.js';
 import { SupersetError, enableEmbedding, guestToken, listDashboards, supersetConfig } from './superset.js';
@@ -252,13 +252,15 @@ function rememberDone(userId: string, t: TaskRow, by: string) {
   if (!bank) return;
   const job = (toTask(t).payload as any)?.buildflowJob;
   const outcome = taskOutcome(t);
+  // Each part is capped so the whole always fits in one memory (MAX_MEMORY); a save that is too long would be dropped.
+  const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
   const text = [
-    `RevOpt ${t.kind} task finished on ${new Date().toISOString().slice(0, 10)}: ${t.title}.`,
-    t.target ? `Target: ${t.target}.` : '',
-    job?.number ? `Build-flow job ${job.number}${job.name ? ` (${job.name})` : ''}.` : '',
-    t.detail ? `Brief: ${t.detail.slice(0, 3000)}` : '',
-    outcome ? `Outcome, from the team: ${outcome}` : 'No outcome was posted in the team channel.',
-  ].filter(Boolean).join(' ');
+    `RevOpt ${t.kind} task finished on ${new Date().toISOString().slice(0, 10)}: ${cap(t.title, 400)}.`,
+    t.target ? `Target: ${cap(t.target, 400)}.` : '',
+    job?.number ? `Build-flow job ${cap(String(job.number), 40)}${job.name ? ` (${cap(String(job.name), 200)})` : ''}.` : '',
+    t.detail ? `Brief: ${cap(t.detail, 3000)}` : '',
+    outcome ? `Outcome, from the team: ${cap(outcome, 3000)}` : 'No outcome was posted in the team channel.',
+  ].filter(Boolean).join(' ').slice(0, MAX_MEMORY);
   retainDurably(userId, bank, text, { by, context: `RevOpt task ${t.id} marked done`, tags: ['revopt', t.kind], documentId: `revopt-${t.id}` })
     .catch((e) => console.warn(`[memory] could not save finished task ${t.id} to ${bank.id} (will retry): ${e instanceof Error ? e.message : e}`));
 }
@@ -401,7 +403,7 @@ revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => {
   const bank = viewable(c);
   try {
     const g = await memoryGraph(bank, c.req.query('limit'));
-    const typer = entityTyper();
+    const typer = entityTyper(c.get('user').id);
     return c.json({ ...g, nodes: g.nodes.map((n) => ({ ...n, type: typer(n.label).id })) });
   } catch (e) {
     // A bot's or team's bank is only created on its first save; until then it is empty, not missing.
@@ -423,9 +425,10 @@ revoptApi.get('/memory/obsidian', (c) => c.json(syncStatus(c.get('user').id)));
 revoptApi.post('/memory/obsidian/sync', (c) => {
   const userId = c.get('user').id;
   const s = syncStatus(userId);
-  if (s.enabled && !s.mine) return c.json({ error: 'The Obsidian vault belongs to another workspace.' }, 403);
+  // Setup problems first (no vault, no folder, no owner account): they need a fix on the server, not another account.
   const problem = syncProblem();
   if (problem) return c.json({ error: problem }, 400);
+  if (!s.mine) return c.json({ error: 'The Obsidian vault belongs to another workspace.' }, 403);
   if (s.running) return c.json(s, 202);
   syncVault().catch((e) => console.warn(`[obsidian] sync failed: ${e instanceof Error ? e.message : e}`));
   return c.json(syncStatus(userId), 202);

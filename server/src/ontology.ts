@@ -19,8 +19,8 @@ import { looksLikeJobNumber } from './buildflow.js';
  * ValidatedLesson, …) and their review rules stay in Gnoesis; nothing here promotes or validates.
  *
  * Hindsight does not keep entity types itself, so the type of each named thing is kept here
- * (`memory_entity_types`): from typed Obsidian notes (`source='note'`, re-derived on every sync) and
- * from the vault's Types.md (`source='user'`, which wins). On top of that, `entityTyper` knows the
+ * (`memory_entity_types`, per account): from typed Obsidian notes (`source='note'`, re-derived on
+ * every sync) and from the vault's Types.md (`source='user'`, which wins), in separate rows. On top of that, `entityTyper` knows the
  * account's own bots and teams by name, and a name shaped like a Build-flow job number is a job.
  */
 
@@ -79,37 +79,60 @@ export const relationOf = (raw: unknown) => RELATIONS.find((r) => r.id === Strin
 
 // ---------- what each named thing is ----------
 
+/**
+ * One row per account, name and source: a note's type and the account's Types.md entry are kept
+ * side by side, so changing one never loses the other, and Types.md wins on lookup. Rows belong to
+ * the account whose vault they came from and type only that account's entities.
+ */
 let ready = false;
 export function initOntology() {
   if (ready) return;
   ready = true;
+  const cols = (db.prepare("SELECT name FROM pragma_table_info('memory_entity_types')").all() as { name: string }[]).map((c) => c.name);
+  // An earlier shape had one row per name for everyone. The rows are re-derived on every sync, so it is safe to start over.
+  if (cols.length && !cols.includes('owner')) db.exec('DROP TABLE memory_entity_types');
   db.exec(`CREATE TABLE IF NOT EXISTS memory_entity_types (
-    name_key TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT NOT NULL, source TEXT NOT NULL, updated_at INTEGER NOT NULL
+    owner TEXT NOT NULL, name_key TEXT NOT NULL, name TEXT NOT NULL, type TEXT NOT NULL, source TEXT NOT NULL, updated_at INTEGER NOT NULL,
+    PRIMARY KEY (owner, name_key, source)
   )`);
 }
 
 const key = (name: string) => name.trim().toLowerCase().replace(/\s+/g, ' ');
+type Source = 'note' | 'user';
 
-/** Records what a named thing is. Types.md (`user`) wins over a note. */
-export function setEntityType(name: string, type: string, source: 'note' | 'user') {
+/** Records what a named thing is for one account, from one source. */
+export function setEntityType(owner: string, name: string, type: string, source: Source) {
   initOntology();
   const t = typeOf(type);
   const k = key(name);
   if (!t || !k || k.length > 200) return;
-  db.prepare(`INSERT INTO memory_entity_types(name_key,name,type,source,updated_at) VALUES (?,?,?,?,?)
-    ON CONFLICT(name_key) DO UPDATE SET name=excluded.name, type=excluded.type, source=excluded.source, updated_at=excluded.updated_at
-    WHERE memory_entity_types.source <> 'user' OR excluded.source = 'user'`).run(k, name.trim(), t.id, source, now());
+  db.prepare(`INSERT INTO memory_entity_types(owner,name_key,name,type,source,updated_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(owner, name_key, source) DO UPDATE SET name=excluded.name, type=excluded.type, updated_at=excluded.updated_at`)
+    .run(owner, k, name.trim(), t.id, source, now());
 }
 
+/** Replaces all of one account's types from one source (Types.md is the whole of the `user` typing). */
+export function replaceTypes(owner: string, source: Source, entries: { name: string; type: string }[]) {
+  initOntology();
+  db.transaction(() => {
+    db.prepare('DELETE FROM memory_entity_types WHERE owner=? AND source=?').run(owner, source);
+    for (const e of entries) setEntityType(owner, e.name, e.type, source);
+  })();
+}
+
+export interface TypeConflict { name: string; path: string; type: string; kept: string; keptFrom: string }
+
 /**
- * Replaces every note-derived type with what the notes say now, so a deleted or retyped note stops
- * typing its entity. When two notes give one name different types, the first by path wins and the
- * others are returned as conflicts (callers walk notes in sorted path order, so this is stable).
+ * Sets the account's note-derived types from what the notes say now, so a deleted or retyped note
+ * stops typing its entity. When two notes give one name different types, the first by path wins and
+ * the others are returned as conflicts (callers walk notes in sorted path order, so this is stable).
+ * With `complete: false` (the scan stopped at the note cap) existing rows are kept and only the
+ * scanned notes' types are written, so notes the scan never reached keep their types.
  */
-export function replaceNoteTypes(entries: { name: string; type: string; path: string }[]): { name: string; path: string; type: string; kept: string; keptFrom: string }[] {
+export function replaceNoteTypes(owner: string, entries: { name: string; type: string; path: string }[], opts: { complete: boolean } = { complete: true }): TypeConflict[] {
   initOntology();
   const chosen = new Map<string, { name: string; type: string; path: string }>();
-  const conflicts: { name: string; path: string; type: string; kept: string; keptFrom: string }[] = [];
+  const conflicts: TypeConflict[] = [];
   for (const e of entries) {
     const t = typeOf(e.type);
     const k = key(e.name);
@@ -118,26 +141,22 @@ export function replaceNoteTypes(entries: { name: string; type: string; path: st
     if (!prev) chosen.set(k, { name: e.name, type: t.id, path: e.path });
     else if (prev.type !== t.id) conflicts.push({ name: e.name, path: e.path, type: t.id, kept: prev.type, keptFrom: prev.path });
   }
-  db.transaction(() => {
-    db.prepare("DELETE FROM memory_entity_types WHERE source='note'").run();
-    for (const c of chosen.values()) setEntityType(c.name, c.type, 'note');
-  })();
+  if (opts.complete) replaceTypes(owner, 'note', [...chosen.values()]);
+  else db.transaction(() => { for (const c of chosen.values()) setEntityType(owner, c.name, c.type, 'note'); })();
   return conflicts;
 }
 
 /**
- * A lookup from entity name to type: Types.md and typed notes first, then the account's own bots
- * and teams (every account's when no account is given), then the shape of the name (a Build-flow
- * job number, the same format Build-flow accepts).
+ * A lookup from entity name to type for one account: its Types.md, then its typed notes, then its
+ * own bots and teams, then the shape of the name (a Build-flow job number, the same format
+ * Build-flow accepts). Another account's rows never apply.
  */
-export function entityTyper(userId?: string): (name: string) => EntityType {
+export function entityTyper(owner: string): (name: string) => EntityType {
   initOntology();
   const known = new Map<string, string>();
-  const bots = userId
-    ? db.prepare("SELECT name, COALESCE(kind,'agent') kind FROM bots WHERE user_id=?").all(userId)
-    : db.prepare("SELECT name, COALESCE(kind,'agent') kind FROM bots").all();
-  for (const r of bots as any[]) known.set(key(r.name), r.kind === 'team' ? 'team' : 'bot');
-  for (const r of db.prepare('SELECT name_key, type FROM memory_entity_types').all() as any[]) known.set(r.name_key, r.type);
+  for (const r of db.prepare("SELECT name, COALESCE(kind,'agent') kind FROM bots WHERE user_id=?").all(owner) as any[]) known.set(key(r.name), r.kind === 'team' ? 'team' : 'bot');
+  // Notes first, then Types.md, so the Types.md entry is the one left in the map.
+  for (const r of db.prepare("SELECT name_key, type FROM memory_entity_types WHERE owner=? ORDER BY CASE source WHEN 'note' THEN 0 ELSE 1 END").all(owner) as any[]) known.set(r.name_key, r.type);
   return (name: string) => {
     const t = known.get(key(name));
     if (t) return byId.get(t) ?? UNTYPED;

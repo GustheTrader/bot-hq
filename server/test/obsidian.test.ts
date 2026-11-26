@@ -100,7 +100,7 @@ test('ingest saves changed notes once, replaces edits by document id, and forget
   assert.match(item.content, /Pricing is a decision\.\nPricing is about Acme Corp\./);
   assert.deepEqual(item.entities, [{ text: 'Pricing', type: 'DECISION' }, { text: 'Acme Corp', type: 'ORG' }], 'Acme was typed by its own note');
   assert.ok(item.tags.includes('type:decision'));
-  assert.equal(T.entityTyper()('acme corp').id, 'company');
+  assert.equal(T.entityTyper(user)('acme corp').id, 'company');
   const acmeDoc = s1.posts().find((c) => c.url.includes('/banks/shared/'))!.body.items[0].document_id;
 
   const s2 = store();
@@ -129,7 +129,7 @@ test('ingest saves changed notes once, replaces edits by document id, and forget
 
 test('export writes typed entity notes with path links, never touches hand-written files, and prunes stale generated ones', async () => {
   const vault = fs.mkdtempSync(path.join(dir, 'vault-'));
-  T.setEntityType('Dana Lee', 'person', 'note');
+  T.setEntityType(user, 'Dana Lee', 'person', 'note');
   const graph = {
     nodes: [{ data: { id: 'e1', label: 'Dana Lee', mentionCount: 9 } }, { data: { id: 'e2', label: 'Scout', mentionCount: 4 } }, { data: { id: 'e3', label: '2041', mentionCount: 2 } }, { data: { id: 'e4', label: 'blue: sky?', mentionCount: 1 } }],
     edges: [{ data: { source: 'e1', target: 'e2', weight: 3 } }],
@@ -208,7 +208,7 @@ test('Types.md types and hides names, replaces earlier typing, and the export co
   const doug = fs.readFileSync(path.join(base, 'People/Doug.md'), 'utf8');
   assert.match(doug, /Doug reviewed the plan/);
   assert.doesNotMatch(doug, /hunter2|9f86d081/);
-  assert.equal(T.entityTyper()('gus the trader').id, 'person');
+  assert.equal(T.entityTyper(user)('gus the trader').id, 'person');
 
   const graphCfg = JSON.parse(fs.readFileSync(path.join(vault, '.obsidian/graph.json'), 'utf8'));
   assert.deepEqual(graphCfg.colorGroups.find((g: any) => g.query === '[type:person]').color, { a: 1, rgb: 0x7aa2f7 });
@@ -219,7 +219,7 @@ test('Types.md types and hides names, replaces earlier typing, and the export co
   // Taking a name out of Types.md untypes it on the next sync.
   write(vault, 'Types.md', '## People\n- Doug\n');
   await O.exportBanks(vault, user, [bankById(user, 'shared')!], { fetchFn });
-  assert.equal(T.entityTyper()('gus the trader').id, 'entity');
+  assert.equal(T.entityTyper(user)('gus the trader').id, 'entity');
   assert.ok(fs.existsSync(path.join(base, 'Other/Hindsight.md')) && !fs.existsSync(path.join(base, 'Services/Hindsight.md')), 'a retyped entity moves folder and the old note is pruned');
 });
 
@@ -318,4 +318,22 @@ test('the vault belongs to one account: others see no details and routing never 
     delete process.env.OBSIDIAN_WORKSPACE;
     delete process.env.OBSIDIAN_VAULT;
   }
+});
+
+test('note and Types.md types are separate rows per account: removing a Types.md entry falls back to the note at once, other accounts are untouched, and a partial scan keeps unscanned types', () => {
+  const other = newId('usr');
+  db.prepare('INSERT INTO users(id,email,name,created_at) VALUES (?,?,?,?)').run(other, `${other}@example.com`, other, now());
+  T.replaceNoteTypes(user, [{ name: 'Omega', type: 'company', path: 'Shared/omega.md' }, { name: 'Psi', type: 'project', path: 'Shared/psi.md' }]);
+  T.replaceTypes(user, 'user', [{ name: 'Omega', type: 'person' }]);
+  assert.equal(T.entityTyper(user)('omega').id, 'person', 'Types.md wins');
+  T.replaceTypes(user, 'user', []);
+  assert.equal(T.entityTyper(user)('omega').id, 'company', 'the note type is back in the same sync');
+  assert.equal(T.entityTyper(other)('omega').id, 'entity', 'another account never sees these types');
+
+  T.replaceNoteTypes(user, [{ name: 'Omega', type: 'deal', path: 'Shared/omega.md' }], { complete: false });
+  assert.equal(T.entityTyper(user)('omega').id, 'deal', 'a scanned note still updates');
+  assert.equal(T.entityTyper(user)('psi').id, 'project', 'a note the partial scan never reached keeps its type');
+  T.replaceNoteTypes(user, [{ name: 'Omega', type: 'deal', path: 'Shared/omega.md' }]);
+  assert.equal(T.entityTyper(user)('psi').id, 'entity', 'a complete scan drops it');
+  T.replaceNoteTypes(user, []);
 });

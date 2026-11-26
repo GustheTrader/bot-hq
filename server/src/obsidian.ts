@@ -4,7 +4,7 @@ import { db, now } from './db.js';
 import { sha256 } from './lib/ids.js';
 import { SHARED, bankById, forgetDocument, retain, type Bank } from './memory-banks.js';
 import { entityFacts, listBanks, memoryGraph } from './memory-graph.js';
-import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relationOf, replaceNoteTypes, setEntityType, typeOf, type EntityType } from './ontology.js';
+import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relationOf, replaceNoteTypes, replaceTypes, typeOf, type EntityType } from './ontology.js';
 
 /**
  * Bot memory and an Obsidian vault, both ways (OBSIDIAN_VAULT, off when unset):
@@ -210,7 +210,7 @@ export async function ingestVault(vault: string, userId: string, fetchFn?: Param
     const src = fs.readFileSync(file, 'utf8');
     notes.push({ rel, route, src, note: readNote(rel, src) });
   }
-  res.typeConflicts = replaceNoteTypes(notes.filter((n) => n.note.type).map((n) => ({ name: n.note.title, type: n.note.type!.id, path: n.rel })));
+  res.typeConflicts = replaceNoteTypes(userId, notes.filter((n) => n.note.type).map((n) => ({ name: n.note.title, type: n.note.type!.id, path: n.rel })), { complete: !scan.truncated });
 
   const typer = entityTyper(userId);
   const hint = (name: string) => { const t = typer(name); return t === UNTYPED ? undefined : t.hindsight; };
@@ -331,10 +331,9 @@ export function readTypesNote(vault: string): { types: Map<string, string>; igno
   return { types, ignore };
 }
 
-function applyTypesNote(vault: string) {
+function applyTypesNote(vault: string, owner: string) {
   const { types, ignore } = readTypesNote(vault);
-  db.prepare("DELETE FROM memory_entity_types WHERE source='user'").run();
-  for (const [name, type] of types) setEntityType(name, type, 'user');
+  replaceTypes(owner, 'user', [...types].map(([name, type]) => ({ name, type })));
   return ignore;
 }
 
@@ -388,7 +387,7 @@ export async function exportBanks(vault: string, userId: string, banks: Bank[], 
   initObsidian();
   const root = path.join(vault, 'Memory');
   const written = new Set<string>();
-  const ignore = applyTypesNote(vault);
+  const ignore = applyTypesNote(vault, userId);
   ensureGraphConfig(vault);
   const typer = entityTyper(userId);
   const sources = new Map((db.prepare('SELECT path, title FROM obsidian_notes').all() as any[]).map((r) => [r.title.toLowerCase(), r.path as string]));
