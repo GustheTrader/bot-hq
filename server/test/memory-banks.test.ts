@@ -136,6 +136,60 @@ test('an unreachable store says so', async () => {
   await assert.rejects(M.recall(M.pickBanks(user, bot, {}), 'x', down), /not answering/);
 });
 
+test('recall is given far longer than a save, so a big bank is not reported as down', async () => {
+  assert.equal(M.recallTimeoutMs(), 60_000, 'the default');
+  assert.ok(M.recallTimeoutMs() > 20_000, 'a save gets 20s; the shared bank answers in ~45s');
+  process.env.MEMORY_RECALL_TIMEOUT_MS = '1500';
+  assert.equal(M.recallTimeoutMs(), 1500, 'the env var wins');
+  for (const bad of ['500', 'abc', '-1']) {
+    process.env.MEMORY_RECALL_TIMEOUT_MS = bad;
+    assert.equal(M.recallTimeoutMs(), 60_000, `${bad} is ignored, not used as a timeout`);
+  }
+  process.env.MEMORY_RECALL_TIMEOUT_MS = '1000000';
+  assert.equal(M.recallTimeoutMs(), 300_000, 'capped');
+  delete process.env.MEMORY_RECALL_TIMEOUT_MS;
+});
+
+test('a bank that answers too slowly is reported in failed, and the fast banks still answer', async () => {
+  const user = mkUser();
+  const bot = mkBot(user, 'Slowpoke');
+  const banks = M.pickBanks(user, bot, {});
+  const sharedBank = banks.find((b) => b.id === 'shared')!;
+  // Answers anything but `shared` at once; `shared` only ever aborts, as a real timeout would.
+  // (AbortSignal.timeout's own timer is unref'd, so a ref'd one holds the loop open until it fires.)
+  const slow = (async (url: string, init: any) => {
+    if (url.includes('/banks/shared/')) {
+      await new Promise((_ok, no) => {
+        const holding = setTimeout(() => no(new Error('the timeout never fired')), 5_000);
+        init.signal.addEventListener('abort', () => {
+          clearTimeout(holding);
+          no(Object.assign(new Error('aborted'), { name: 'TimeoutError' }));
+        });
+      });
+    }
+    return { ok: true, status: 200, json: async () => ({ results: [{ text: 'Own fact.' }] }), text: async () => '' } as any;
+  }) as any;
+
+  const res = await M.recall(banks, 'q', slow, 8, 40);
+  assert.deepEqual(res.hits.map((h) => h.text), ['Own fact.']);
+  assert.deepEqual(res.failed.map((b) => b.id), ['shared']);
+  assert.match(M.formatRecall(res, banks), /Own fact\.\n\(Could not search Everyone \(shared\) just now\.\)/);
+  // When it is the only bank, the error says it was too slow, not that the store is down.
+  await assert.rejects(M.recall([sharedBank], 'q', slow, 8, 40), /did not answer within 0\.04s/);
+});
+
+test('a save that timed out waits for the retry instead of being dropped as a refusal', async () => {
+  const user = mkUser();
+  const team = createTeam(user, 'Slow', { botIds: [mkBot(user, 'S1'), mkBot(user, 'S2')] });
+  const bank = M.teamBank(user, team)!;
+  const timingOut = (async () => { throw Object.assign(new Error('aborted'), { name: 'TimeoutError' }); }) as any;
+  await M.retainDurably(user, bank, 'Task finished: slow.', { by: 'Test', documentId: 'slow-doc' }, timingOut);
+  const row = db.prepare("SELECT attempts,last_error FROM memory_pending WHERE document_id='slow-doc'").get() as any;
+  assert.equal(row.attempts, 1, 'kept, not deleted');
+  assert.match(row.last_error, /did not answer within 20s/);
+  assert.deepEqual(await M.retryPending(fakeStore().fn), { delivered: 1, waiting: 0 }, 'the retry saves it');
+});
+
 test('teams are picked by name or id; a team alone means save to that team; duplicate names need the id', () => {
   const user = mkUser();
   const bot = mkBot(user, 'Dup');

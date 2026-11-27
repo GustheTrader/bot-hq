@@ -27,8 +27,12 @@ export type Layer = 'me' | 'team' | 'everyone';
 export interface Bank { id: string; layer: Layer; label: string; writable: boolean; ownerId: string }
 
 export class MemoryBankError extends Error {
-  /** The HTTP status Hindsight answered with, when it answered at all. */
-  constructor(message: string, readonly status?: number) { super(message); }
+  /**
+   * @param status the HTTP status Hindsight answered with, when it answered at all
+   * @param retryable true when trying again later could work (a store that is down or too slow),
+   *   false when the request itself was refused and repeating it would fail the same way
+   */
+  constructor(message: string, readonly status?: number, readonly retryable = false) { super(message); }
 }
 
 type Fetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) =>
@@ -139,12 +143,19 @@ export function pickBanks(userId: string, botId: string, opts: { layer?: string;
 
 // ---------- talking to Hindsight ----------
 
+const secs = (ms: number) => (ms % 1000 === 0 ? `${ms / 1000}s` : `${(ms / 1000).toFixed(2)}s`);
+
 async function call(path: string, method: string, body: unknown, fetchFn: Fetch, timeoutMs = 20_000): Promise<any> {
   let r;
   try {
     r = await fetchFn(`${base()}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) });
-  } catch {
-    throw new MemoryBankError('The memory store (Hindsight) is not answering on this computer.');
+  } catch (e) {
+    const name = (e as { name?: string } | null)?.name;
+    // A slow store is not a dead one: say which it was, so the agent (and the retry) is not misled.
+    if (name === 'TimeoutError' || name === 'AbortError') {
+      throw new MemoryBankError(`The memory store did not answer within ${secs(timeoutMs)}.`, undefined, true);
+    }
+    throw new MemoryBankError('The memory store (Hindsight) is not answering on this computer.', undefined, true);
   }
   if (!r.ok) throw new MemoryBankError(`The memory store answered ${r.status}: ${(await r.text().catch(() => '')).slice(0, 200)}`, r.status);
   return r.json().catch(() => ({}));
@@ -242,8 +253,9 @@ async function deliver(documentId: string, fetchFn?: Fetch): Promise<boolean> {
     return true;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // Refused for good (too long, empty): keep retrying would never help.
-    if (e instanceof MemoryBankError && e.status === undefined && !/not answering/.test(msg)) {
+    // Refused for good (too long, empty, observer): keeping it would never help. A store that is
+    // down or too slow is worth another try, so only a refusal without a status is dropped.
+    if (e instanceof MemoryBankError && e.status === undefined && !e.retryable) {
       db.prepare('DELETE FROM memory_pending WHERE document_id=?').run(documentId);
       console.warn(`[memory] dropped ${documentId}: ${msg}`);
       return false;
@@ -271,15 +283,26 @@ export function startMemoryRetry() {
 export interface Recalled { bank: string; label: string; text: string; when: string | null }
 
 /**
- * Searches several banks at once. A bank that does not exist yet is simply empty; a bank that fails
- * is reported in `failed` while the others still answer. Throws only when every bank failed.
+ * How long one bank's recall may take. Searches are slower than writes: Hindsight reranks the
+ * candidates with its decision model, and a large bank (762 facts on `shared`) answers in ~45s,
+ * well past the 20s a save is given. `MEMORY_RECALL_TIMEOUT_MS` overrides it, within bounds.
  */
-export async function recall(banks: Bank[], query: string, fetchFn: Fetch = fetch as unknown as Fetch, perBank = 8): Promise<{ hits: Recalled[]; failed: Bank[] }> {
+export function recallTimeoutMs(): number {
+  const raw = Number(process.env.MEMORY_RECALL_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw < 1_000) return 60_000;
+  return Math.min(raw, 300_000);
+}
+
+/**
+ * Searches several banks at once. A bank that does not exist yet is simply empty; a bank that fails
+ * or answers slowly is reported in `failed` while the others still answer. Throws only when every bank failed.
+ */
+export async function recall(banks: Bank[], query: string, fetchFn: Fetch = fetch as unknown as Fetch, perBank = 8, timeoutMs = recallTimeoutMs()): Promise<{ hits: Recalled[]; failed: Bank[] }> {
   const q = query.trim().slice(0, 1000);
   if (!q) throw new MemoryBankError('Say what to recall.');
   const settled = await Promise.allSettled(banks.map(async (b) => {
     try {
-      const r = await call(`/v1/default/banks/${b.id}/memories/recall`, 'POST', { query: q, budget: 'mid', max_tokens: 2048 }, fetchFn);
+      const r = await call(`/v1/default/banks/${b.id}/memories/recall`, 'POST', { query: q, budget: 'mid', max_tokens: 2048 }, fetchFn, timeoutMs);
       return ((r?.results ?? []) as any[]).slice(0, perBank).map((x) => ({
         bank: b.id, label: b.label, text: String(x?.text ?? '').slice(0, 1500), when: x?.occurred_start ?? x?.mentioned_at ?? null,
       })).filter((x) => x.text);
