@@ -16,6 +16,7 @@ import { dataGrep, dataList, dataRead, dataSearch, DataError, defaultConfig, war
 import { bf, BuildflowError, buildflowEnabled } from '../buildflow.js';
 import { formatRecall, MemoryBankError, pickBanks, recall, retain } from '../memory-banks.js';
 import { crmConfig, listLeads, setupCrm, upsertLeads } from '../leads-crm.js';
+import { webRead, webSearch, webSearchEnabled } from '../websearch.js';
 
 export interface ToolCtx {
   userId: string;
@@ -194,6 +195,40 @@ const scopeParam = (all: boolean) => ({
   enum: all ? ['all', 'me', 'team', 'everyone'] : ['me', 'team', 'everyone'],
   description: `me = your own memory, team = the memory of a team you are on, everyone = memory shared by every bot in your workspace${all ? ', all = all of them (default)' : ' (default: me)'}.`,
 });
+
+/** Open-web search and reading through Firecrawl; offered only when FIRECRAWL_API_KEY is set. */
+const WEB_TOOLS: ToolDef[] = [
+  {
+    name: 'web_search',
+    description: 'Search the web (Google-style results). Returns title, link and snippet for each hit. Use `recent` to keep to the last day/week/month/year and `site` to search one site (e.g. "craigslist.org", "reddit.com", "nextdoor.com"). Open a promising hit with web_read.',
+    parameters: obj({
+      query: { type: 'string', description: 'What to search for.' },
+      recent: { type: 'string', enum: ['day', 'week', 'month', 'year'], description: 'Only results from this recent period.' },
+      site: { type: 'string', description: 'Only results from this site, e.g. reddit.com.' },
+      limit: { type: 'number', description: 'How many results, 1-20 (default 8).' },
+    }, ['query']),
+    activity: 'searching_web',
+    label: 'Searching the web',
+    impl: async (a) => {
+      const hits = await webSearch(a);
+      if (!hits.length) return { output: 'No results.', summary: 'Searched the web: nothing found' };
+      return { output: hits.map((h, i) => `${i + 1}. ${h.title}\n${h.url}\n${h.snippet}`).join('\n\n'), summary: `Searched the web: ${hits.length} results` };
+    },
+  },
+  {
+    name: 'web_read',
+    description: 'Read one web page (a post, listing or article) as text. Give the full link, e.g. one from web_search.',
+    parameters: obj({ url: { type: 'string', description: 'Full http(s) link.' } }, ['url']),
+    activity: 'reading_web',
+    label: 'Reading a page',
+    impl: async (a) => {
+      const p = await webRead(a.url);
+      const head = p.title ? `${p.title}\n${p.url}\n\n` : `${p.url}\n\n`;
+      return { output: head + (p.text || '(The page had no readable text.)') + (p.cut ? '\n\n[Cut: the page is longer.]' : ''), summary: `Read ${p.title || new URL(p.url).hostname}`.slice(0, 80) };
+    },
+  },
+];
+
 const MEMORY_TOOLS: ToolDef[] = [
   {
     name: 'memory_recall',
@@ -609,6 +644,7 @@ export const TOOLS: ToolDef[] = [
   ...DATA_TOOLS,
   ...MEMORY_TOOLS,
   ...(buildflowEnabled() ? BUILDFLOW_TOOLS : []),
+  ...(webSearchEnabled() ? WEB_TOOLS : []),
 ];
 
 export const toolMap = new Map(TOOLS.map((t) => [t.name, t]));
