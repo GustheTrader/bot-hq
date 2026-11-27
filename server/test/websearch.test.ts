@@ -15,6 +15,7 @@ web.setFetchForTests((async (url: any, init: any) => {
   sent.push({ url: String(url), body: JSON.parse(init.body), auth: init.headers.Authorization });
   return new Response(JSON.stringify(reply.body), { status: reply.status });
 }) as typeof fetch);
+web.setSleepForTests(async () => {});
 
 test('the tools are offered when the key is set', () => {
   assert.ok(toolMap.has('web_search'));

@@ -218,7 +218,7 @@ const WEB_TOOLS: ToolDef[] = [
   },
   {
     name: 'web_read',
-    description: 'Read one web page (a post, listing or article) as text. Give the full link, e.g. one from web_search.',
+    description: 'Read one web page (a post, listing or article) as text. Give the full link, e.g. one from web_search. Craigslist works well, including search pages, which list the newest posts with links: e.g. https://reno.craigslist.org/search/ggg?query=patio (ggg = all gigs, lbg = labor gigs, dmg = domestic gigs). Reddit and Facebook pages cannot be opened: judge those from the web_search snippet.',
     parameters: obj({ url: { type: 'string', description: 'Full http(s) link.' } }, ['url']),
     activity: 'reading_web',
     label: 'Reading a page',
