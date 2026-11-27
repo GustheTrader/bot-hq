@@ -17,6 +17,7 @@ import { bf, BuildflowError, buildflowEnabled } from '../buildflow.js';
 import { formatRecall, MemoryBankError, pickBanks, recall, retain } from '../memory-banks.js';
 import { crmConfig, listLeads, setupCrm, upsertLeads } from '../leads-crm.js';
 import { webRead, webSearch, webSearchEnabled } from '../websearch.js';
+import { listLibrarySkills, readLibrarySkill, skillFiles } from '../skill-library.js';
 
 export interface ToolCtx {
   userId: string;
@@ -225,6 +226,43 @@ const WEB_TOOLS: ToolDef[] = [
       const p = await webRead(a.url);
       const head = p.title ? `${p.title}\n${p.url}\n\n` : `${p.url}\n\n`;
       return { output: head + (p.text || '(The page had no readable text.)') + (p.cut ? '\n\n[Cut: the page is longer.]' : ''), summary: `Read ${p.title || new URL(p.url).hostname}`.slice(0, 80) };
+    },
+  },
+];
+
+/** The skills on the computer (Zo, Hermes, Anthropic), for every bot whatever runs it: list first, then read one. */
+const SKILL_READ_MAX = 40_000;
+const SKILL_TOOLS: ToolDef[] = [
+  {
+    name: 'skills_list',
+    description: 'List the skills on this computer: ready-made instructions for jobs like Word/PDF/Excel files, web scraping, design, testing or research. Returns each skill\'s id, name and when to use it. Before a job that a skill may cover, look here, then load the one that fits with skill_read and follow it.',
+    parameters: obj({
+      query: { type: 'string', description: 'Words to filter by (name, description or category), e.g. "pdf" or "scrape".' },
+      source: { type: 'string', enum: ['zo', 'hermes', 'anthropic'], description: 'Only skills from this source.' },
+    }),
+    activity: 'working',
+    label: 'Looking at skills',
+    impl: async (a) => {
+      const words = String(a.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      const hits = listLibrarySkills().filter((s) => (!a.source || s.source === a.source)
+        && words.every((w) => `${s.id} ${s.name} ${s.description} ${s.category}`.toLowerCase().includes(w)));
+      if (!hits.length) return { output: words.length ? 'No skill matches. Try fewer or other words, or no query for the full list.' : 'No skills on this computer.', summary: 'No skills found' };
+      return { output: `${hits.length} skills. Load one with skill_read(id).\n\n` + hits.map((s) => `${s.id} — ${s.name}${s.description ? `: ${s.description}` : ''}`).join('\n'), summary: `Found ${hits.length} skills` };
+    },
+  },
+  {
+    name: 'skill_read',
+    description: 'Load one skill by its id from skills_list: its full instructions, and the paths of the scripts and reference files it ships (open or run them with your own file and terminal tools). Follow the instructions for the job.',
+    parameters: obj({ id: { type: 'string', description: 'Skill id, e.g. "anthropic:pdf" or "zo:web-scraper".' } }, ['id']),
+    activity: 'working',
+    label: 'Reading a skill',
+    impl: async (a) => {
+      const s = readLibrarySkill(String(a.id ?? ''), undefined, SKILL_READ_MAX);
+      const f = skillFiles(s.id);
+      const files = f.files.length
+        ? `\n\n---\nSkill folder: ${f.dir}\nFiles in it (paths in the instructions are relative to this folder):\n${f.files.map((x) => `- ${x}`).join('\n')}${f.more ? '\n- (more files not listed)' : ''}`
+        : `\n\n---\nSkill folder: ${f.dir}`;
+      return { output: `# ${s.name}\n${s.description ? `${s.description}\n` : ''}\n${s.body}${s.cut ? '\n\n[Cut: the instructions are longer; read the rest from SKILL.md in the folder below.]' : ''}${files}`, summary: `Read skill ${s.name}`.slice(0, 80) };
     },
   },
 ];
@@ -641,6 +679,7 @@ export const TOOLS: ToolDef[] = [
       return { output: `Asked the user to connect ${info.name}. Stop here; you'll be told when it's connected.`, endTurn: true };
     },
   },
+  ...SKILL_TOOLS,
   ...DATA_TOOLS,
   ...MEMORY_TOOLS,
   ...(buildflowEnabled() ? BUILDFLOW_TOOLS : []),

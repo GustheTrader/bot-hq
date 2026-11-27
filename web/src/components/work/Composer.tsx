@@ -12,7 +12,7 @@ import { engineLabel, errText } from './shared';
 
 /** Matches the server's limit on skills per request. */
 const MAX_SKILLS = 8;
-const SOURCE_LABEL: Record<LibrarySkill['source'], string> = { zo: 'Zo', hermes: 'Hermes' };
+const SOURCE_LABEL: Record<LibrarySkill['source'], string> = { zo: 'Zo', hermes: 'Hermes', anthropic: 'Anthropic' };
 
 // ---------- the skill library: fetched when first wanted, then shared ----------
 

@@ -5,9 +5,11 @@ import { env } from './env.js';
 import type { LibrarySkill, SkillSource } from './types.js';
 
 /**
- * The skills already on this computer, read-only: Zo's (`<workspace>/Skills/<name>/SKILL.md`) and the primary
- * Hermes agent's (`<hermes home>/skills/<category>/<name>/SKILL.md`). A skill is a folder with a SKILL.md whose
- * header names it and says when to use it.
+ * The skills already on this computer, read-only: Zo's (`<workspace>/Skills/<name>/SKILL.md`), the primary
+ * Hermes agent's (`<hermes home>/skills/<category>/<name>/SKILL.md`) and Anthropic's public skills
+ * (a clone of github.com/anthropics/skills, `<clone>/skills/<name>/SKILL.md`). A skill is a folder with a
+ * SKILL.md whose header names it and says when to use it. An Anthropic skill is only offered when its folder
+ * carries an open-source license file (Apache or MIT), so a source-available one never slips in.
  *
  * Nothing here writes. Callers pass an id from the listing, never a path, and the id is checked against the
  * folder it claims to be in (including where a symlink really points) before anything is read.
@@ -15,19 +17,42 @@ import type { LibrarySkill, SkillSource } from './types.js';
 
 export type { LibrarySkill, SkillSource };
 
-export type SkillRoots = Record<SkillSource, string>;
+/** Anthropic's folder is optional: without it there are just the other two sources. */
+export type SkillRoots = { zo: string; hermes: string; anthropic?: string };
 
 export const defaultRoots = (): SkillRoots => ({
   zo: process.env.SKILLS_ZO_DIR ?? '/home/workspace/Skills',
   hermes: path.join(env.hermesHome, 'skills'),
+  anthropic: process.env.SKILLS_ANTHROPIC_DIR ?? '/home/workspace/Skills-anthropic/skills',
 });
+
+/** Sources whose skills need an open-source license file in their folder to be offered. */
+const NEEDS_LICENSE: ReadonlySet<SkillSource> = new Set(['anthropic']);
+const OPEN_LICENSE = /\b(apache license|mit license)\b/i;
+
+/** True when the skill folder has a LICENSE file that is Apache or MIT. */
+export function hasOpenLicense(dir: string): boolean {
+  let names: string[];
+  try { names = fs.readdirSync(dir); } catch { return false; }
+  for (const n of names) {
+    if (!/^licen[cs]e(\.(txt|md))?$/i.test(n)) continue;
+    try {
+      const fd = fs.openSync(path.join(dir, n), 'r');
+      const buf = Buffer.alloc(2048);
+      const len = fs.readSync(fd, buf, 0, buf.length, 0);
+      fs.closeSync(fd);
+      if (OPEN_LICENSE.test(buf.subarray(0, len).toString('utf8'))) return true;
+    } catch { /* unreadable: not a license */ }
+  }
+  return false;
+}
 
 const MAX_DEPTH = 4;
 /** A SKILL.md bigger than this is not read at all. */
 const MAX_FILE = 256 * 1024;
 /** The most of a skill's instructions that goes into a brief. */
 export const MAX_BODY = 12_000;
-const ID = /^(zo|hermes):([A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*){0,3})$/;
+const ID = /^(zo|hermes|anthropic):([A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*){0,3})$/;
 
 const oneLine = (v: unknown, max: number) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 
@@ -53,6 +78,7 @@ function walk(root: string, source: SkillSource, out: LibrarySkill[]) {
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     const file = entries.find((e) => e.isFile() && e.name === 'SKILL.md');
     if (file && depth > 0) {
+      if (NEEDS_LICENSE.has(source) && !hasOpenLicense(dir)) return;
       let size = 0;
       try { size = fs.statSync(path.join(dir, 'SKILL.md')).size; } catch { return; }
       if (size <= MAX_FILE) {
@@ -86,6 +112,7 @@ export function scanSkills(roots: SkillRoots): LibrarySkill[] {
   const out: LibrarySkill[] = [];
   walk(roots.zo, 'zo', out);
   walk(roots.hermes, 'hermes', out);
+  if (roots.anthropic) walk(roots.anthropic, 'anthropic', out);
   return out.sort((a, b) => a.source.localeCompare(b.source) || a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 }
 
@@ -106,24 +133,60 @@ export class SkillError extends Error {
 
 export interface ChosenSkill { id: string; name: string; description: string; body: string }
 
-/** One skill's instructions, by id. Throws SkillError for anything that is not a real skill inside its folder. */
-export function readLibrarySkill(id: string, roots: SkillRoots = defaultRoots()): ChosenSkill {
+/** Where a skill's folder really is, by id. Throws SkillError for anything that is not a real skill inside its folder. */
+function resolveSkill(id: string, roots: SkillRoots): { source: SkillSource; rel: string; dirReal: string; fileReal: string } {
   const m = typeof id === 'string' ? ID.exec(id) : null;
   if (!m) throw new SkillError(`Unknown skill: ${String(id).slice(0, 80)}`);
   const source = m[1] as SkillSource;
   const rel = m[2];
+  const root = roots[source];
+  if (!root) throw new SkillError(`Unknown skill: ${id}`, 404);
   let rootReal: string;
   let fileReal: string;
   try {
-    rootReal = fs.realpathSync(roots[source]);
-    fileReal = fs.realpathSync(path.join(roots[source], rel, 'SKILL.md'));
+    rootReal = fs.realpathSync(root);
+    fileReal = fs.realpathSync(path.join(root, rel, 'SKILL.md'));
   } catch { throw new SkillError(`Unknown skill: ${id}`, 404); }
   // A symlink inside the skills folder must not lead anywhere outside it.
   if (!fileReal.startsWith(rootReal + path.sep)) throw new SkillError(`Unknown skill: ${id}`, 404);
+  const dirReal = path.dirname(fileReal);
+  if (NEEDS_LICENSE.has(source) && !hasOpenLicense(dirReal)) throw new SkillError(`Unknown skill: ${id}`, 404);
+  return { source, rel, dirReal, fileReal };
+}
+
+/** One skill's instructions, by id, cut at `maxBody` characters (a brief's share by default). */
+export function readLibrarySkill(id: string, roots: SkillRoots = defaultRoots(), maxBody = MAX_BODY): ChosenSkill & { cut: boolean } {
+  const { rel, fileReal } = resolveSkill(id, roots);
   let stat: fs.Stats;
   try { stat = fs.statSync(fileReal); } catch { throw new SkillError(`Unknown skill: ${id}`, 404); }
   if (!stat.isFile() || stat.size > MAX_FILE) throw new SkillError(`Skill is not readable: ${id}`);
   const p = parseSkillFile(fs.readFileSync(fileReal, 'utf8'));
   const folder = rel.split('/').pop()!;
-  return { id, name: p.name || folder, description: p.description, body: p.body.slice(0, MAX_BODY) };
+  return { id, name: p.name || folder, description: p.description, body: p.body.slice(0, maxBody), cut: p.body.length > maxBody };
+}
+
+const MAX_FILES = 60;
+
+/**
+ * The other files a skill ships (scripts, references, templates), as absolute paths on this computer, so an
+ * agent can open or run them. Nothing hidden, no symlinks, at most 60 and 3 folders deep.
+ */
+export function skillFiles(id: string, roots: SkillRoots = defaultRoots()): { dir: string; files: string[]; more: boolean } {
+  const { dirReal } = resolveSkill(id, roots);
+  const files: string[] = [];
+  let more = false;
+  const visit = (dir: string, depth: number) => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === '__pycache__') continue;
+      const full = path.join(dir, e.name);
+      if (e.isFile() && !(depth === 0 && e.name === 'SKILL.md')) {
+        if (files.length >= MAX_FILES) { more = true; return; }
+        files.push(full);
+      } else if (e.isDirectory() && depth < 3) visit(full, depth + 1);
+    }
+  };
+  visit(dirReal, 0);
+  return { dir: dirReal, files, more };
 }

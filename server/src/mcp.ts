@@ -5,6 +5,7 @@ import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
 import { claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
+import { listLibrarySkills, readLibrarySkill, SkillError } from './skill-library.js';
 import { codeModeOn, noteInnerCall, RUN_CODE, runCode, runCodeTool, runForToken, splitTools, typesFor, type McpTool } from './codemode.js';
 
 /**
@@ -122,6 +123,16 @@ async function runTool(botId: string, userId: string, name: string, args: any, r
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 
 /** Answer one JSON-RPC message; null for notifications (they get no answer). */
+/** skill://<source>/<path> for a library skill id <source>:<path>, and back. */
+export const skillUri = (skillId: string) => `skill://${skillId.replace(':', '/')}`;
+export function skillIdFor(uri: string): string | null {
+  const m = /^skill:\/\/(zo|hermes|anthropic)\/(.+)$/.exec(uri);
+  return m ? `${m[1]}:${m[2]}` : null;
+}
+function skillResources() {
+  return listLibrarySkills().map((s) => ({ uri: skillUri(s.id), name: s.id, title: s.name, description: s.description || undefined, mimeType: 'text/markdown' }));
+}
+
 async function handle(msg: any, botId: string | null): Promise<object | null> {
   if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
     // A response to something we never asked; nothing to do with it.
@@ -137,9 +148,9 @@ async function handle(msg: any, botId: string | null): Promise<object | null> {
         jsonrpc: '2.0', id,
         result: {
           protocolVersion: SUPPORTED.includes(asked) ? asked : SUPPORTED[0],
-          capabilities: { tools: { listChanged: false } },
+          capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
           serverInfo: { name: 'hq', title: 'Team app', version: '1.0.0' },
-          instructions: 'Tools of the team app: connected apps, files for the user, tasks, routines, other agents on the team.',
+          instructions: 'Tools of the team app: connected apps, files for the user, tasks, routines, other agents on the team. Skills (ready-made instructions for common jobs) are listed by skills_list and loaded by skill_read, and are also resources at skill://<source>/<path>.',
         },
       };
     }
@@ -154,9 +165,22 @@ async function handle(msg: any, botId: string | null): Promise<object | null> {
       return { jsonrpc: '2.0', id, result: await callTool(botId, name, args) };
     }
     case 'resources/list':
-      return { jsonrpc: '2.0', id, result: { resources: [] } };
+      return { jsonrpc: '2.0', id, result: { resources: skillResources() } };
     case 'resources/templates/list':
-      return { jsonrpc: '2.0', id, result: { resourceTemplates: [] } };
+      return { jsonrpc: '2.0', id, result: { resourceTemplates: [{ uriTemplate: 'skill://{source}/{path}', name: 'skill', title: 'A skill', description: 'The instructions of one skill. source is zo, hermes or anthropic.', mimeType: 'text/markdown' }] } };
+    case 'resources/read': {
+      const uri = String(params?.uri ?? '');
+      const skillId = skillIdFor(uri);
+      if (!skillId) return rpcError(id, -32002, `Resource not found: ${uri.slice(0, 120)}`);
+      try {
+        const sk = readLibrarySkill(skillId, undefined, 200_000);
+        const text = `---\nname: ${sk.name}\ndescription: ${JSON.stringify(sk.description)}\n---\n\n${sk.body}`;
+        return { jsonrpc: '2.0', id, result: { contents: [{ uri, mimeType: 'text/markdown', text }] } };
+      } catch (e) {
+        if (e instanceof SkillError) return rpcError(id, -32002, `Resource not found: ${uri.slice(0, 120)}`);
+        throw e;
+      }
+    }
     case 'prompts/list':
       return { jsonrpc: '2.0', id, result: { prompts: [] } };
     default:
