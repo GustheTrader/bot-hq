@@ -62,6 +62,10 @@ export const env = {
   enginePortBase: Number(process.env.ENGINE_PORT_BASE ?? 8650),
   /** URL the Hermes gateways use to reach this server's MCP endpoint. */
   mcpBaseUrl: (process.env.MCP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 8787}`).replace(/\/+$/, ''),
+  /** Code Mode executor (codemode/ Worker): bots with Code Mode on run scripts there. Empty = Code Mode unavailable. */
+  codemodeUrl: (process.env.CODEMODE_URL ?? '').replace(/\/+$/, ''),
+  /** Shared secret for the executor, from CODEMODE_SECRET or the file CODEMODE_SECRET_FILE. */
+  codemodeSecret: process.env.CODEMODE_SECRET || (process.env.CODEMODE_SECRET_FILE ? (() => { try { return fs.readFileSync(process.env.CODEMODE_SECRET_FILE!, 'utf8').trim(); } catch { return ''; } })() : ''),
   /** 9Router on the bots' computer (Settings > Models): its URL, dashboard password file, and the client key the bots use. Empty URL = not set up. */
   ninerouterUrl: (process.env.NINEROUTER_URL ?? '').replace(/\/+$/, ''),
   ninerouterPasswordFile: process.env.NINEROUTER_PASSWORD_FILE ?? '',

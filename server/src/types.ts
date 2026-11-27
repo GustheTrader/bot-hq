@@ -61,6 +61,8 @@ export interface Bot {
   harness: string;
   /** The model picked for a non-Hermes harness; null keeps that harness's own default. */
   harnessModel: string | null;
+  /** Code Mode pilot: the bot writes scripts against the app's tools (run_code) instead of calling each tool. */
+  codeMode?: boolean;
   generation: number;
   unread: number;
   lastPreview: string | null;

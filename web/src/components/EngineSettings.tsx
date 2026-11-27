@@ -4,6 +4,7 @@ import { configApi, type EngineCheck, type HarnessModels, type HarnessOption } f
 import { useStore } from '../store';
 import { useConfigUI } from '../configStore';
 import { Icon } from './Icon';
+import { Switch } from './config/ui';
 
 /** The model list's "type your own" entry; no real model id looks like this. */
 const CUSTOM = '__other_model_id__';
@@ -30,7 +31,7 @@ export function EngineSettings({ bot }: { bot: Bot }) {
   const [phase, setPhase] = useState<'loading' | 'ok' | 'unavailable'>('loading');
   const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
-  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | 'claude' | 'harness' | null>(null);
+  const [busy, setBusy] = useState<'save' | 'signin' | 'restart' | 'screen' | 'claude' | 'harness' | 'codemode' | null>(null);
   /** Claude sign-in done here in the page: the link to open, and the code that page gives back. */
   const [claudeUrl, setClaudeUrl] = useState<string | null>(null);
   const [claudeCode, setClaudeCode] = useState('');
@@ -211,6 +212,17 @@ export function EngineSettings({ bot }: { bot: Bot }) {
     finally { if (shown.current === botId) setBusy(null); }
   };
 
+  const codeMode = !!bot.codeMode;
+  const toggleCodeMode = async (on: boolean) => {
+    if (busy) return;
+    setBusy('codemode'); setNote(null);
+    try {
+      const r = await configApi.updateBot(botId, { codeMode: on });
+      useStore.setState((s) => ({ bots: s.bots.map((b) => (b.id === botId ? { ...b, codeMode: !!r.bot.codeMode } : b)) }));
+    } catch (e) { if (shown.current === botId) setNote(`Couldn’t change Code Mode: ${(e as Error).message || 'the server did not answer'}`); }
+    finally { if (shown.current === botId) setBusy(null); }
+  };
+
   const restart = async () => {
     if (busy) return;
     setBusy('restart'); setNote(null);
@@ -245,6 +257,15 @@ export function EngineSettings({ bot }: { bot: Bot }) {
       <div className="engine__wiki">
         <button type="button" className="link-btn link-btn--small" onClick={() => useConfigUI.getState().openAppSettings('wiki')}>Which harness and model for a job? See the Wiki</button>
       </div>
+      <div className="panel-row panel-row--setting">
+        <span>Code Mode <small className="engine__beta">pilot</small></span>
+        <Switch on={codeMode} label="Code Mode" disabled={busy === 'codemode'} onChange={toggleCodeMode} />
+      </div>
+      {codeMode && (
+        <div className="engine__notice">
+          <span>This Bot writes short scripts against the app’s tools and gets back only the result. Anything that needs your approval is still asked for as usual. Takes effect from its next new chat.</span>
+        </div>
+      )}
       {harness !== 'hermes' && (
         <>
           <div className="panel-row panel-row--setting">

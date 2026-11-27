@@ -5,6 +5,7 @@ import { composioTools } from './composio.js';
 import { mcpToken, primaryBotId } from './engine.js';
 import { claimToolRow, enqueueBotMessage, markSilent, noteToolOutcome, requestApproval, turnDepth } from './agent/loop.js';
 import { policyFor, runComposioTool, toolMap, TOOLS, type ToolCtx } from './agent/tools.js';
+import { codeModeOn, noteInnerCall, RUN_CODE, runCode, runCodeTool, runForToken, splitTools, typesFor, type McpTool } from './codemode.js';
 
 /**
  * The app's tools, served to the Hermes engines over MCP (streamable HTTP, JSON answers only).
@@ -40,7 +41,8 @@ function caller(slug: string, auth: string | undefined): { botId: string | null 
   return getBotRow(slug) ? { botId: slug } : null;
 }
 
-async function listTools(botId: string | null) {
+/** Every tool the bot could call, before Code Mode decides which ones it sees directly. */
+async function allTools(botId: string | null): Promise<McpTool[]> {
   const own = TOOLS.map((t) => ({ name: t.name, description: t.description, inputSchema: t.parameters }));
   const bot = botId ? getBotRow(botId) : null;
   if (!bot) return own;
@@ -50,12 +52,41 @@ async function listTools(botId: string | null) {
   return [...own, ...apps];
 }
 
+/** What tools/list shows: every tool, or (Code Mode) run_code plus the tools that must stay direct. */
+async function listTools(botId: string | null): Promise<McpTool[]> {
+  const tools = await allTools(botId);
+  if (!codeModeOn(botId)) return tools;
+  const { direct, scripted } = splitTools(tools);
+  try {
+    return [runCodeTool(await typesFor(scripted)), ...direct];
+  } catch (e: any) {
+    // Executor down: fall back to plain tools rather than leave the bot without any.
+    console.warn('[codemode] types failed, listing plain tools:', e?.message ?? e);
+    return tools;
+  }
+}
+
 async function callTool(botId: string | null, rawName: string, args: any): Promise<CallResult> {
   const bot = botId ? getBotRow(botId) : null;
   if (!botId || !bot) return text('The team app has no bot for this agent yet. Ask the user to open the app once, then try again.', true);
   const userId: string = bot.user_id;
   const name = [...toolMap.keys()].find((k) => k.toLowerCase() === rawName.toLowerCase()) ?? rawName;
   const rowSeq = await claimToolRow(botId, name);
+  if (name === RUN_CODE && codeModeOn(botId)) {
+    const { scripted } = splitTools(await allTools(botId));
+    const r = await runCode(botId, rowSeq, String(args?.code ?? ''), scripted);
+    noteToolOutcome(botId, rowSeq, { status: r.isError ? 'error' : 'done', summary: r.summary });
+    return text(r.output, r.isError);
+  }
+  if (name === RUN_CODE) return text('Code Mode is off for this agent: call the tools directly.', true);
+  return runTool(botId, userId, name, args, rowSeq, false);
+}
+
+/**
+ * Run one tool for a bot. `inner` = called from a Code Mode script: there is no row of its own
+ * (the run_code row sums the calls up) and nothing may wait on the user's approval mid-script.
+ */
+async function runTool(botId: string, userId: string, name: string, args: any, rowSeq: number | null, inner: boolean): Promise<CallResult> {
   const ctx: ToolCtx = { userId, botId, enqueueBotMessage, depth: turnDepth(botId) };
   try {
     const own = toolMap.get(name);
@@ -70,6 +101,9 @@ async function callTool(botId: string | null, rawName: string, args: any): Promi
     if (pol.decision === 'block') {
       noteToolOutcome(botId, rowSeq, { status: 'denied', summary: 'Not allowed' });
       return text(DECLINED);
+    }
+    if (pol.decision === 'ask' && inner) {
+      return text(`This action needs the user's approval (${pol.title}). Make this ${name} call as a normal tool call, not from run_code.`, true);
     }
     if (pol.decision === 'ask') {
       const answer = await requestApproval({ userId, botId }, pol, args, rowSeq);
@@ -143,6 +177,27 @@ mcpApi.post('/:bot', async (c) => {
   }
   const answer = await handle(body, who.botId);
   return answer ? c.json(answer) : c.body(null, 202);
+});
+
+/**
+ * A tool call from inside a Code Mode script (the codemode/ Worker calls this). The bearer is the
+ * short-lived run token minted for that script, never the bot's MCP token.
+ */
+mcpApi.post('/:bot/inner', async (c) => {
+  const botId = c.req.param('bot');
+  const token = (c.req.header('authorization') ?? '').replace(/^Bearer\s+/i, '').trim();
+  const run = token ? runForToken(botId, token) : null;
+  if (!run) return c.json({ error: 'Unauthorized' }, 401);
+  const bot = getBotRow(botId);
+  if (!bot) return c.json({ error: 'No such bot' }, 404);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Bad JSON' }, 400); }
+  const name = typeof body?.name === 'string' ? body.name : '';
+  if (!run.allowed.has(name)) return c.json({ error: `No tool named ${name || '(none)'} is available to scripts.` }, 400);
+  noteInnerCall(run.runId, name);
+  const args = body?.args && typeof body.args === 'object' ? body.args : {};
+  const r = await runTool(botId, bot.user_id, name, args, null, true);
+  return c.json({ output: r.content.map((p) => p.text).join('\n'), isError: !!r.isError });
 });
 
 // No server-to-client stream and no sessions to end.

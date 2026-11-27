@@ -1,0 +1,162 @@
+import crypto from 'node:crypto';
+import { env } from './env.js';
+import { getBotRow } from './store.js';
+
+/**
+ * Code Mode (pilot): instead of each of the app's tools, a bot gets one `run_code` tool. It writes a
+ * short script against `codemode.<tool>(input)`; the codemode/ Worker runs it in a V8 isolate with no
+ * network, and every `codemode.*` call comes back here (POST /mcp/<botId>/inner) with a run token.
+ * Only the script's return value goes back to the model, not every intermediate tool result.
+ *
+ * What never goes into a script:
+ *  - tools that end the turn or wait on the user (ask_user, stay_silent, request_app_connection);
+ *  - an app action that needs the user's approval: refused inside the script with a note to make
+ *    that call directly, where the user sees the approval card as usual.
+ */
+
+export interface McpTool { name: string; description: string; inputSchema: any }
+
+/** The app's own tools that always stay direct tools. */
+export const DIRECT_TOOLS = new Set(['ask_user', 'stay_silent', 'request_app_connection']);
+export const RUN_CODE = 'run_code';
+const TOKEN_TTL_MS = 2 * 60_000;
+
+export const codeModeAvailable = () => !!(env.codemodeUrl && env.codemodeSecret);
+export const codeModeOn = (botId: string | null) => !!botId && codeModeAvailable() && !!getBotRow(botId)?.code_mode;
+
+/** Composio meta-tools stay direct as well: few of them, and their approvals depend on each call. */
+const isComposio = (name: string) => /^COMPOSIO_/i.test(name);
+
+/** Split a bot's tool list into the tools it keeps calling directly and the ones scripts call. */
+export function splitTools(tools: McpTool[]): { direct: McpTool[]; scripted: McpTool[] } {
+  const direct: McpTool[] = [];
+  const scripted: McpTool[] = [];
+  for (const t of tools) {
+    if (DIRECT_TOOLS.has(t.name)) direct.push(t);
+    else if (isComposio(t.name)) { direct.push(t); scripted.push(t); }
+    else scripted.push(t);
+  }
+  return { direct, scripted };
+}
+
+// ---------- run tokens ----------
+
+/** Live runs: what each run token may call, and the run_code row the inner calls belong to. */
+interface Run { botId: string; parentSeq: number | null; allowed: Set<string>; calls: string[]; expires: number }
+const runs = new Map<string, Run>();
+
+const sign = (payload: string) => crypto.createHmac('sha256', env.sessionSecret).update(`codemode:${payload}`).digest('base64url');
+
+export function startRun(botId: string, parentSeq: number | null, allowed: string[]): { runId: string; token: string } {
+  const now = Date.now();
+  for (const [id, r] of runs) if (r.expires < now) runs.delete(id);
+  const runId = crypto.randomBytes(12).toString('base64url');
+  const expires = now + TOKEN_TTL_MS;
+  runs.set(runId, { botId, parentSeq, allowed: new Set(allowed), calls: [], expires });
+  const payload = `${botId}.${runId}.${expires}`;
+  return { runId, token: `${payload}.${sign(payload)}` };
+}
+
+/** The run a token belongs to, or null when it is forged, expired, finished or for another bot. */
+export function runForToken(botId: string, token: string): (Run & { runId: string }) | null {
+  const parts = token.split('.');
+  if (parts.length !== 4) return null;
+  const [bot, runId, exp, mac] = parts;
+  const want = sign(`${bot}.${runId}.${exp}`);
+  if (mac.length !== want.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(want))) return null;
+  if (bot !== botId || Number(exp) < Date.now()) return null;
+  const run = runs.get(runId);
+  if (!run || run.botId !== botId) return null;
+  return { ...run, runId };
+}
+
+export function endRun(runId: string): string[] {
+  const calls = runs.get(runId)?.calls ?? [];
+  runs.delete(runId);
+  return calls;
+}
+
+export function noteInnerCall(runId: string, name: string) {
+  runs.get(runId)?.calls.push(name);
+}
+
+/** "Ran 7 tools: buildflow_jobs ×1, buildflow_add_daily_log ×6" */
+export function callSummary(calls: string[]): string {
+  if (!calls.length) return 'Ran a script (no tool calls)';
+  const counts = new Map<string, number>();
+  for (const c of calls) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const parts = [...counts].map(([n, k]) => `${n} ×${k}`);
+  return `Ran ${calls.length} tool${calls.length === 1 ? '' : 's'}: ${parts.join(', ')}`.slice(0, 200);
+}
+
+// ---------- the executor ----------
+
+async function executor(path: string, body: unknown, timeoutMs: number): Promise<any> {
+  const r = await fetch(`${env.codemodeUrl}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${env.codemodeSecret}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const data: any = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(String(data?.error ?? `Code Mode executor answered ${r.status}`));
+  return data;
+}
+
+const typesCache = new Map<string, string>();
+
+/** TypeScript declarations for the scripted tools (generated by the executor, which has the codemode package). */
+export async function typesFor(tools: McpTool[]): Promise<string> {
+  const key = crypto.createHash('sha256').update(JSON.stringify(tools.map((t) => [t.name, t.description, t.inputSchema]))).digest('hex');
+  const hit = typesCache.get(key);
+  if (hit) return hit;
+  const { types } = await executor('/types', { tools }, 10_000);
+  if (typeof types !== 'string') throw new Error('Code Mode executor returned no types');
+  if (typesCache.size > 50) typesCache.clear();
+  typesCache.set(key, types);
+  return types;
+}
+
+/** The run_code tool as the bot sees it, with the typed API in its description. */
+export function runCodeTool(types: string): McpTool {
+  return {
+    name: RUN_CODE,
+    description: [
+      'Run a JavaScript script that calls the team app\'s tools, and get back only what the script returns.',
+      'Prefer this over many separate tool calls: loop, filter and combine results inside the script, and return a short summary or just the fields you need.',
+      'Write the body of an async function (top-level await is fine) and `return` the result. Every tool is an async function on `codemode` and takes one object argument.',
+      'No network, no imports; only `codemode.*` reaches the outside. Up to 50 tool calls and 30 seconds per script. console.log output comes back as logs.',
+      'If a call fails with "needs the user\'s approval", make that call as a normal tool call instead.',
+      '',
+      'Available API:',
+      types,
+    ].join('\n'),
+    inputSchema: {
+      type: 'object',
+      properties: { code: { type: 'string', description: 'The script, e.g. `const jobs = await codemode.buildflow_jobs({}); return jobs.length;`' } },
+      required: ['code'],
+    },
+  };
+}
+
+export interface CodeRunResult { output: string; isError: boolean; summary: string }
+
+/** Run a bot's script. Never throws: problems come back as an error result the model can read. */
+export async function runCode(botId: string, parentSeq: number | null, code: string, scripted: McpTool[]): Promise<CodeRunResult> {
+  if (typeof code !== 'string' || !code.trim()) return { output: 'run_code needs a `code` string.', isError: true, summary: 'No code' };
+  const names = scripted.map((t) => t.name);
+  const { runId, token } = startRun(botId, parentSeq, names);
+  try {
+    const r = await executor('/run', { code, botId, runToken: token, tools: names }, 45_000);
+    const calls = endRun(runId);
+    const logs: string[] = Array.isArray(r.logs) ? r.logs : [];
+    const logText = logs.length ? `\n\nlogs:\n${logs.join('\n')}` : '';
+    if (r.error) return { output: `Script error: ${r.error}${logText}`, isError: true, summary: `Failed: ${String(r.error).slice(0, 120)}` };
+    const value = typeof r.result === 'string' ? r.result : JSON.stringify(r.result ?? null, null, 1);
+    return { output: `${value}${logText}`, isError: false, summary: callSummary(calls) };
+  } catch (e: any) {
+    endRun(runId);
+    const msg = String(e?.message ?? e);
+    return { output: `Code Mode is unavailable right now (${msg}). Call the tools directly instead.`, isError: true, summary: 'Executor unavailable' };
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@grokbot/codemode",
+  "private": true,
+  "type": "module",
+  "description": "Code Mode executor for Bot HQ: runs a bot's script in a no-network V8 isolate (Cloudflare Worker Loader).",
+  "scripts": {
+    "dev": "wrangler dev --ip 127.0.0.1 --port 8792",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@cloudflare/codemode": "0.5.6"
+  },
+  "devDependencies": {
+    "wrangler": "4.158.0"
+  }
+}

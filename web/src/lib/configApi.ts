@@ -55,7 +55,7 @@ export interface GtmContactRow { id: string | null; name: string | null; email: 
 export interface GtmOverview { crm: boolean; me: string | null; companies: GtmCompanyRow[]; contacts: GtmContactRow[]; threads: GtmThread[] }
 export interface GtmCompany { id: string | null; name: string | null; domain: string | null; domains: string[]; description: string | null; contacts: { id: string; name: string | null; email: string | null; lastAt: string | null }[]; threads: GtmThread[] }
 
-export type BotPatch =Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode' | 'spaceId'>>;
+export type BotPatch =Partial<Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode' | 'spaceId' | 'codeMode'>>;
 
 /** 9Router (Settings > Models). Mirrors server/src/ninerouter.ts; never carries a key back. */
 export interface RouterProviderDef { id: string; name: string; group: 'google' | 'free' | 'paid'; note: string; keyUrl: string; extra?: { field: 'accountId'; label: string } }
