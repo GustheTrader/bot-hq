@@ -3,7 +3,8 @@ import type { Bot, TeamMember } from '@shared/types';
 import { api, type Human, type TeamsResponse } from '../lib/api';
 import { BotAvatarFor } from '../avatar/BotAvatar';
 import { relativeShort } from '../lib/time';
-import { displayName, useStore } from '../store';
+import { displayName, inSpace, shownSpace, useStore } from '../store';
+import { SpaceSwitcher, SpaceTag } from './Spaces';
 import { useConfigUI } from '../configStore';
 import { Icon } from './Icon';
 import { LiveSignal } from './LiveSignal';
@@ -36,14 +37,23 @@ export function TeamsView() {
 
   useEffect(load, [load]);
 
-  const candidateBots = bots.filter((b) => b.kind !== 'team' && !b.isPrimary);
-  const team = data?.teams.find((t) => t.id === selected) ?? null;
+  const activeSpace = useStore(shownSpace);
+  const spaceOf = (id: string) => bots.find((b) => b.id === id)?.spaceId ?? null;
+  const eligible = bots.filter((b) => b.kind !== 'team' && !b.isPrimary && inSpace(b, activeSpace));
+  // Derived each time: a pick that was deleted, moved or filtered away no longer counts.
+  // A team stays inside one workspace, so the first remaining pick narrows the rest to its workspace.
+  const chosen = newBots.flatMap((id) => eligible.filter((b) => b.id === id));
+  const pickedSpace = chosen.length ? chosen[0].spaceId ?? null : undefined;
+  const candidateBots = eligible.filter((b) => pickedSpace === undefined || (b.spaceId ?? null) === pickedSpace);
+  const picked = chosen.filter((b) => (b.spaceId ?? null) === pickedSpace).map((b) => b.id);
+  const shown = data?.teams.filter((t) => inSpace({ spaceId: spaceOf(t.id) }, activeSpace)) ?? [];
+  const team = shown.find((t) => t.id === selected) ?? shown[0] ?? null;
 
   const createTeam = async () => {
-    if (!newName.trim() || newBots.length === 0) return;
+    if (!newName.trim() || picked.length === 0) return;
     setBusy(true); setError(null);
     try {
-      const { id } = await api.createTeam(newName.trim(), newBots);
+      const { id } = await api.createTeam(newName.trim(), picked);
       setNewName(''); setNewBots([]);
       await useStore.getState().loadBots();
       setSelected(id);
@@ -64,6 +74,7 @@ export function TeamsView() {
       <header className="teams-view__header">
         <div className="teams-view__title">Teams</div>
         <div className="teams-view__sub">Bots and people working the same roster</div>
+        <SpaceSwitcher />
       </header>
       <div className="teams-view__scroll">
         <div className="teams-view__inner">
@@ -83,17 +94,18 @@ export function TeamsView() {
                     key={b.id}
                     type="button"
                     role="checkbox"
-                    aria-checked={newBots.includes(b.id)}
-                    className={`teams-chip${newBots.includes(b.id) ? ' is-on' : ''}`}
+                    aria-checked={picked.includes(b.id)}
+                    className={`teams-chip${picked.includes(b.id) ? ' is-on' : ''}`}
                     onClick={() => setNewBots((p) => (p.includes(b.id) ? p.filter((x) => x !== b.id) : [...p, b.id]))}
                   >
                     <BotAvatarFor bot={b} size={18} />
                     <span>{b.name}</span>
+                    {activeSpace === 'all' && <SpaceTag spaceId={b.spaceId} />}
                   </button>
                 ))}
                 {candidateBots.length === 0 && <div className="teams-new__empty">Create a Bot first — a team needs at least one.</div>}
               </div>
-              <button type="button" className="btn btn--primary btn--sm" disabled={busy || !newName.trim() || newBots.length === 0} onClick={createTeam}>
+              <button type="button" className="btn btn--primary btn--sm" disabled={busy || !newName.trim() || picked.length === 0} onClick={createTeam}>
                 {busy ? 'Creating…' : 'Create team'}
               </button>
             </div>
@@ -101,7 +113,7 @@ export function TeamsView() {
 
           {data === null ? (
             <div className="cfg-empty">Loading…</div>
-          ) : data.teams.length === 0 ? (
+          ) : shown.length === 0 ? (
             <div className="tasks-empty">
               <Glyph name="tasks" size={28} opacity={0.35} />
               <div className="tasks-empty__title">No teams yet</div>
@@ -110,17 +122,19 @@ export function TeamsView() {
           ) : (
             <>
               <div className="teams-tabs">
-                {data.teams.map((t) => (
-                  <button key={t.id} type="button" className={`teams-tab${t.id === selected ? ' is-active' : ''}`} onClick={() => setSelected(t.id)}>
+                {shown.map((t) => (
+                  <button key={t.id} type="button" className={`teams-tab${t.id === team?.id ? ' is-active' : ''}`} onClick={() => setSelected(t.id)}>
                     {t.name}
+                    {activeSpace === 'all' && <SpaceTag spaceId={spaceOf(t.id)} />}
                     <span className="teams-tab__count">{t.members.length}</span>
                   </button>
                 ))}
               </div>
               {team && (
                 <TeamDetail
+                  key={team.id}
                   team={team}
-                  bots={bots}
+                  bots={bots.filter((b) => b.isPrimary || (b.spaceId ?? null) === spaceOf(team.id))}
                   humans={data.humans}
                   onOpenChat={() => openTeamChat(team.id)}
                   onChanged={load}

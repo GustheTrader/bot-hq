@@ -14,6 +14,7 @@ import { ConnectAppsModal } from './components/modals/ConnectAppsModal';
 import { CreateBotModal } from './components/modals/CreateBotModal';
 import { CreateGroupModal } from './components/modals/CreateGroupModal';
 import { SearchModal } from './components/modals/SearchModal';
+import { SpacesModal } from './components/modals/SpacesModal';
 import { ConfigLayer } from './components/config/ConfigLayer';
 import { GnoesisWork } from './components/gnoesis/GnoesisWork';
 import { TeamsView } from './components/TeamsView';
@@ -76,6 +77,8 @@ function Shell() {
         <GnoesisWork />
         {modal === 'search' && <SearchModal />}
         {modal === 'apps' && <ConnectAppsModal />}
+        {modal === 'spaces' && <SpacesModal />}
+        {modal === 'create' && <CreateBotModal />}
         {viewerOpen && <ComputerViewer />}
         <ConfigLayer />
       </>
@@ -89,6 +92,7 @@ function Shell() {
       {detailsOpen && hasBot && view === 'chat' && <DetailsPanel />}
       {modal === 'create' && <CreateBotModal />}
       {modal === 'group' && <CreateGroupModal />}
+      {modal === 'spaces' && <SpacesModal />}
       {modal === 'search' && <SearchModal />}
       {modal === 'apps' && <ConnectAppsModal />}
       {viewerOpen && <ComputerViewer />}

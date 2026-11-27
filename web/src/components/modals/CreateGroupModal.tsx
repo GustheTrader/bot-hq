@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react';
 import { BotAvatarFor } from '../../avatar/BotAvatar';
 import { api } from '../../lib/api';
-import { useStore } from '../../store';
+import { newSpaceId, shownSpace, useStore } from '../../store';
+import { SpaceSelect } from '../Spaces';
 import { Icon } from '../Icon';
 import { Modal } from './Modal';
 
@@ -11,7 +12,9 @@ interface Person { name: string; email: string }
 export function CreateGroupModal() {
   const setModal = useStore((s) => s.setModal);
   const allBots = useStore((s) => s.bots);
-  const bots = allBots.filter((b) => b.kind !== 'team');
+  const [spaceId, setSpaceId] = useState<string | null>(() => newSpaceId(shownSpace(useStore.getState())));
+  // A team stays inside one workspace; the main bot can join any.
+  const bots = allBots.filter((b) => b.kind !== 'team' && (b.isPrimary || (b.spaceId ?? null) === spaceId));
   const [name, setName] = useState('');
   const [picked, setPicked] = useState<string[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -35,7 +38,7 @@ export function CreateGroupModal() {
     if (!canCreate) return;
     setBusy(true); setError(null);
     try {
-      const { id } = await api.createTeamWithPeople(name.trim(), picked, people.map((p) => ({ name: p.name, email: p.email || undefined })));
+      const { id } = await api.createTeamWithPeople(name.trim(), picked, people.map((p) => ({ name: p.name, email: p.email || undefined })), spaceId);
       const { bots: all } = await api.bots();
       const st = useStore.getState();
       st.set({ bots: all });
@@ -56,6 +59,9 @@ export function CreateGroupModal() {
         </div>
         <div className="create-modal__body" style={{ alignItems: 'stretch' }}>
           <input className="text-input create-modal__name" placeholder="Name your team" value={name} onChange={(e) => setName(e.target.value)} autoFocus aria-label="Team name" />
+
+          <div className="section-label" style={{ marginTop: 14 }}>Workspace</div>
+          <SpaceSelect value={spaceId} onChange={(id) => { setSpaceId(id); setPicked((p) => p.filter((x) => allBots.some((b) => b.id === x && b.isPrimary))); }} />
 
           <div className="section-label" style={{ marginTop: 14 }}>Bots on this team</div>
           <div className="group-pick">

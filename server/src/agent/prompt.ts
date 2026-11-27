@@ -4,6 +4,7 @@ import { connectedToolkits } from '../composio.js';
 import { LIBRARY_ROOT } from './tools.js';
 import { testFlag } from '../grok-guard.js';
 import { macroEnabled } from '../macro.js';
+import { canReach } from '../spaces.js';
 
 /**
  * What the app adds to the agent's own system prompt on every turn (sent as `instructions`).
@@ -19,7 +20,9 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
   const owner = user?.name ?? 'the user';
   const primaryEngine = bot.engine === 'primary';
 
-  const team = (db.prepare("SELECT name, label, is_primary FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'team' ORDER BY created_at").all(userId, botId) as any[])
+  const space = bot.space_id ? (db.prepare('SELECT name, kind, description FROM spaces WHERE id=? AND user_id=?').get(bot.space_id, userId) as any) : null;
+  const team = (db.prepare("SELECT name, label, is_primary, space_id FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'team' ORDER BY created_at").all(userId, botId) as any[])
+    .filter((b) => canReach(bot, b))
     .map((b) => `- ${b.name}${b.label ? ` (${b.label})` : ''}${b.is_primary ? ' [main point of contact]' : ''}`)
     .join('\n');
   const groups = (db.prepare("SELECT name FROM bots WHERE user_id=? AND kind='team' AND id IN (SELECT team_id FROM team_members WHERE member_kind='bot' AND member_id=?) ORDER BY created_at").all(userId, botId) as any[]).map((g) => g.name).join(', ');
@@ -32,8 +35,12 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
     ? `This conversation comes from ${owner}'s team app, where you appear as "${bot.name}"${bot.label ? ` (${bot.label})` : ''}. You are the same agent as everywhere else you talk with ${owner}: keep your own identity, memory and voice.${bot.is_primary ? ` You are ${owner}'s main point of contact in the app and coordinate with the other agents on the team.` : ''}`
     : `You are ${bot.name}${bot.label ? `, ${bot.label},` : ''} on ${owner}'s team of AI agents. ${owner} talks to you in their team app.${bot.description ? `\nAbout you: ${bot.description}` : ''}${bot.is_primary ? `\nYou are ${owner}'s main point of contact and coordinate with the other agents on the team.` : ''}`;
 
+  const workspace = space
+    ? `\n\n## Your workspace\nYou work for the ${space.kind} "${space.name}".${space.description ? ` ${space.description}` : ''}\nKeep its information inside this workspace. Memory scope "everyone" means the bots of this workspace.`
+    : '';
+
   return `# Team app
-${who}
+${who}${workspace}
 
 ## The app's tools
 The app gives you extra tools through its MCP server "hq"; their names carry that prefix (save_file appears as mcp_hq_save_file or mcp__hq__save_file).

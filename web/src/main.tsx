@@ -17,6 +17,7 @@ import './styles/hq.css';
 import './styles/work.css';
 import './styles/gnoesis.css';
 import './styles/gtm.css';
+import './styles/spaces.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

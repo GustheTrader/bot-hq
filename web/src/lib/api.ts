@@ -1,7 +1,7 @@
 import type { RevOpsMetrics } from '@shared/revops-metrics';
 import type { PublicTemplate } from '@shared/bot-templates';
 export type { PublicTemplate } from '@shared/bot-templates';
-import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
+import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, Space, SpaceKind, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -37,7 +37,7 @@ export const api = {
   logout: () => req<{ ok: true }>('POST', '/auth/logout'),
 
   bots: () => req<{ bots: Bot[]; live: LiveState[] }>('GET', '/bots'),
-  createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'mode'> & { template?: string; inputs?: Record<string, string>; timezone?: string }) => req<{ bot: Bot }>('POST', '/bots', b),
+  createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'mode' | 'spaceId'> & { template?: string; inputs?: Record<string, string>; timezone?: string }) => req<{ bot: Bot }>('POST', '/bots', b),
   botTemplates: () => req<{ templates: PublicTemplate[] }>('GET', '/bot-templates'),
   markRead: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/read`),
   rows: (id: string) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${id}/rows`),
@@ -65,9 +65,13 @@ export const api = {
   setTeamLead: (id: string, memberId: string | null) => req<{ ok: true; members: TeamMember[] }>('POST', `/rooms/${id}/lead`, { memberId }),
   createTeam: (name: string, botIds: string[], humanIds: string[] = [], people: { name: string; email?: string }[] = []) =>
     req<{ id: string }>('POST', '/rooms', { name, botIds, humanIds, people }),
+  spaces: () => req<{ spaces: Space[] }>('GET', '/spaces'),
+  createSpace: (s: { name: string; kind: SpaceKind; description?: string }) => req<{ space: Space }>('POST', '/spaces', s),
+  updateSpace: (id: string, s: Partial<Pick<Space, 'name' | 'kind' | 'description' | 'color'>>) => req<{ space: Space }>('PATCH', `/spaces/${id}`, s),
+  deleteSpace: (id: string) => req<{ ok: true }>('DELETE', `/spaces/${id}`),
   /** Create a team and its people in one go. People may be new (by name) or existing (by id). */
-  createTeamWithPeople: (name: string, botIds: string[], people: { id?: string; name: string; email?: string }[]) =>
-    req<{ id: string }>('POST', '/rooms', { name, botIds, people }),
+  createTeamWithPeople: (name: string, botIds: string[], people: { id?: string; name: string; email?: string }[], spaceId?: string | null) =>
+    req<{ id: string }>('POST', '/rooms', { name, botIds, people, spaceId }),
   teams: () => req<TeamsResponse>('GET', '/rooms'),
   teamBrief: (id: string) => req<TeamBrief>('GET', `/rooms/${id}/brief`),
   setTeamBrief: (id: string, text: string) => req<TeamBrief>('PUT', `/rooms/${id}/brief`, { text }),

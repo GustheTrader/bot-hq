@@ -7,6 +7,7 @@ import { useConfigUI, useVersion, type BotSettingsTab } from '../../configStore'
 import { useStore } from '../../store';
 import { Icon } from '../Icon';
 import { Modal } from '../modals/Modal';
+import { SpaceSelect } from '../Spaces';
 import { Glyph } from './glyphs';
 import { ConfirmButton, Field, Segmented, Switch, nextRunLabel, shortDate } from './ui';
 
@@ -86,8 +87,8 @@ export function BotSettingsModal() {
 
 // ---------------------------------------------------------------------------
 
-type Draft = Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode'>;
-const draftOf = (b: Bot): Draft => ({ name: b.name, label: b.label, description: b.description, instructions: b.instructions, avatarShape: b.avatarShape, avatarColor: b.avatarColor, avatarImage: b.avatarImage ?? null, effort: b.effort, mode: b.mode });
+type Draft = Pick<Bot, 'name' | 'label' | 'description' | 'instructions' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'effort' | 'mode' | 'spaceId'>;
+const draftOf = (b: Bot): Draft => ({ name: b.name, label: b.label, description: b.description, instructions: b.instructions, avatarShape: b.avatarShape, avatarColor: b.avatarColor, avatarImage: b.avatarImage ?? null, effort: b.effort, mode: b.mode, spaceId: b.spaceId ?? null });
 
 async function importPortrait(file: File) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) {
@@ -182,6 +183,14 @@ function GeneralTab({ bot, onClose }: { bot: Bot; onClose: () => void }) {
           <input id="cfg-label" className="text-input" value={draft.label} maxLength={60} placeholder="Add a label" onChange={(e) => put('label', e.target.value)} />
         </Field>
       </section>
+
+      {!bot.isPrimary && (
+        <section className="cfg-section">
+          <Field label="Workspace" htmlFor="cfg-space" hint="The business or project it belongs to. Its own memory moves with it; the memory it shares changes to the new workspace's.">
+            <SpaceSelect id="cfg-space" value={draft.spaceId ?? null} onChange={(v) => put('spaceId', v)} />
+          </Field>
+        </section>
+      )}
 
       <section className="cfg-section">
         <Field label="About" htmlFor="cfg-about">

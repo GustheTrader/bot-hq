@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AvatarColor, Bot } from '@shared/types';
+import { portraitPreset } from '@shared/portraits';
 import { BotAvatarFor, PortraitPresets } from '../../avatar/BotAvatar';
 import { api, type PublicTemplate } from '../../lib/api';
 import { COLOR_ORDER, palette } from '../../lib/colors';
-import { useStore } from '../../store';
+import { newSpaceId, shownSpace, useStore } from '../../store';
+import { SpaceSelect } from '../Spaces';
 import { Icon } from '../Icon';
 import { Modal } from './Modal';
 
@@ -21,6 +23,9 @@ export function CreateBotModal() {
   const [templates, setTemplates] = useState<PublicTemplate[]>([]);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [spaceId, setSpaceId] = useState<string | null>(() => newSpaceId(shownSpace(useStore.getState())));
+  const spaces = useStore((s) => s.spaces);
+  const blankPortrait = `preset:${1 + peerCount % 5}`;
   const close = useCallback(() => setModal(null), [setModal]);
   const template = templates.find((t) => t.id === templateId) ?? null;
   // Technical roles first, then one group per business domain.
@@ -35,11 +40,27 @@ export function CreateBotModal() {
     api.botTemplates().then((r) => setTemplates(r.templates)).catch(() => setTemplates([]));
   }, []);
 
+  /** A business template asks for the business name: the chosen business workspace already has it. */
+  const prefill = (t: PublicTemplate | null, id: string | null): Record<string, string> => {
+    const space = spaces.find((s) => s.id === id && s.kind === 'business');
+    return space && t?.inputs.some((i) => i.key === 'company') ? { company: space.name } : {};
+  };
+
   const pickTemplate = (t: PublicTemplate | null) => {
+    // Picking what is already picked must not undo a portrait, colour or answers chosen since.
+    if ((t?.id ?? null) === templateId) return;
     setTemplateId(t?.id ?? null);
-    setInputs({});
+    setInputs(prefill(t, spaceId));
     setError(null);
     if (t) setColor(t.defaults.avatarColor);
+    setAvatarImage(t ? portraitPreset(t.portrait) : blankPortrait);
+  };
+
+  const pickSpace = (id: string | null) => {
+    // Replace a name that was filled in for the old workspace; keep one the person typed.
+    const old = prefill(template, spaceId).company;
+    setInputs((v) => (!v.company || v.company === old ? { ...v, company: prefill(template, id).company ?? '' } : v));
+    setSpaceId(id);
   };
 
   const missing = template ? template.inputs.filter((i) => i.required && !(inputs[i.key] ?? '').trim()) : [];
@@ -49,7 +70,7 @@ export function CreateBotModal() {
     if (!canCreate) return;
     setBusy(true); setError(null);
     try {
-      const base = { name: name.trim(), avatarShape: 'heart' as const, avatarColor: color, avatarImage, mode };
+      const base = { name: name.trim(), avatarShape: 'heart' as const, avatarColor: color, avatarImage, mode, spaceId };
       const { bot } = await api.createBot(template
         ? { ...base, template: template.id, inputs, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }
         : base);
@@ -71,18 +92,30 @@ export function CreateBotModal() {
           <button type="button" className="modal__close" onClick={close} aria-label="Close"><Icon name="close" size={14} opacity={0.68} /></button>
         </div>
         <div className="create-modal__body">
+          <label className="template-pick">
+            <span className="template-form__label">Workspace</span>
+            <SpaceSelect value={spaceId} onChange={pickSpace} />
+          </label>
           {templates.length > 0 && (
-            <label className="template-pick">
-              <span className="template-form__label">Start from</span>
-              <select className="text-input" value={templateId ?? ''} onChange={(e) => pickTemplate(templates.find((t) => t.id === e.target.value) ?? null)} aria-label="Start from">
-                <option value="">Blank: give it a job yourself</option>
-                {groups.map(([group, list]) => (
-                  <optgroup key={group} label={group}>
-                    {list.map((t) => <option key={t.id} value={t.id} disabled={t.missing.length > 0}>{t.title}{t.missing.length ? ` (needs ${t.missing.join(', ')})` : ''}</option>)}
-                  </optgroup>
-                ))}
-              </select>
-            </label>
+            <div className="template-gallery" role="radiogroup" aria-label="Start from">
+              <button type="button" role="radio" aria-checked={!templateId} className={`template-card template-card--blank${templateId ? '' : ' is-active'}`} onClick={() => pickTemplate(null)}>
+                Blank: give it a job yourself
+              </button>
+              {groups.map(([group, list]) => (
+                <div key={group} className="template-gallery__group">
+                  <span className="template-form__label">{group}</span>
+                  <div className="template-gallery__grid">
+                    {list.map((t) => (
+                      <button key={t.id} type="button" role="radio" aria-checked={templateId === t.id} disabled={t.missing.length > 0} className={`template-card${templateId === t.id ? ' is-active' : ''}`} onClick={() => pickTemplate(t)}>
+                        <BotAvatarFor bot={{ name: t.title, avatarShape: 'heart', avatarColor: t.defaults.avatarColor, avatarImage: portraitPreset(t.portrait) }} size={44} />
+                        <span className="template-card__title">{t.title}</span>
+                        {t.missing.length > 0 && <span className="template-card__missing">Needs {t.missing.join(', ')}</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
           <BotAvatarFor bot={{ name, avatarShape: 'heart', avatarColor: color, avatarImage }} size={96} className="create-modal__preview" />
           <input

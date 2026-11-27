@@ -4,6 +4,7 @@ import { hub } from './lib/hub.js';
 import { requireUser, type AuthVars } from './lib/auth.js';
 import { appendRow } from './store.js';
 import {
+  outsiders, teamSpace,
   addHuman,
   createTeam,
   listHumans,
@@ -16,6 +17,7 @@ import {
   teamMembers,
   type TeamRoleName,
 } from './agent/rooms.js';
+import { SpaceError, spaceIdFrom } from './spaces.js';
 
 /**
  * /api/teams: a channel that mixes Bots and people. A team is a bot row with kind='team';
@@ -50,14 +52,22 @@ roomsApi.get('/', (c) => {
  *  `people` are new teammates created inline (name + optional email). */
 roomsApi.post('/', async (c) => {
   const user = c.get('user');
-  const { name, botIds, humanIds, people, includeUser } = await c.req.json<{
-    name: string; botIds?: string[]; humanIds?: string[];
+  const { name, botIds, humanIds, people, includeUser, spaceId: rawSpace } = await c.req.json<{
+    name: string; botIds?: string[]; humanIds?: string[]; spaceId?: string | null;
     people?: { name: string; email?: string }[]; includeUser?: boolean;
   }>();
   const bots = [...new Set(botIds ?? [])].filter((id) => isBotMember(user.id, id));
   if (!name?.trim()) return c.json({ error: 'A team needs a name.' }, 400);
   if (bots.length < 1) return c.json({ error: 'A team needs at least one Bot.' }, 400);
+  let spaceId: string | null;
+  try { spaceId = rawSpace === undefined ? teamSpace(bots) : spaceIdFrom(user.id, rawSpace); } catch (e) {
+    if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
+  const mixed = outsiders(bots, spaceId);
+  if (mixed.length) return c.json({ error: `A team stays inside one workspace. Not in it: ${mixed.join(', ')}.` }, 409);
   const id = createTeam(user.id, name.trim(), {
+    spaceId,
     botIds: bots,
     humanIds: [...new Set(humanIds ?? [])].filter((id) => isHumanMember(user.id, id)),
     humans: people ?? [],
@@ -75,6 +85,8 @@ roomsApi.put('/:id/members', async (c) => {
   const bots = [...new Set(botIds ?? [])].filter((id) => isBotMember(user.id, id));
   const humans = [...new Set(humanIds ?? [])].filter((id) => isHumanMember(user.id, id));
   if (bots.length < 1) return c.json({ error: 'A team needs at least one Bot.' }, 400);
+  const mixed = outsiders(bots, team.space_id ?? null);
+  if (mixed.length) return c.json({ error: `A team stays inside one workspace. Not in it: ${mixed.join(', ')}.` }, 409);
   setTeamRoster(team.id, bots, humans);
   const after = teamMembers(team.id);
   const name = (m: { id: string; name: string }) => m.name;

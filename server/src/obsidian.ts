@@ -10,12 +10,14 @@ import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relatio
  * Bot memory and an Obsidian vault, both ways (OBSIDIAN_VAULT, off when unset):
  *
  *   <vault>/workspace/            people write here; bots learn it
- *     Shared/…                    → the `shared` bank (every bot)
+ *     Shared/…                    → the `shared` bank (every bot in General)
+ *     Workspaces/<workspace name>/… → that workspace's bank (matched by name, not id)
  *     Teams/<team name>/…         → that team's bank
  *     Bots/<bot name>/…           → that bot's own bank
  *   <vault>/Memory/               Bot HQ writes here; never read back
  *     Ontology.md
- *     Shared/, Teams/<team name>/, Bots/<bot name>/   each: 00 <name>.md + <type plural>/<entity>.md
+ *     Shared/, Workspaces/<workspace name>/, Teams/<team name>/, Bots/<bot name>/
+ *                                 each: 00 <name>.md + <type plural>/<entity>.md
  *
  * In: each changed note is saved to its bank as one document (its path's hash is the document id,
  * so an edit replaces the old version and a deleted note is forgotten). Its `type:` and link fields
@@ -27,7 +29,7 @@ import { ENTITY_TYPES, UNTYPED, entityTyper, initOntology, ontologyNote, relatio
  * is named `Memory` because the zo-vaults indexer already skips folders of that name.
  *
  * The vault belongs to one workspace (OBSIDIAN_WORKSPACE: an account id or email; by default the
- * only account that has bots). Only that account's bots, teams and `shared` are synced, and only
+ * only account that has bots). Only that account's bots, teams, workspaces and `shared` are synced, and only
  * that account (or its workspace members) can see the sync or start it.
  */
 
@@ -124,6 +126,31 @@ export function noteText(n: Note): string {
 
 // ---------- which bank a note goes to ----------
 
+/** Names that are left out of the sync (the zo-vaults rules: no hidden entries, nothing named "secret"). */
+const unsynced = (name: string) => name.startsWith('.') || /secret/i.test(name);
+/** SQLite's `lower()`: A to Z only. */
+const asciiLower = (s: string) => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+/** Whether a `Workspaces/<folder>` belongs to the workspace of this name. */
+export const folderMatches = (folder: string, name: string) => asciiLower(folder.trim()) === asciiLower(name.trim());
+
+/**
+ * The vault folder (`Workspaces/<name>`) holding notes of this account that sync into the workspace of that name,
+ * or null when there are none. A folder that cannot be read is an error, not an empty one.
+ */
+export function workspaceFolder(userId: string, name: string): string | null {
+  const vault = vaultPath();
+  const owner = vaultOwner();
+  if (!vault || !('id' in owner) || owner.id !== userId) return null;
+  const root = path.join(vault, 'workspace');
+  let entries: fs.Dirent[];
+  try { entries = fs.readdirSync(path.join(root, 'Workspaces'), { withFileTypes: true }); } catch (e: any) {
+    if (e?.code === 'ENOENT') return null;
+    throw new ObsidianError(`Could not read the vault folder workspace/Workspaces: ${e?.message ?? e}`);
+  }
+  const hit = entries.find((e) => e.isDirectory() && !unsynced(e.name) && folderMatches(e.name, name) && walk(root, `Workspaces/${e.name}`).files.length > 0);
+  return hit ? `workspace/Workspaces/${hit.name}` : null;
+}
+
 function bankByName(userId: string, kind: 'team' | 'agent', name: string): Bank | null | 'ambiguous' {
   const rows = db.prepare("SELECT id FROM bots WHERE user_id=? AND lower(name)=lower(?) AND COALESCE(kind,'agent')=? AND COALESCE(hidden,0)=0").all(userId, name.trim(), kind) as any[];
   if (rows.length > 1) return 'ambiguous';
@@ -134,12 +161,17 @@ function bankByName(userId: string, kind: 'team' | 'agent', name: string): Bank 
 export function routeNote(userId: string, rel: string): Bank | { skip: string } {
   const parts = rel.split('/');
   if (parts[0] === 'Shared' && parts.length > 1) return bankById(userId, SHARED)!;
+  if (parts[0] === 'Workspaces' && parts.length > 2) {
+    const s = (db.prepare('SELECT id, name FROM spaces WHERE user_id=? ORDER BY created_at').all(userId) as { id: string; name: string }[])
+      .find((x) => folderMatches(parts[1], x.name));
+    return (s && bankById(userId, s.id)) || { skip: `no workspace named "${parts[1]}"` };
+  }
   if ((parts[0] === 'Teams' || parts[0] === 'Bots') && parts.length > 2) {
     const b = bankByName(userId, parts[0] === 'Teams' ? 'team' : 'agent', parts[1]);
     if (b === 'ambiguous') return { skip: `more than one ${parts[0] === 'Teams' ? 'team' : 'bot'} is named "${parts[1]}"` };
     return b ?? { skip: `no ${parts[0] === 'Teams' ? 'team' : 'bot'} named "${parts[1]}"` };
   }
-  return { skip: 'not under Shared/, Teams/<team>/ or Bots/<bot>/' };
+  return { skip: 'not under Shared/, Workspaces/<workspace>/, Teams/<team>/ or Bots/<bot>/' };
 }
 
 /**
@@ -155,7 +187,7 @@ function walk(root: string, dir = '', acc = { files: [] as string[], truncated: 
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of entries) {
     if (acc.files.length >= MAX_NOTES) { acc.truncated = true; break; }
-    if (e.name.startsWith('.') || /secret/i.test(e.name)) continue; // the zo-vaults rules: no hidden entries, nothing named "secret"
+    if (unsynced(e.name)) continue;
     const rel = dir ? `${dir}/${e.name}` : e.name;
     if (e.isDirectory()) walk(root, rel, acc);
     else if (e.isFile() && e.name.endsWith('.md')) acc.files.push(rel);
@@ -401,8 +433,9 @@ export async function exportBanks(vault: string, userId: string, banks: Bank[], 
 
   for (const bank of banks) {
     // Same names as the workspace folders: Memory/Shared, Memory/Teams/<team>, Memory/Bots/<bot>.
-    const label = bank.layer === 'everyone' ? 'Shared' : bank.label.replace(/ \(own\)$/, '').replace(/^Team /, '');
-    const folder = bank.layer === 'everyone' ? 'Memory/Shared' : `Memory/${LAYER_DIRS[bank.layer]}/${safeName(label)}`;
+    const ofSpace = bank.layer === 'everyone' && bank.id !== SHARED;
+    const label = ofSpace ? bank.label.replace(/^Everyone at /, '') : bank.layer === 'everyone' ? 'Shared' : bank.label.replace(/ \(own\)$/, '').replace(/^Team /, '');
+    const folder = ofSpace ? `Memory/Workspaces/${safeName(label)}` : bank.layer === 'everyone' ? 'Memory/Shared' : `Memory/${LAYER_DIRS[bank.layer]}/${safeName(label)}`;
     const raw = await memoryGraph(bank.id, opts.limit ?? 250, opts.fetchFn);
     const kept = raw.nodes.filter((n) => !ignore.has(n.label.toLowerCase()));
     const keep = new Set(kept.map((n) => n.id));
@@ -501,7 +534,8 @@ export function syncStatus(userId: string): SyncStatus {
 /** Shared plus each of the account's bots and teams whose bank has facts. */
 async function exportable(userId: string): Promise<Bank[]> {
   const live = new Map((await listBanks()).map((b) => [b.id, b.facts]));
-  const ids = [SHARED, ...(db.prepare("SELECT id FROM bots WHERE user_id=? AND COALESCE(hidden,0)=0 ORDER BY created_at").all(userId) as any[]).map((r) => r.id as string)];
+  const spaces = (db.prepare('SELECT id FROM spaces WHERE user_id=? ORDER BY created_at').all(userId) as any[]).map((r) => r.id as string);
+  const ids = [SHARED, ...spaces, ...(db.prepare("SELECT id FROM bots WHERE user_id=? AND COALESCE(hidden,0)=0 ORDER BY created_at").all(userId) as any[]).map((r) => r.id as string)];
   return ids.filter((id) => (live.get(id) ?? 0) > 0).map((id) => bankById(userId, id)).filter((b): b is Bank => !!b);
 }
 
