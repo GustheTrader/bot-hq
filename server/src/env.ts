@@ -62,6 +62,8 @@ export const env = {
   enginePortBase: Number(process.env.ENGINE_PORT_BASE ?? 8650),
   /** URL the Hermes gateways use to reach this server's MCP endpoint. */
   mcpBaseUrl: (process.env.MCP_BASE_URL ?? `http://127.0.0.1:${process.env.PORT ?? 8787}`).replace(/\/+$/, ''),
+  /** Firecrawl key for the bots' web_search / web_read tools. Empty = those tools are not offered. */
+  firecrawlKey: (process.env.FIRECRAWL_API_KEY ?? '').trim(),
   /** Code Mode executor (codemode/ Worker): bots with Code Mode on run scripts there. Empty = Code Mode unavailable. */
   codemodeUrl: (process.env.CODEMODE_URL ?? '').replace(/\/+$/, ''),
   /** Shared secret for the executor, from CODEMODE_SECRET or the file CODEMODE_SECRET_FILE. */
