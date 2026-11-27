@@ -470,10 +470,10 @@ export async function primaryProviderAuth(): Promise<Record<string, boolean> | n
   return Object.fromEntries(list.filter((p) => p?.slug).map((p) => [String(p.slug), !!p.authenticated]));
 }
 
-function toProviders(data: any): EngineProvider[] {
+export function toProviders(data: any): EngineProvider[] {
   const list: any[] = Array.isArray(data?.providers) ? data.providers : [];
   const out = list
-    .filter((p) => p?.slug && (p.authenticated || WELL_KNOWN.includes(p.slug)))
+    .filter((p) => p?.slug && !env.hiddenProviders.includes(String(p.slug).toLowerCase()) && (p.authenticated || WELL_KNOWN.includes(p.slug)))
     .map((p): EngineProvider => {
       // Every model the provider offers, its featured ones first, so the panel can list them all.
       const all = [...(Array.isArray(p.featured_models) ? p.featured_models : []), ...(Array.isArray(p.models) ? p.models : [])];

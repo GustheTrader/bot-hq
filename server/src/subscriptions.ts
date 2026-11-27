@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { primaryProviderAuth } from './engine.js';
+import { env } from './env.js';
 import type { Subscription } from './types.js';
 
 /**
@@ -49,7 +50,7 @@ export async function listSubscriptions(): Promise<Subscription[]> {
   // Pi keeps one entry per provider it has a key or login for.
   const pi = readJson(path.join(piDir(), 'auth.json')) ?? {};
 
-  return [
+  const rows: Subscription[] = [
     {
       id: 'openai',
       name: 'ChatGPT',
@@ -92,4 +93,6 @@ export async function listSubscriptions(): Promise<Subscription[]> {
       ],
     },
   ];
+  // Connections turned off on this server (HIDDEN_PROVIDERS) are not shown.
+  return rows.filter((r) => !env.hiddenProviders.includes(r.id));
 }

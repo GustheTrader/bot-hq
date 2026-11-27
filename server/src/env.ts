@@ -70,6 +70,13 @@ export const env = {
   ninerouterUrl: (process.env.NINEROUTER_URL ?? '').replace(/\/+$/, ''),
   ninerouterPasswordFile: process.env.NINEROUTER_PASSWORD_FILE ?? '',
   ninerouterKeyFile: process.env.NINEROUTER_KEY_FILE ?? '',
+  /**
+   * Model connections to keep out of the bots' choices (comma lists), e.g. ones a live check found dead.
+   * HIDDEN_PROVIDERS: Hermes provider ids, hidden from every Engine panel and from Subscriptions ('xai' hides Grok).
+   * HIDDEN_HARNESSES: harness ids, hidden from the harness picker and refused when picked.
+   */
+  hiddenProviders: (process.env.HIDDEN_PROVIDERS ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+  hiddenHarnesses: (process.env.HIDDEN_HARNESSES ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
   /** Extra MCP servers every managed bot gets, as a JSON object of Hermes `mcp_servers` entries (e.g. X's XMCP). */
   extraMcpServers: process.env.EXTRA_MCP_SERVERS ?? '',
   primaryBotName: process.env.PRIMARY_BOT_NAME ?? 'Doug',
