@@ -22,7 +22,7 @@ function sortProviders(list: EngineProvider[]): EngineProvider[] {
  * down, the section says so and the rest of the panel is unaffected.
  */
 /** Display names for when the harness list has not loaded yet. */
-const HARNESS_NAMES: Record<string, string> = { hermes: 'Hermes', codex: 'Codex', 'claude-code': 'Claude Code', pi: 'Pi', opencode: 'OpenCode' };
+const HARNESS_NAMES: Record<string, string> = { hermes: 'Hermes', codex: 'Codex', 'claude-code': 'Claude Code', pi: 'Pi', opencode: 'OpenCode', deepseek: 'DeepSeek Harness' };
 
 export function EngineSettings({ bot }: { bot: Bot }) {
   const viewerOpen = useStore((s) => s.viewerOpen);
@@ -248,6 +248,8 @@ export function EngineSettings({ bot }: { bot: Bot }) {
           <Icon name="chev_down" size={10} opacity={0.66} />
           {/* Until the list loads, only the current harness is offered and the picker stays shut. */}
           <select aria-label="Harness" value={harness} disabled={busy === 'harness' || !harnesses.length} onChange={(e) => pickHarness(e.target.value)}>
+            {/* The current harness always has an option, even when the server turned it off: the bot keeps it, but can't come back once it leaves. */}
+            {harnesses.length > 0 && !harnesses.some((h) => h.id === harness) && <option value={harness} disabled>{HARNESS_NAMES[harness] ?? harness} · Turned off</option>}
             {(harnesses.length ? harnesses : [{ id: harness, name: HARNESS_NAMES[harness] ?? harness, subscription: '', installed: true }]).map((h) => (
               <option key={h.id} value={h.id} disabled={!h.installed}>{h.name}{h.installed ? '' : ' · Not installed'}</option>
             ))}
