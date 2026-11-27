@@ -29,6 +29,18 @@ export const HARNESSES: HarnessDef[] = [
 
 export const isHarnessId = (v: unknown): v is HarnessId => HARNESSES.some((h) => h.id === v);
 
+/** Turned off on this server (HIDDEN_HARNESSES): not offered in the picker, and no bot may switch to it. */
+export const harnessHidden = (id: string) => env.hiddenHarnesses.includes(id.trim().toLowerCase());
+
+/** The harnesses the picker offers. */
+export const visibleHarnesses = () => HARNESSES.filter((h) => !harnessHidden(h.id));
+
+/** Why a bot on `current` may not switch to `next`, or null when it may. Staying on a hidden harness is allowed. */
+export function harnessSwitchRefusal(current: string, next: HarnessId): string | null {
+  if (next === current || !harnessHidden(next)) return null;
+  return `${HARNESSES.find((h) => h.id === next)!.name} is turned off on this server.`;
+}
+
 const installed = new Map<string, boolean>();
 /** Whether the harness's program is on this machine (Hermes always is: it runs the bots). */
 export function harnessInstalled(h: HarnessDef): boolean {

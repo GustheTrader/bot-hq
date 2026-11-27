@@ -18,7 +18,7 @@ import { cancelClaudeLogin, finishClaudeLogin, startClaudeLogin } from './engine
 import { idleConfig, viewerCount } from './idle.js';
 import { listSubscriptions } from './subscriptions.js';
 import { addRouterKey, isRouterFeature, removeRouterKey, ROUTER_EXCLUDED, ROUTER_FEATURES, ROUTER_MODELS, ROUTER_PROVIDERS, routerStatus, RouterUserError, setRouterFeature, testModel } from './ninerouter.js';
-import { HARNESSES, harnessInstalled, harnessModels, isHarnessId, stopHarness } from './harness.js';
+import { HARNESSES, harnessInstalled, harnessSwitchRefusal, visibleHarnesses, harnessModels, isHarnessId, stopHarness } from './harness.js';
 import { interrupt } from './agent/loop.js';
 import { checkBot } from './engine-check.js';
 import type { LibraryFile, Skill } from './types.js';
@@ -130,7 +130,7 @@ configApi.get('/bots/:id/engine', async (c) => {
 
 /** Which model this bot's turns ask for. Empty values go back to the agent's own default. */
 /** The agent programs a bot can run on, and whether each is installed on the computer. */
-configApi.get('/harnesses', requireUser, (c) => c.json({ harnesses: HARNESSES.filter((h) => !env.hiddenHarnesses.includes(h.id)).map((h) => ({ id: h.id, name: h.name, subscription: h.subscription, installed: box.local && harnessInstalled(h) })) }));
+configApi.get('/harnesses', requireUser, (c) => c.json({ harnesses: visibleHarnesses().map((h) => ({ id: h.id, name: h.name, subscription: h.subscription, installed: box.local && harnessInstalled(h) })) }));
 
 configApi.patch('/bots/:id/harness', async (c) => {
   const b = ownBot(c.get('user').id, c.req.param('id'));
@@ -139,7 +139,8 @@ configApi.patch('/bots/:id/harness', async (c) => {
   const harness = p.harness ?? b.harness ?? 'hermes';
   if (!isHarnessId(harness)) return c.json({ error: 'unknown harness' }, 400);
   const def = HARNESSES.find((h) => h.id === harness)!;
-  if (harness !== (b.harness ?? 'hermes') && env.hiddenHarnesses.includes(harness)) return c.json({ error: `${def.name} is turned off on this server.` }, 409);
+  const refusal = harnessSwitchRefusal(b.harness ?? 'hermes', harness);
+  if (refusal) return c.json({ error: refusal }, 409);
   if (!box.local || !harnessInstalled(def)) return c.json({ error: `${def.name} is not installed on the computer.` }, 409);
   const switching = harness !== (b.harness ?? 'hermes');
   // A model belongs to its harness: switching starts from the new one's default unless a model comes with it.

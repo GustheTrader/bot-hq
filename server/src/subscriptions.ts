@@ -33,6 +33,14 @@ function planName(p: unknown): string | null {
 /** Pi's own folder: PI_CODING_AGENT_DIR when set, else ~/.pi/agent. */
 const piDir = () => process.env.PI_CODING_AGENT_DIR || path.join(home, '.pi', 'agent');
 
+/** The Hermes provider ids each Subscriptions row stands for: hiding any one of them hides the row. */
+const ROW_PROVIDERS: Record<string, string[]> = {
+  openai: ['openai', 'openai-codex'],
+  anthropic: ['anthropic'],
+  xai: ['xai', 'xai-oauth'],
+  'ollama-cloud': ['ollama-cloud'],
+};
+
 export async function listSubscriptions(): Promise<Subscription[]> {
   const auth = await primaryProviderAuth();
   // Hermes here is the main agent; null when it does not answer, so its rows read "could not tell", not "signed out".
@@ -94,5 +102,5 @@ export async function listSubscriptions(): Promise<Subscription[]> {
     },
   ];
   // Connections turned off on this server (HIDDEN_PROVIDERS) are not shown.
-  return rows.filter((r) => !env.hiddenProviders.includes(r.id));
+  return rows.filter((r) => !(ROW_PROVIDERS[r.id] ?? [r.id]).some((id) => env.hiddenProviders.includes(id)));
 }
