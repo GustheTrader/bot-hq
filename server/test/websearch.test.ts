@@ -32,6 +32,18 @@ test('search sends the key, a site filter and a recency filter, and lists hits',
   assert.doesNotMatch(out.output, /no link/);
 });
 
+test('Google redirect links: plain ones are unwrapped, encoded ones are dropped', async () => {
+  assert.equal(web.unwrapLink('https://www.google.com/url?q=https://reno.craigslist.org/x/2.html&sa=U'), 'https://reno.craigslist.org/x/2.html');
+  assert.equal(web.unwrapLink('https://www.google.com/goto?url=CAESowEBxCJF1wo1&gsessionid=abc'), null);
+  assert.equal(web.unwrapLink('https://www.reddit.com/r/Reno/comments/1'), 'https://www.reddit.com/r/Reno/comments/1');
+  reply = { status: 200, body: { success: true, data: [
+    { title: 'Encoded', url: 'https://www.google.com/goto?url=CAESkQEB&gsessionid=x' },
+    { title: 'Plain', url: 'https://www.google.com/url?q=https://www.reddit.com/r/Reno/comments/9' },
+  ] } };
+  const hits = await web.webSearch({ query: 'gazebo' });
+  assert.deepEqual(hits.map((h) => [h.title, h.url]), [['Plain', 'https://www.reddit.com/r/Reno/comments/9']]);
+});
+
 test('a junk site value is ignored rather than sent', async () => {
   reply = { status: 200, body: { success: true, data: [] } };
   const out = await toolMap.get('web_search')!.impl({ query: 'handyman', site: 'not a site' }, {} as any);

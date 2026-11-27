@@ -38,6 +38,21 @@ async function call(path: string, body: unknown, timeoutMs: number): Promise<any
 
 export type SearchHit = { title: string; url: string; snippet: string };
 
+/**
+ * Firecrawl sometimes returns Google redirect links instead of the page. A plain `?q=`/`?url=` one is unwrapped.
+ * An encoded one (google.com/goto?url=CAES...) hides its target and can't be read either, so it is dropped (null).
+ */
+export function unwrapLink(raw: string): string | null {
+  let u: URL;
+  try { u = new URL(raw); } catch { return raw; }
+  if (!/(^|\.)google\.[a-z.]+$/i.test(u.hostname) || !/^\/(url|goto)$/.test(u.pathname)) return raw;
+  for (const k of ['q', 'url']) {
+    const v = u.searchParams.get(k) ?? '';
+    if (/^https?:\/\//i.test(v)) return v;
+  }
+  return null;
+}
+
 /** Search the web. `recent` limits results to the last day/week/month/year; `site` keeps them to one site. */
 export async function webSearch(a: { query: string; limit?: number; recent?: string; site?: string }): Promise<SearchHit[]> {
   const q = String(a.query ?? '').trim();
@@ -50,11 +65,12 @@ export async function webSearch(a: { query: string; limit?: number; recent?: str
   const tbs = RECENT[String(a.recent ?? '').toLowerCase()];
   if (tbs) body.tbs = tbs;
   const data = await call('/search', body, 60_000);
-  return (Array.isArray(data?.data) ? data.data : []).map((h: any) => ({
-    title: String(h.title ?? ''),
-    url: String(h.url ?? ''),
-    snippet: String(h.description ?? '').slice(0, 400),
-  })).filter((h: SearchHit) => h.url);
+  const hits: SearchHit[] = [];
+  for (const h of Array.isArray(data?.data) ? data.data : []) {
+    const url = h?.url ? unwrapLink(String(h.url)) : null;
+    if (url) hits.push({ title: String(h.title ?? ''), url, snippet: String(h.description ?? '').slice(0, 400) });
+  }
+  return hits;
 }
 
 /** Read one page as text (markdown), cut to a size an agent can use. */
