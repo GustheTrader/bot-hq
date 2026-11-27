@@ -36,13 +36,15 @@ export function hasOpenLicense(dir: string): boolean {
   try { names = fs.readdirSync(dir); } catch { return false; }
   for (const n of names) {
     if (!/^licen[cs]e(\.(txt|md))?$/i.test(n)) continue;
+    let fd: number | null = null;
     try {
-      const fd = fs.openSync(path.join(dir, n), 'r');
+      fd = fs.openSync(path.join(dir, n), 'r');
       const buf = Buffer.alloc(2048);
       const len = fs.readSync(fd, buf, 0, buf.length, 0);
-      fs.closeSync(fd);
       if (OPEN_LICENSE.test(buf.subarray(0, len).toString('utf8'))) return true;
-    } catch { /* unreadable: not a license */ }
+    } catch { /* unreadable (or a folder named LICENSE): not a license */ } finally {
+      if (fd !== null) try { fs.closeSync(fd); } catch { /* already gone */ }
+    }
   }
   return false;
 }
@@ -83,6 +85,8 @@ function walk(root: string, source: SkillSource, out: LibrarySkill[]) {
       try { size = fs.statSync(path.join(dir, 'SKILL.md')).size; } catch { return; }
       if (size <= MAX_FILE) {
         const rel = path.relative(root, dir).split(path.sep).join('/');
+        // A folder name an id can't carry (a space, say) could be listed but never read: leave it out.
+        if (!ID.test(`${source}:${rel}`)) return;
         let head = { name: '', description: '' };
         try {
           const p = parseSkillFile(fs.readFileSync(path.join(dir, 'SKILL.md'), 'utf8'));
@@ -176,9 +180,11 @@ export function skillFiles(id: string, roots: SkillRoots = defaultRoots()): { di
   const files: string[] = [];
   let more = false;
   const visit = (dir: string, depth: number) => {
+    if (more) return; // the cap was hit: stop the whole walk, not just this folder
     let entries: fs.Dirent[];
     try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
     for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (more) return;
       if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === '__pycache__') continue;
       const full = path.join(dir, e.name);
       if (e.isFile() && !(depth === 0 && e.name === 'SKILL.md')) {

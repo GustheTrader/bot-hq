@@ -322,7 +322,7 @@ export interface ProjectSkill { id: string; projectId: string; name: string; des
 /** Where a library skill lives: Zo's workspace Skills folder, the primary Hermes agent's skills, or Anthropic's public skills. */
 export type SkillSource = 'zo' | 'hermes' | 'anthropic';
 
-/** A skill that already exists on the computer (read-only). `id` is the only handle: `zo:<folder>` or `hermes:<category>/<folder>`. */
+/** A skill that already exists on the computer (read-only). `id` is the only handle: `zo:<folder>`, `hermes:<category>/<folder>` or `anthropic:<folder>`. */
 export interface LibrarySkill {
   id: string;
   source: SkillSource;

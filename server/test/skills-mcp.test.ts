@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,6 +19,11 @@ write(path.join(anth, 'mit-one/SKILL.md'), '---\nname: mit-one\ndescription: An 
 write(path.join(anth, 'mit-one/LICENSE'), 'MIT License\n\nCopyright');
 write(path.join(anth, 'closed/SKILL.md'), '---\nname: closed\ndescription: Source-available only.\n---\nx\n');
 write(path.join(anth, 'closed/LICENSE.txt'), '© Anthropic. All rights reserved. Proprietary.');
+write(path.join(anth, 'dir-license/SKILL.md'), '---\nname: dir-license\n---\nx\n');
+fs.mkdirSync(path.join(anth, 'dir-license/LICENSE'), { recursive: true });
+write(path.join(zo, 'has space/SKILL.md'), '---\nname: spaced\ndescription: Folder name an id cannot carry.\n---\nx\n');
+for (let i = 0; i < 40; i++) { write(path.join(zo, `many/a/f${String(i).padStart(2, '0')}.txt`), 'x'); write(path.join(zo, `many/b/g${String(i).padStart(2, '0')}.txt`), 'x'); }
+write(path.join(zo, 'many/SKILL.md'), '---\nname: many\n---\nx\n');
 write(path.join(anth, 'no-license/SKILL.md'), '---\nname: no-license\ndescription: No license file.\n---\nx\n');
 
 process.env.XAI_API_KEY = 'test'; process.env.COMPOSIO_API_KEY = 'test'; process.env.SESSION_SECRET = 'test'; process.env.COMPUTER_PROVIDER = 'local';
@@ -32,6 +37,8 @@ const L = await import('../src/skill-library.js');
 const { toolMap } = await import('../src/agent/tools.js');
 const { mcpApi, skillIdFor, skillUri } = await import('../src/mcp.js');
 const { mcpToken } = await import('../src/engine.js');
+
+after(() => { try { fs.rmSync(base, { recursive: true, force: true }); } catch { /* the DB may still be open on Windows */ } });
 
 const user = 'u-sk';
 db.prepare('INSERT INTO users(id,email,name,created_at) VALUES (?,?,?,?)').run(user, `${user}@example.com`, user, now());
@@ -53,6 +60,8 @@ test('Anthropic skills are listed only with an Apache or MIT license file', () =
   assert.ok(ids.includes('anthropic:mit-one'));
   assert.ok(!ids.includes('anthropic:closed'), 'a proprietary license is left out');
   assert.ok(!ids.includes('anthropic:no-license'), 'no license file is left out');
+  assert.ok(!ids.includes('anthropic:dir-license'), 'a folder named LICENSE is not a license');
+  assert.ok(!ids.some((i) => i.includes('space')), 'a folder name an id cannot carry is not listed');
   assert.ok(ids.includes('zo:web-scraper') && ids.includes('hermes:research/arxiv'), 'Zo and Hermes skills need no license file');
   assert.throws(() => L.readLibrarySkill('anthropic:closed'), /Unknown skill/, 'and cannot be read by naming it');
 });
@@ -65,12 +74,12 @@ test('the old two-folder roots still work (Anthropic folder optional)', () => {
 
 test('skills_list filters by words and by source', async () => {
   const all = await toolMap.get('skills_list')!.impl({}, {} as any);
-  assert.match(all.output, /^4 skills\./);
+  assert.match(all.output, /^5 skills\./);
   const pdf = await toolMap.get('skills_list')!.impl({ query: 'PDF files' }, {} as any);
   assert.match(pdf.output, /anthropic:pdf — pdf: Read, fill and make PDF files\./);
   assert.doesNotMatch(pdf.output, /web-scraper/);
   const zoOnly = await toolMap.get('skills_list')!.impl({ source: 'zo' }, {} as any);
-  assert.match(zoOnly.output, /^1 skills\./);
+  assert.match(zoOnly.output, /^2 skills\./);
   const none = await toolMap.get('skills_list')!.impl({ query: 'zzz' }, {} as any);
   assert.match(none.output, /No skill matches/);
 });
@@ -83,7 +92,9 @@ test('skill_read gives the instructions, the folder and its files (no hidden one
   assert.doesNotMatch(r.output, /SKILL\.md\n/, 'SKILL.md itself is not listed as a file');
   const long = await toolMap.get('skill_read')!.impl({ id: 'anthropic:pdf' }, {} as any);
   assert.match(long.output, /\[Cut: the instructions are longer/);
-  await assert.rejects(toolMap.get('skill_read')!.impl({ id: 'zo:../../etc' }, {} as any), /Unknown skill/);
+  const bad = await toolMap.get('skill_read')!.impl({ id: 'zo:../../etc' }, {} as any);
+  assert.equal(bad.summary, 'Skill request refused');
+  assert.match(JSON.parse(bad.output).error, /Unknown skill.*skills_list/);
 });
 
 test('skill:// addresses map to ids and back', () => {
@@ -104,11 +115,20 @@ test('over MCP: resources are offered, listed and read; unknown ones are not fou
   assert.match(read.result.contents[0].text, /^---\nname: arxiv\ndescription: "Search papers\."\n---\n\nUse the API\./);
   assert.equal((await rpc('resources/read', { uri: 'skill://anthropic/closed' })).error.code, -32002);
   assert.equal((await rpc('resources/read', { uri: 'skill://zo/../../x' })).error.code, -32002);
+  const whole = await rpc('resources/read', { uri: 'skill://anthropic/pdf' });
+  assert.ok(whole.result.contents[0].text.length > 60_000, 'a long skill is read whole, not cut');
   const tpl = await rpc('resources/templates/list');
-  assert.equal(tpl.result.resourceTemplates[0].uriTemplate, 'skill://{source}/{path}');
+  assert.equal(tpl.result.resourceTemplates[0].uriTemplate, 'skill://{source}/{+path}');
 });
 
 test('over MCP: the skill tools are callable like any other tool', async () => {
   const r = await rpc('tools/call', { name: 'skills_list', arguments: { query: 'arxiv' } });
   assert.match(r.result.content[0].text, /hermes:research\/arxiv/);
+});
+
+test('a skill with many files lists 60 and says there are more', () => {
+  const f = L.skillFiles('zo:many');
+  assert.equal(f.files.length, 60);
+  assert.equal(f.more, true);
+  assert.ok(f.files.every((x) => !x.includes(`${path.sep}b${path.sep}g2`)), 'the walk stops at the cap instead of reading on');
 });

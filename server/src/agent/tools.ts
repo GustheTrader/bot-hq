@@ -17,7 +17,7 @@ import { bf, BuildflowError, buildflowEnabled } from '../buildflow.js';
 import { formatRecall, MemoryBankError, pickBanks, recall, retain } from '../memory-banks.js';
 import { crmConfig, listLeads, setupCrm, upsertLeads } from '../leads-crm.js';
 import { webRead, webSearch, webSearchEnabled } from '../websearch.js';
-import { listLibrarySkills, readLibrarySkill, skillFiles } from '../skill-library.js';
+import { listLibrarySkills, readLibrarySkill, skillFiles, SkillError } from '../skill-library.js';
 
 export interface ToolCtx {
   userId: string;
@@ -232,6 +232,7 @@ const WEB_TOOLS: ToolDef[] = [
 
 /** The skills on the computer (Zo, Hermes, Anthropic), for every bot whatever runs it: list first, then read one. */
 const SKILL_READ_MAX = 40_000;
+const SKILL_LIST_MAX = 30_000;
 const SKILL_TOOLS: ToolDef[] = [
   {
     name: 'skills_list',
@@ -247,7 +248,9 @@ const SKILL_TOOLS: ToolDef[] = [
       const hits = listLibrarySkills().filter((s) => (!a.source || s.source === a.source)
         && words.every((w) => `${s.id} ${s.name} ${s.description} ${s.category}`.toLowerCase().includes(w)));
       if (!hits.length) return { output: words.length ? 'No skill matches. Try fewer or other words, or no query for the full list.' : 'No skills on this computer.', summary: 'No skills found' };
-      return { output: `${hits.length} skills. Load one with skill_read(id).\n\n` + hits.map((s) => `${s.id} — ${s.name}${s.description ? `: ${s.description}` : ''}`).join('\n'), summary: `Found ${hits.length} skills` };
+      const list = hits.map((s) => `${s.id} — ${s.name}${s.description ? `: ${s.description}` : ''}`).join('\n');
+      const capped = list.length > SKILL_LIST_MAX ? `${list.slice(0, SKILL_LIST_MAX)}\n[Cut: more skills than fit; narrow it with query or source.]` : list;
+      return { output: `${hits.length} skills. Load one with skill_read(id).\n\n${capped}`, summary: `Found ${hits.length} skills` };
     },
   },
   {
@@ -257,7 +260,11 @@ const SKILL_TOOLS: ToolDef[] = [
     activity: 'working',
     label: 'Reading a skill',
     impl: async (a) => {
-      const s = readLibrarySkill(String(a.id ?? ''), undefined, SKILL_READ_MAX);
+      let s: ReturnType<typeof readLibrarySkill>;
+      try { s = readLibrarySkill(String(a.id ?? ''), undefined, SKILL_READ_MAX); } catch (e) {
+        if (e instanceof SkillError) return { output: JSON.stringify({ error: `${e.message}. Use skills_list for the ids.` }), summary: 'Skill request refused' };
+        throw e;
+      }
       const f = skillFiles(s.id);
       const files = f.files.length
         ? `\n\n---\nSkill folder: ${f.dir}\nFiles in it (paths in the instructions are relative to this folder):\n${f.files.map((x) => `- ${x}`).join('\n')}${f.more ? '\n- (more files not listed)' : ''}`
