@@ -1,6 +1,6 @@
 # Bot HQ — Memory: layers, ontology, Obsidian
 
-Status: built on branch `claude/memory-banks`, not deployed. Nothing changes on Zo until the server is redeployed, and the Obsidian sync stays off until `OBSIDIAN_VAULT` is set.
+Status: merged to main — the banks, ontology and Obsidian sync in #43, a workspace's own bank in #46. A running deployment picks it up only when its server is redeployed, so a box on an older build has none of it. The Obsidian sync stays off until `OBSIDIAN_VAULT` is set. Team banks are created on a team's first save and have not been exercised end-to-end yet.
 
 ## Three layers, one bank each
 
