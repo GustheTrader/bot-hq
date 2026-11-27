@@ -122,7 +122,6 @@ async function runTool(botId: string, userId: string, name: string, args: any, r
 
 const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 
-/** Answer one JSON-RPC message; null for notifications (they get no answer). */
 /** skill://<source>/<path> for a library skill id <source>:<path>, and back. */
 export const skillUri = (skillId: string) => `skill://${skillId.replace(':', '/')}`;
 export function skillIdFor(uri: string): string | null {
@@ -133,6 +132,7 @@ function skillResources() {
   return listLibrarySkills().map((s) => ({ uri: skillUri(s.id), name: s.id, title: s.name, description: s.description || undefined, mimeType: 'text/markdown' }));
 }
 
+/** Answer one JSON-RPC message; null for notifications (they get no answer). */
 async function handle(msg: any, botId: string | null): Promise<object | null> {
   if (!msg || typeof msg !== 'object' || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') {
     // A response to something we never asked; nothing to do with it.
@@ -167,18 +167,20 @@ async function handle(msg: any, botId: string | null): Promise<object | null> {
     case 'resources/list':
       return { jsonrpc: '2.0', id, result: { resources: skillResources() } };
     case 'resources/templates/list':
-      return { jsonrpc: '2.0', id, result: { resourceTemplates: [{ uriTemplate: 'skill://{source}/{path}', name: 'skill', title: 'A skill', description: 'The instructions of one skill. source is zo, hermes or anthropic.', mimeType: 'text/markdown' }] } };
+      return { jsonrpc: '2.0', id, result: { resourceTemplates: [{ uriTemplate: 'skill://{source}/{+path}', name: 'skill', title: 'A skill', description: 'The instructions of one skill. source is zo, hermes or anthropic.', mimeType: 'text/markdown' }] } };
     case 'resources/read': {
       const uri = String(params?.uri ?? '');
       const skillId = skillIdFor(uri);
       if (!skillId) return rpcError(id, -32002, `Resource not found: ${uri.slice(0, 120)}`);
       try {
-        const sk = readLibrarySkill(skillId, undefined, 200_000);
+        // The whole skill: SKILL.md files over 256 KiB are never listed, so that already bounds it.
+        const sk = readLibrarySkill(skillId, undefined, Infinity);
         const text = `---\nname: ${sk.name}\ndescription: ${JSON.stringify(sk.description)}\n---\n\n${sk.body}`;
         return { jsonrpc: '2.0', id, result: { contents: [{ uri, mimeType: 'text/markdown', text }] } };
       } catch (e) {
-        if (e instanceof SkillError) return rpcError(id, -32002, `Resource not found: ${uri.slice(0, 120)}`);
-        throw e;
+        // Unknown, or unreadable / removed since it was listed: either way it is not there to read.
+        if (!(e instanceof SkillError)) console.warn('[mcp] skill read failed', skillId, (e as Error)?.message ?? e);
+        return rpcError(id, -32002, `Resource not found: ${uri.slice(0, 120)}`);
       }
     }
     case 'prompts/list':
