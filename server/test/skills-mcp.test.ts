@@ -19,24 +19,11 @@ write(path.join(anth, 'mit-one/SKILL.md'), '---\nname: mit-one\ndescription: An 
 write(path.join(anth, 'mit-one/LICENSE'), 'MIT License\n\nCopyright');
 write(path.join(anth, 'closed/SKILL.md'), '---\nname: closed\ndescription: Source-available only.\n---\nx\n');
 write(path.join(anth, 'closed/LICENSE.txt'), '© Anthropic. All rights reserved. Proprietary.');
-write(path.join(anth, 'dir-license/SKILL.md'), '---
-name: dir-license
----
-x
-');
+write(path.join(anth, 'dir-license/SKILL.md'), '---\nname: dir-license\n---\nx\n');
 fs.mkdirSync(path.join(anth, 'dir-license/LICENSE'), { recursive: true });
-write(path.join(zo, 'has space/SKILL.md'), '---
-name: spaced
-description: Folder name an id cannot carry.
----
-x
-');
+write(path.join(zo, 'has space/SKILL.md'), '---\nname: spaced\ndescription: Folder name an id cannot carry.\n---\nx\n');
 for (let i = 0; i < 40; i++) { write(path.join(zo, `many/a/f${String(i).padStart(2, '0')}.txt`), 'x'); write(path.join(zo, `many/b/g${String(i).padStart(2, '0')}.txt`), 'x'); }
-write(path.join(zo, 'many/SKILL.md'), '---
-name: many
----
-x
-');
+write(path.join(zo, 'many/SKILL.md'), '---\nname: many\n---\nx\n');
 write(path.join(anth, 'no-license/SKILL.md'), '---\nname: no-license\ndescription: No license file.\n---\nx\n');
 
 process.env.XAI_API_KEY = 'test'; process.env.COMPOSIO_API_KEY = 'test'; process.env.SESSION_SECRET = 'test'; process.env.COMPUTER_PROVIDER = 'local';
