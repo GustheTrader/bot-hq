@@ -15,6 +15,7 @@ import { Cron } from 'croner';
 import { dataGrep, dataList, dataRead, dataSearch, DataError, defaultConfig, warmCatalog } from '../dataplane/fs.js';
 import { bf, BuildflowError, buildflowEnabled } from '../buildflow.js';
 import { formatRecall, MemoryBankError, pickBanks, recall, retain } from '../memory-banks.js';
+import { crmConfig, listLeads, setupCrm, upsertLeads } from '../leads-crm.js';
 
 export interface ToolCtx {
   userId: string;
@@ -319,6 +320,52 @@ const BUILDFLOW_TOOLS: ToolDef[] = [
 ];
 
 export const TOOLS: ToolDef[] = [
+  {
+    name: 'leads_upsert',
+    description: 'Save leads you found to the leads CRM (Notion, mirrored to the Google Sheet tabs Handyman / Outdoor Jobs). Up to 25 per call. Duplicates are matched on the post link (or name + area) and updated instead of added; the Status of a lead is never changed. Give each lead a 0–100 score: Tier (Hot/Warm/Cold) is set from it.',
+    parameters: obj({ leads: { type: 'array', maxItems: 25, items: { type: 'object', additionalProperties: false, required: ['name', 'category', 'service', 'score'], properties: {
+          name: { type: 'string', description: 'Person, handle or business.' },
+          category: { type: 'string', enum: ['Handyman', 'Outdoor'], description: 'Outdoor = patio covers, sunrooms, hardscape, gazebos, fireplaces, outdoor kitchens. Everything else is Handyman.' },
+          service: { type: 'string', description: 'What they need, in a few words.' },
+          score: { type: 'number', description: '0–100. 70+ is Hot (recent, specific job, reachable), 40–69 Warm, under 40 Cold.' },
+          area: { type: 'string' }, source: { type: 'string', description: 'Facebook, Reddit, Craigslist, Nextdoor, …' },
+          url: { type: 'string', description: 'Link to the post. Used to avoid duplicates; include it whenever there is one.' },
+          phone: { type: 'string' }, email: { type: 'string' }, posted: { type: 'string', description: 'When it was posted (date).' },
+          reason: { type: 'string', description: 'Why this score.' }, reply_draft: { type: 'string' }, budget: { type: 'string' },
+        } } } }, ['leads']),
+    activity: 'working', label: 'Saving leads',
+    impl: async (a, ctx) => {
+      try {
+        const r = await upsertLeads(ctx.userId, Array.isArray(a.leads) ? a.leads : []);
+        const parts = [`${r.added} added`, `${r.updated} updated`, `${r.unchanged} already there`];
+        if (r.failed.length) parts.push(`${r.failed.length} failed`);
+        return { output: JSON.stringify(r), summary: parts.join(', ') + (r.hot.length ? ` · ${r.hot.length} hot` : '') };
+      } catch (e: any) { return { output: `Error: ${e?.message ?? e}`, summary: 'Failed' }; }
+    },
+  },
+  {
+    name: 'leads_list',
+    description: 'The leads in the CRM, best score first. Filter by tier (Hot, Warm, Cold) and/or status (New, Contacted, Quoted, Won, Lost).',
+    parameters: obj({ tier: { type: 'string', enum: ['Hot', 'Warm', 'Cold'] }, status: { type: 'string', enum: ['New', 'Contacted', 'Quoted', 'Won', 'Lost'] }, limit: { type: 'number' } }),
+    activity: 'working', label: 'Checking leads',
+    impl: async (a, ctx) => {
+      try { const leads = await listLeads(ctx.userId, { tier: a.tier, status: a.status, limit: a.limit }); return { output: JSON.stringify({ leads }), summary: `${leads.length} leads` }; }
+      catch (e: any) { return { output: `Error: ${e?.message ?? e}`, summary: 'Failed' }; }
+    },
+  },
+  {
+    name: 'leads_crm_setup',
+    description: 'Set up the leads CRM: create its Notion database under a Notion page (link or id), or use an existing database, and set the Google Sheet to mirror new leads into. Needs Notion connected. Without arguments, says how it is set up now.',
+    parameters: obj({ notion_page: { type: 'string' }, notion_database: { type: 'string' }, sheet: { type: 'string' }, title: { type: 'string' } }),
+    activity: 'working', label: 'Setting up the leads CRM',
+    impl: async (a, ctx) => {
+      try {
+        if (!a.notion_page && !a.notion_database && !a.sheet) { const c = crmConfig(ctx.userId); return { output: c ? JSON.stringify(c) : 'Not set up yet.', summary: c ? 'Set up' : 'Not set up' }; }
+        const c = await setupCrm(ctx.userId, { parentPage: a.notion_page, database: a.notion_database, sheet: a.sheet, title: a.title });
+        return { output: JSON.stringify(c), summary: 'Leads CRM ready' };
+      } catch (e: any) { return { output: `Error: ${e?.message ?? e}`, summary: 'Failed' }; }
+    },
+  },
   {
     name: 'save_file',
     description: "Save a finished deliverable (report, notes, CSV, code, markdown) to your Library so the user can open and download it. Saved under /root/grokbot/files/<your id>/ on your computer. Files you write into that folder yourself show up in the Library too.",
