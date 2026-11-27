@@ -140,7 +140,8 @@ export function leadKey(l: Pick<LeadIn, 'url' | 'name' | 'area'>): string {
       return `${u.host.replace(/^(www|m)\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`.toLowerCase();
     } catch { /* not a URL: fall through */ }
   }
-  return `${l.name ?? ''}|${l.area ?? ''}`.toLowerCase().replace(/\s+/g, ' ').trim();
+  const part = (s?: string) => (s ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return `${part(l.name)}|${part(l.area)}`;
 }
 
 const clip = (s: unknown, n = 1900) => (typeof s === 'string' ? s.trim().slice(0, n) : '');
