@@ -161,13 +161,18 @@
 .mg-field { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-text-tertiary); }
 .mg-search { width: 200px; }
 .mg-stats { font-size: 12px; color: var(--color-text-tertiary); }
+.mg-legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.mg-legend__item { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border: 0.5px solid var(--color-border-secondary); border-radius: 999px; background: none; color: inherit; font-size: 12px; cursor: pointer; }
+.mg-legend__item.is-off { opacity: .45; text-decoration: line-through; }
+.mg-legend__dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.mg-obsidian { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; color: var(--color-text-tertiary); }
 .mg-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; }
 .mg-canvas { position: relative; min-height: 420px; border-radius: 12px; border: 0.5px solid var(--color-border-tertiary); background: var(--viz-surface); overflow: hidden; cursor: grab; }
 .mg-canvas svg { display: block; width: 100%; height: auto; touch-action: none; }
 .mg-edge { stroke: var(--color-text-tertiary); stroke-opacity: 0.22; }
 .mg-edge.is-on { stroke: var(--viz-s1); stroke-opacity: 0.9; }
 .mg-edge.is-dim { stroke-opacity: 0.06; }
-.mg-node circle { fill: var(--viz-s1); stroke: var(--viz-surface); stroke-width: 1.5; cursor: pointer; transition: opacity 120ms; }
+.mg-node circle { fill: var(--mg-type, var(--viz-s1)); stroke: var(--viz-surface); stroke-width: 1.5; cursor: pointer; transition: opacity 120ms; }
 .mg-node text { fill: var(--viz-ink-2); pointer-events: none; paint-order: stroke; stroke: var(--viz-surface); stroke-width: 3px; }
 .mg-node.is-dim { opacity: 0.18; }
 .mg-node.is-focus circle { fill: var(--viz-s2); }

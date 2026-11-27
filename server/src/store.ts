@@ -17,6 +17,7 @@ export function toBot(r: any): Bot {
   }
   return {
     id: r.id,
+    spaceId: r.space_id ?? null,
     name: r.name,
     label: r.label,
     description: r.description,

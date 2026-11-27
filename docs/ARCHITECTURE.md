@@ -17,7 +17,7 @@ browser ── HTTP + SSE ──► server ── POST /v1/responses ──► H
 | Turns | `server/src/agent/loop.ts` | Per-Bot serial queue. A turn posts the message to the Bot's Hermes gateway (`/v1/responses`, streaming) and turns the event stream into rows (messages, tool calls) and live state (what the Bot is doing now). Before each turn it makes sure the Bot's screen is ready |
 | Engines | `server/src/engine.ts` | Which Hermes runs which Bot. The **primary** engine is the gateway that already runs on the computer; the app only calls its API. A **managed** engine is a Hermes home under `ENGINES_DIR/<botId>` with its own `hermes gateway run`, its own port (from 8650), credentials, model and browser helper (`BH_HOME`). Also: model and provider settings, and opening Hermes' subscription sign-in in a terminal on the Bot's screen |
 | App tools | `server/src/mcp.ts`, `agent/tools.ts` | An MCP endpoint per Bot (`POST /mcp/<botId>`, `POST /mcp/primary`; bearer token derived from `SESSION_SECRET`). Tools: `x_search`, `save_file`, routines, tasks, check-ins, `send_to_bot`, group chats, `ask_user`, `request_app_connection`, plus the user's Composio tools |
-| Memory | `server/src/engine-memory.ts` | Memory lives in each Bot's Hermes home (`memories/MEMORY.md`, `USER.md`). The app shows the entries and lets the user remove one |
+| Memory | `server/src/engine-memory.ts`, `server/src/memory-banks.ts`, `server/src/memory-graph.ts`, `server/src/ontology.ts`, `server/src/obsidian.ts` | Short notes live in each Bot's Hermes home (`memories/MEMORY.md`, `USER.md`); the app shows the entries and lets the user remove one. Long-term memory is three Hindsight layers (bot, team, shared): bots save and recall through `memory-banks.ts`, the Memory graph and the Obsidian export read entities through `memory-graph.ts`, with an ontology and a two-way Obsidian sync: see [MEMORY.md](MEMORY.md) |
 | Screens | `server/src/computer.ts`, `desk.ts`, `box.ts`, `server/box/*` | One Orgo Linux computer; the primary Bot uses the default screen, every other Bot leases an Orgo screen (four per computer). `desk.ts` installs the scripts in `server/box/` under `/opt/hq` and calls them to dress a screen: wallpaper, dock, light theme, a Chrome with its own profile and DevTools port (9200 + display number), and a home screen as the new tab page. `box.ts` runs commands locally (`HQ_LOCAL=1`) or through Orgo's API |
 | Viewer | `server/src/vnc.ts` | WebSocket relay between the browser (noVNC) and the screen's VNC server. The server does the VNC auth, so the computer's password never reaches the browser. In *watch* mode, keyboard, pointer and clipboard messages are dropped on the server |
 | Apps | `server/src/composio.ts`, `triggers.ts` | Catalog, per-user sessions, connect links, tool execution, and triggers for event routines. Sign-in uses a Composio-managed Google connection |
@@ -58,7 +58,13 @@ Approvals happen inside the MCP call, so they work the same for every engine:
 - Anything else posts an **approval card** and the tool call waits. **Allow** runs it once, **Always allow** stores a per-tool policy, **Don't allow** returns a refusal that tells the agent not to retry.
 - A new user message, or no answer in time, closes the card and the call returns "skipped".
 
-Not covered: what a Bot does through its browser or shell, and Hermes' own prompts for risky commands.
+ACP harnesses (Codex, Claude Code, Pi, OpenCode) go through the same card: the harness asks the server for
+permission, the server asks the user, and the answer is `allow_once` / refusal. A standing **Always allow** answers
+that permission kind (`harness:<kind>`) without a card. `BH_HARNESS_PERMISSIONS` sets the mode: `ask` (default),
+`allow` (the old behaviour, every request granted), `deny` (refuse everything).
+
+Not covered: what a Bot does inside a harness turn that needs no permission (reads, and anything Hermes does of its
+own accord), and Hermes' own prompts for risky commands.
 
 ## Bots working together
 

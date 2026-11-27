@@ -7,13 +7,17 @@ import { env } from './env.js';
 import { newId } from './lib/ids.js';
 import { hub } from './lib/hub.js';
 import { createSession, destroySession, isOwnerKey, requireUser, screenTicket, userFromCookieHeader, type AuthVars } from './lib/auth.js';
-import { allLive, appendRow, clearConversation, clearPendingQuestion, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
+import { allLive, appendRow, clearConversation, clearPendingQuestion, describeCron, emitBot, getBot, getBotRow, getLive, getRow, listBots, listRoutines, listRows, listTasks, toRoutine, updateRow } from './store.js';
+import { TemplateError, planFromTemplate, publicTemplates, type Requirement } from './bot-templates.js';
+import { SpaceError, getSpace, makePrimary, moveBot, spaceIdFrom, unusedBotName } from './spaces.js';
+import { buildflowEnabled } from './buildflow.js';
+import { box } from './box.js';
 import { enqueue, interrupt, resolveApproval } from './agent/loop.js';
 import { computerState, ensureComputer, forgetBotFiles, readyScreen, refreshComputer, releaseScreen, suspendComputer } from './computer.js';
 import { assignEngine, provisionEngine, removeEngine, syncPersona } from './engine.js';
 import { deleteMemory, listMemories, memoryBot } from './engine-memory.js';
 import { cancelClaudeLogin } from './engine-login.js';
-import { retireHarness } from './harness.js';
+import { HARNESSES, harnessInstalled, retireHarness } from './harness.js';
 import { orgo } from './orgo.js';
 import { catalog, connectedToolkits, deleteConnection, disconnect, googleProfile, startConnect, startGoogleLogin, toolkitInfo } from './composio.js';
 import { runRoutine, scheduleRoutine, unscheduleRoutine } from './routines.js';
@@ -43,7 +47,8 @@ class UserError extends Error {}
 
 const agentCount = () => (db.prepare("SELECT COUNT(*) n FROM bots WHERE COALESCE(kind,'agent')<>'team' AND COALESCE(hidden,0)=0").get() as any).n as number;
 
-function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; avatarImage?: string; mode?: string; isPrimary?: boolean }) {
+function createBot(userId: string, b: { name: string; label?: string; description?: string; instructions?: string; avatarShape?: string; avatarColor?: string; avatarImage?: string; mode?: string; isPrimary?: boolean; spaceId?: unknown }) {
+  const spaceId = b.isPrimary ? null : spaceIdFrom(userId, b.spaceId);
   // Every bot needs a screen of its own on the one shared computer.
   if (agentCount() >= env.maxBots) throw new UserError(`The team is full: the computer has room for ${env.maxBots} bots. Remove one to add another.`);
   const id = newId('bot');
@@ -51,8 +56,8 @@ function createBot(userId: string, b: { name: string; label?: string; descriptio
   const color = COLORS.includes(b.avatarColor as AvatarColor) ? b.avatarColor : hashPick(id, COLORS.filter((c) => c !== 'black'));
   const image = isPortraitPreset(b.avatarImage) ? b.avatarImage : null;
   db.prepare(
-    'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,avatar_image,mode,is_primary,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-  ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, image, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, now(), now());
+    'INSERT INTO bots(id,user_id,name,label,description,instructions,avatar_shape,avatar_color,avatar_image,mode,is_primary,space_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+  ).run(id, userId, b.name.trim().slice(0, 60) || 'New Bot', b.label ?? '', b.description ?? '', b.instructions ?? '', shape, color, image, b.mode === 'teammate' ? 'teammate' : 'personal', b.isPrimary ? 1 : 0, spaceId, now(), now());
   // The first bot is the agent that already runs on the computer; the others get an engine of their own.
   if (assignEngine(id) === 'managed') provisionEngine(id);
   hub.emit(userId, { type: 'roster' });
@@ -247,12 +252,44 @@ const ownBot = (userId: string, id: string) => {
 
 api.get('/bots', (c) => c.json({ bots: listBots(c.get('user').id), live: allLive(c.get('user').id) }));
 
+/** Connections set up on this server that templates may require. */
+const templateConnections = (): ReadonlySet<Requirement> => new Set<Requirement>(buildflowEnabled() ? ['buildflow'] : []);
+
+api.get('/bot-templates', (c) => c.json({ templates: publicTemplates(templateConnections()) }));
+
+/** A new Bot from a template: its persona and instructions, the agent program it runs on, and its first routine. */
+function createFromTemplate(userId: string, body: any) {
+  const plan = planFromTemplate(String(body.template), body.inputs ?? {}, { name: body.name, timezone: body.timezone, available: templateConnections() });
+  // Two businesses using one template would otherwise both get a "Dispatch Lead", and bots are addressed by name.
+  const spaceId = spaceIdFrom(userId, body.spaceId);
+  const name = unusedBotName(userId, plan.bot.name, spaceId ? getSpace(userId, spaceId)!.name : null);
+  const bot = createBot(userId, { ...plan.bot, name, avatarShape: body.avatarShape, avatarImage: body.avatarImage ?? plan.bot.avatarImage, mode: body.mode, spaceId });
+
+  const def = HARNESSES.find((h) => h.id === plan.harness);
+  if (def && def.id !== 'hermes' && box.local && harnessInstalled(def)) {
+    db.prepare('UPDATE bots SET harness=?, harness_model=NULL, updated_at=? WHERE id=?').run(def.id, now(), bot.id);
+  } else if (def && def.id !== 'hermes') {
+    appendRow(bot.id, 'notice', { type: 'notice', tone: 'warn', text: `${def.name} is not installed on the computer, so this Bot runs on Hermes for now. Switch it in the Engine panel once ${def.name} is installed.` });
+  }
+
+  const id = newId('rt');
+  const r = plan.routine;
+  db.prepare('INSERT INTO routines(id,bot_id,name,prompt,schedule,timezone,enabled,created_at) VALUES (?,?,?,?,?,?,1,?)').run(id, bot.id, r.name, r.prompt, r.schedule, r.timezone, now());
+  scheduleRoutine(toRoutine(db.prepare('SELECT * FROM routines WHERE id=?').get(id)));
+  appendRow(bot.id, 'event', { type: 'event', event: 'routine-created', text: `Routine created: ${r.name} · ${describeCron(r.schedule)}`, ref: id });
+  hub.emit(userId, { type: 'routines', botId: bot.id });
+  return getBot(bot.id)!;
+}
+
 api.post('/bots', async (c) => {
   const body = await c.req.json();
   try {
-    return c.json({ bot: createBot(c.get('user').id, body) });
+    const userId = c.get('user').id;
+    return c.json({ bot: body?.template ? createFromTemplate(userId, body) : createBot(userId, body) });
   } catch (e: any) {
     if (e instanceof UserError) return c.json({ error: e.message }, 409);
+    if (e instanceof TemplateError) return c.json({ error: e.message }, 400);
+    if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
     throw e;
   }
 });
@@ -269,11 +306,18 @@ api.patch('/bots/:id', async (c) => {
   }
   const cols: Record<string, string> = { name: 'name', label: 'label', description: 'description', instructions: 'instructions', avatarShape: 'avatar_shape', avatarColor: 'avatar_color', mode: 'mode', effort: 'effort', pinned: 'pinned', voice: 'voice', voiceSpeed: 'voice_speed', voiceLanguage: 'voice_language', codeMode: 'code_mode' };
   cols.avatarImage = 'avatar_image';
+  // First, so a refused move changes nothing else.
+  if (p.spaceId !== undefined) {
+    try { moveBot(c.get('user').id, b.id, p.spaceId); } catch (e) {
+      if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
+      throw e;
+    }
+  }
   for (const [k, col] of Object.entries(cols)) {
     if (p[k] !== undefined) db.prepare(`UPDATE bots SET ${col}=?, updated_at=? WHERE id=?`).run(typeof p[k] === 'boolean' ? (p[k] ? 1 : 0) : p[k], now(), b.id);
   }
   if (b.kind !== 'team') {
-    if (['name', 'label', 'description'].some((k) => p[k] !== undefined)) syncPersona(b.id);
+    if (['name', 'label', 'description', 'spaceId'].some((k) => p[k] !== undefined)) syncPersona(b.id);
     // Its desktop carries its name and colour: dress the screen again, if it has one.
     const looks = ['name', 'label', 'avatarShape', 'avatarColor'].some((k) => p[k] !== undefined);
     if (looks && db.prepare('SELECT 1 FROM screens WHERE bot_id=?').get(b.id)) {
@@ -281,6 +325,8 @@ api.patch('/bots/:id', async (c) => {
     }
   }
   emitBot(b.id);
+  // Workspace counts changed with the move.
+  if (p.spaceId !== undefined) hub.emit(b.user_id, { type: 'roster' });
   return c.json({ bot: getBot(b.id) });
 });
 
@@ -310,7 +356,10 @@ api.post('/bots/:id/primary', (c) => {
   const user = c.get('user');
   const b = ownBot(user.id, c.req.param('id'));
   if (!b) return c.json({ error: 'not found' }, 404);
-  db.prepare('UPDATE bots SET is_primary = (id = ?) WHERE user_id=?').run(b.id, user.id);
+  try { makePrimary(user.id, b.id); } catch (e) {
+    if (e instanceof SpaceError) return c.json({ error: e.message }, e.status);
+    throw e;
+  }
   hub.emit(user.id, { type: 'roster' });
   return c.json({ ok: true });
 });

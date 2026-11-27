@@ -1,5 +1,6 @@
 import { db, now } from './db.js';
 import { newId } from './lib/ids.js';
+import { SpaceError, spaceIdFrom } from './spaces.js';
 import type { Project, ProjectSkill } from './types.js';
 
 /**
@@ -40,6 +41,7 @@ export const cleanLine = line;
 function toProject(r: any, skillCount: number): Project {
   return {
     id: r.id,
+    spaceId: r.space_id ?? null,
     name: r.name,
     description: r.description ?? '',
     folder: r.folder ?? '',
@@ -79,6 +81,14 @@ export interface ProjectInput {
   instructions?: unknown;
   harness?: unknown;
   harnessModel?: unknown;
+  spaceId?: unknown;
+}
+
+function projectSpace(userId: string, raw: unknown): string | null {
+  try { return spaceIdFrom(userId, raw); } catch (e) {
+    if (e instanceof SpaceError) throw new ProjectError(e.message, e.status);
+    throw e;
+  }
 }
 
 export function createProject(userId: string, input: ProjectInput): Project {
@@ -89,8 +99,9 @@ export function createProject(userId: string, input: ProjectInput): Project {
   const id = newId('prj');
   const t = now();
   const model = line(input.harnessModel, 160);
+  const spaceId = projectSpace(userId, input.spaceId);
   db.prepare(
-    'INSERT INTO projects(id,user_id,name,description,folder,instructions,harness,harness_model,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    'INSERT INTO projects(id,user_id,name,description,folder,instructions,harness,harness_model,space_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
   ).run(
     id, userId, name,
     line(input.description, LIMITS.description),
@@ -98,6 +109,7 @@ export function createProject(userId: string, input: ProjectInput): Project {
     text(input.instructions, LIMITS.instructions),
     line(input.harness, 40) || 'hermes',
     model || null,
+    spaceId,
     t, t,
   );
   return getProject(userId, id)!;
@@ -110,13 +122,15 @@ export function updateProject(userId: string, id: string, patch: ProjectInput): 
   const name = patch.name !== undefined ? line(patch.name, LIMITS.name) : cur.name;
   if (!name) throw new ProjectError('A project needs a name.');
   const model = patch.harnessModel !== undefined ? line(patch.harnessModel, 160) || null : cur.harness_model;
-  db.prepare('UPDATE projects SET name=?, description=?, folder=?, instructions=?, harness=?, harness_model=?, updated_at=? WHERE id=?').run(
+  const spaceId = patch.spaceId !== undefined ? projectSpace(userId, patch.spaceId) : cur.space_id ?? null;
+  db.prepare('UPDATE projects SET name=?, description=?, folder=?, instructions=?, harness=?, harness_model=?, space_id=?, updated_at=? WHERE id=?').run(
     name,
     patch.description !== undefined ? line(patch.description, LIMITS.description) : cur.description,
     patch.folder !== undefined ? line(patch.folder, LIMITS.folder) : cur.folder,
     patch.instructions !== undefined ? text(patch.instructions, LIMITS.instructions) : cur.instructions,
     patch.harness !== undefined ? line(patch.harness, 40) || 'hermes' : cur.harness,
     model,
+    spaceId,
     now(),
     id,
   );

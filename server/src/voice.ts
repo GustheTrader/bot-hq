@@ -17,12 +17,33 @@ import { listMemories } from './engine-memory.js';
 export const voiceApi = new Hono<AuthVars>();
 
 const XAI = 'https://api.x.ai/v1';
+const OPENAI = 'https://api.openai.com/v1';
 const VOICE_MODEL = process.env.XAI_VOICE_MODEL ?? 'grok-voice-latest';
 const STT_MODEL = process.env.XAI_STT_MODEL ?? 'grok-voice-transcribe-2.0';
+const OPENAI_VOICE_MODEL = process.env.OPENAI_VOICE_MODEL ?? 'gpt-realtime';
+const OPENAI_TTS_MODEL = process.env.OPENAI_TTS_MODEL ?? 'gpt-4o-mini-tts';
+const OPENAI_STT_MODEL = process.env.OPENAI_STT_MODEL ?? 'gpt-4o-transcribe';
 const SAMPLE_RATE = 24000;
 const xaiHeaders = () => ({ Authorization: `Bearer ${env.xaiKey}` });
+const openAiHeaders = () => ({ Authorization: `Bearer ${env.openaiKey}` });
 
-// ---------- voices / languages ----------
+// ---------- providers ----------
+// xAI Grok is the house voice. If that key runs dry (credits, spending cap, revoked) voice would go
+// dark entirely, so every voice surface falls through to OpenAI when OPENAI_API_KEY is set.
+type VoiceProvider = 'xai' | 'openai';
+
+/** OpenAI's voice set is fixed; xAI's catalog uses celestial names. Map across so a saved bot voice still speaks. */
+const OPENAI_VOICES: VoiceOption[] = [
+  ['marin', 'f'], ['cedar', 'm'], ['alloy', 'f'], ['ash', 'm'], ['ballad', 'm'], ['coral', 'f'], ['echo', 'm'],
+  ['fable', 'f'], ['nova', 'f'], ['onyx', 'm'], ['sage', 'f'], ['shimmer', 'f'], ['verse', 'm'],
+].map(([id, g]) => ({ id, name: id[0].toUpperCase() + id.slice(1), gender: g === 'f' ? 'female' : 'male' }));
+
+const OPENAI_VOICE_BY_XAI: Record<string, string> = {
+  luna: 'marin', ara: 'coral', eve: 'shimmer', celeste: 'sage', aurora: 'sage', liora: 'coral', ursa: 'ash', iris: 'coral',
+  leo: 'cedar', rex: 'onyx', sal: 'ash', orion: 'verse', atlas: 'ballad', helios: 'cedar', lumen: 'verse', lux: 'ballad',
+  cosmo: 'echo', zenith: 'onyx', perseus: 'onyx', castor: 'ash', rigel: 'cedar', kepler: 'ash', sirius: 'onyx', naksh: 'ash',
+  zagan: 'onyx', altair: 'cedar', carina: 'coral', helix: 'ash', '': 'marin',
+};
 
 const FALLBACK_VOICES: VoiceOption[] = [
   ['altair', 'm'], ['ara', 'f'], ['atlas', 'm'], ['aurora', 'f'], ['carina', 'f'], ['castor', 'm'], ['celeste', 'f'], ['cosmo', 'm'],
@@ -41,20 +62,67 @@ export const LANGUAGES: { code: string; name: string }[] = [
 ];
 export const SPEEDS = [0.7, 0.85, 1, 1.15, 1.3, 1.5];
 
-let voiceCache: { at: number; voices: VoiceOption[] } | null = null;
+/** Providers to try, in order. A pinned VOICE_PROVIDER wins; otherwise xAI first, OpenAI as the net. */
+function voiceProviders(): VoiceProvider[] {
+  const pinned = env.voiceProvider;
+  if (pinned === 'openai') return env.openaiKey ? ['openai'] : [];
+  if (pinned === 'xai') return ['xai'];
+  return env.openaiKey ? ['xai', 'openai'] : ['xai'];
+}
+
+/** Only credential/quota/rate-limit errors are worth retrying elsewhere; a 400 means our request is wrong. */
+const isProviderDown = (status: number) => status === 0 || status === 401 || status === 402 || status === 403 || status === 404 || status === 429 || status >= 500;
+/** A saved xAI voice id becomes the closest OpenAI voice; OpenAI ids pass through unchanged. */
+function providerVoice(provider: VoiceProvider, voice: string): string {
+  if (provider === 'xai') return voice;
+  const wanted = String(voice ?? '').toLowerCase();
+  if (OPENAI_VOICES.some((v) => v.id === wanted)) return wanted;
+  return OPENAI_VOICE_BY_XAI[wanted] ?? 'marin';
+}
+
+let lastProviderError = '';
+const noteProviderError = (provider: VoiceProvider, status: number, detail: string) => {
+  // Vendors wrap the useful sentence in JSON; show that instead of the envelope.
+  let cleaned = detail.replace(/\s+/g, ' ').trim();
+  try {
+    const j = JSON.parse(detail);
+    cleaned = String(j?.error?.message ?? j?.error ?? j?.message ?? cleaned);
+  } catch { /* not json */ }
+  lastProviderError = `${provider} HTTP ${status}${cleaned ? ` — ${cleaned.slice(0, 180)}` : ''}`;
+};
+
+/** Human-readable reason voice is unavailable, shown in the call dialog. */
+function voiceUnavailableMessage(): string {
+  if (!voiceProviders().length) return 'Voice is unavailable: no XAI_API_KEY or OPENAI_API_KEY is configured on this server.';
+  const detail = lastProviderError ? ` (${lastProviderError.slice(0, 200)})` : '';
+  const hint = /credit|quota|billing|spend/i.test(lastProviderError) ? ' Add credits or set OPENAI_API_KEY to use the OpenAI fallback.' : ' Check the provider credits and keys.';
+  return `Voice is unavailable right now${detail}.${hint}`;
+}
+
+// ---------- voices / languages ----------
+
+let voiceCache: { at: number; provider: VoiceProvider; voices: VoiceOption[] } | null = null;
 async function listVoices(): Promise<VoiceOption[]> {
   if (voiceCache && Date.now() - voiceCache.at < 3600_000) return voiceCache.voices;
-  try {
-    const r = await fetch(`${XAI}/tts/voices`, { headers: xaiHeaders(), signal: AbortSignal.timeout(8000) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = (await r.json()) as { voices?: { voice_id: string; name?: string; gender?: string }[] };
-    const voices = (j.voices ?? []).map((v) => ({ id: v.voice_id, name: v.name ?? v.voice_id, gender: v.gender }));
-    if (!voices.length) throw new Error('empty list');
-    voiceCache = { at: Date.now(), voices };
-  } catch (e: any) {
-    console.warn('[voice] voice list unavailable, using static list:', e?.message);
-    voiceCache = { at: Date.now() - 3000_000, voices: FALLBACK_VOICES }; // retry in ~10 min
+  for (const provider of voiceProviders()) {
+    try {
+      if (provider === 'openai') {
+        voiceCache = { at: Date.now(), provider, voices: OPENAI_VOICES };
+        return voiceCache.voices;
+      }
+      const r = await fetch(`${XAI}/tts/voices`, { headers: xaiHeaders(), signal: AbortSignal.timeout(8000) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = (await r.json()) as { voices?: { voice_id: string; name?: string; gender?: string }[] };
+      const voices = (j.voices ?? []).map((v) => ({ id: v.voice_id, name: v.name ?? v.voice_id, gender: v.gender }));
+      if (!voices.length) throw new Error('empty list');
+      voiceCache = { at: Date.now(), provider, voices };
+      return voiceCache.voices;
+    } catch (e: any) {
+      console.warn(`[voice] ${provider} voice list unavailable:`, e?.message);
+    }
   }
+  console.warn('[voice] all providers failed the voice list, using static list');
+  voiceCache = { at: Date.now() - 3000_000, provider: 'xai', voices: FALLBACK_VOICES }; // retry in ~10 min
   return voiceCache.voices;
 }
 
@@ -235,6 +303,123 @@ const fmtDuration = (ms: number) => {
   return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
 };
 
+// ---------- session minting ----------
+
+interface MintedSession {
+  provider: VoiceProvider;
+  secret: { value: string; expires_at: number };
+  model: string;
+  websocketUrl: string;
+  authSubprotocols: string[];
+  session: Record<string, unknown>;
+  instructions: string;
+  voice: string;
+}
+
+function xaiSession(voice: string, instructions: string, language: string, speed: number): { session: Record<string, unknown>; voice: string } {
+  return {
+    voice,
+    session: {
+      voice,
+      instructions,
+      turn_detection: { type: 'server_vad' },
+      tools: VOICE_TOOLS,
+      audio: {
+        input: {
+          format: { type: 'audio/pcm', rate: SAMPLE_RATE },
+          transcription: { model: 'grok-transcribe', ...(language !== 'auto' ? { language_hint: language } : {}) },
+        },
+        output: { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, speed },
+      },
+    },
+  };
+}
+
+/** OpenAI realtime GA wants voice + turn detection nested under audio, and a `type` on session.update. */
+function openAiSession(voice: string, instructions: string, language: string, speed: number): { session: Record<string, unknown>; voice: string } {
+  const mapped = providerVoice('openai', voice);
+  return {
+    voice: mapped,
+    session: {
+      type: 'realtime',
+      model: OPENAI_VOICE_MODEL,
+      instructions,
+      tools: VOICE_TOOLS,
+      audio: {
+        input: {
+          format: { type: 'audio/pcm', rate: SAMPLE_RATE },
+          turn_detection: { type: 'server_vad' },
+          transcription: { model: 'gpt-4o-transcribe', ...(language !== 'auto' ? { language } : {}) },
+        },
+        output: { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, voice: mapped, speed },
+      },
+    },
+  };
+}
+
+async function mintSession(bot: any, s: { voice: string; speed: number; language: string }, userId: string): Promise<MintedSession | null> {
+  const instructions = voiceInstructions(userId, bot, s.language);
+  for (const provider of voiceProviders()) {
+    if (provider === 'xai') {
+      const built = xaiSession(s.voice, instructions, s.language, s.speed);
+      const r = await fetch(`${XAI}/realtime/client_secrets`, {
+        method: 'POST',
+        headers: { ...xaiHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expires_after: { seconds: 300 } }),
+        signal: AbortSignal.timeout(15_000),
+      }).catch((e) => ({ ok: false, status: 0, text: async () => String(e?.message ?? e) }) as any);
+      if (!r.ok) {
+        const detail = await r.text().catch(() => '');
+        console.warn('[voice] xai client secret mint failed', r.status, detail.slice(0, 300));
+        noteProviderError(provider, r.status, detail);
+        if (isProviderDown(r.status)) continue; // a bad request is our bug, not a dead provider
+        return null;
+      }
+      const secret = (await r.json()) as { value: string; expires_at: number };
+      return {
+        provider,
+        secret,
+        model: VOICE_MODEL,
+        websocketUrl: `wss://api.x.ai/v1/realtime?model=${encodeURIComponent(VOICE_MODEL)}`,
+        authSubprotocols: [`xai-client-secret.${secret.value}`],
+        session: built.session,
+        instructions,
+        voice: built.voice,
+      };
+    }
+
+    const built = openAiSession(s.voice, instructions, s.language, s.speed);
+    // GA endpoint takes the session inline; older accounts only have the beta sessions route.
+    for (const path of ['/realtime/client_secrets', '/realtime/sessions']) {
+      const body = path === '/realtime/sessions' ? built.session : { session: built.session };
+      const r = await fetch(`${OPENAI}${path}`, {
+        method: 'POST',
+        headers: { ...openAiHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(20_000),
+      }).catch((e) => ({ ok: false, status: 0, text: async () => String(e?.message ?? e) }) as any);
+      if (!r.ok) {
+        const detail = await r.text().catch(() => '');
+        console.warn(`[voice] openai ${path} failed`, r.status, detail.slice(0, 300));
+        continue;
+      }
+      const j = (await r.json()) as { value?: string; client_secret?: { value: string; expires_at: number }; expires_at?: number };
+      const value = j.value ?? j.client_secret?.value;
+      if (!value) continue;
+      return {
+        provider,
+        secret: { value, expires_at: j.expires_at ?? j.client_secret?.expires_at ?? Math.floor(Date.now() / 1000) + 300 },
+        model: OPENAI_VOICE_MODEL,
+        websocketUrl: `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_VOICE_MODEL)}`,
+        authSubprotocols: ['realtime', `openai-insecure-api-key.${value}`],
+        session: built.session,
+        instructions,
+        voice: built.voice,
+      };
+    }
+  }
+  return null;
+}
 voiceApi.get('/options', async (c) => c.json({ voices: await listVoices(), languages: LANGUAGES, speeds: SPEEDS }));
 
 voiceApi.post('/session', async (c) => {
@@ -244,33 +429,18 @@ voiceApi.post('/session', async (c) => {
   if (!bot) return c.json({ error: 'not found' }, 404);
   const s = settingsOf(bot);
 
-  const r = await fetch(`${XAI}/realtime/client_secrets`, {
-    method: 'POST',
-    headers: { ...xaiHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expires_after: { seconds: 300 } }),
-    signal: AbortSignal.timeout(15_000),
-  }).catch((e) => ({ ok: false, status: 0, text: async () => String(e?.message ?? e) }) as any);
-  if (!r.ok) {
-    const detail = await r.text().catch(() => '');
-    console.warn('[voice] client secret mint failed', r.status, detail.slice(0, 300));
-    return c.json({ error: 'Could not start a voice session' }, 502);
-  }
-  const secret = (await r.json()) as { value: string; expires_at: number };
-
-  const instructions = voiceInstructions(user.actorId ?? user.id, bot, s.language); // the person on the call, even a workspace member
-  const session: Record<string, unknown> = {
-    voice: s.voice,
-    instructions,
-    turn_detection: { type: 'server_vad' },
-    tools: VOICE_TOOLS,
-    audio: {
-      input: {
-        format: { type: 'audio/pcm', rate: SAMPLE_RATE },
-        transcription: { model: 'grok-transcribe', ...(s.language !== 'auto' ? { language_hint: s.language } : {}) },
+  const minted = await mintSession(bot, s, user.actorId ?? user.id);
+  if (!minted) {
+    return c.json(
+      {
+        error: voiceUnavailableMessage(),
+        providersTried: voiceProviders(),
       },
-      output: { format: { type: 'audio/pcm', rate: SAMPLE_RATE }, speed: s.speed },
-    },
-  };
+      502,
+    );
+  }
+  const { provider, secret, voice } = minted;
+  const instructions = minted.instructions; // the person on the call, even a workspace member
 
   const callId = newId('call');
   const startRow = appendRow(bot.id, 'event', callEvent(`Voice call with ${bot.name} started`, { id: callId, phase: 'started' }));
@@ -279,17 +449,19 @@ voiceApi.post('/session', async (c) => {
 
   return c.json({
     callId,
+    provider,
     clientSecret: secret.value,
     expiresAt: secret.expires_at,
-    model: VOICE_MODEL,
-    websocketUrl: `wss://api.x.ai/v1/realtime?model=${encodeURIComponent(VOICE_MODEL)}`,
+    model: minted.model,
+    websocketUrl: minted.websocketUrl,
+    authSubprotocols: minted.authSubprotocols,
     sampleRate: SAMPLE_RATE,
     instructions,
-    voice: s.voice,
+    voice,
     speed: s.speed,
     language: s.language,
     tools: VOICE_TOOLS,
-    session,
+    session: minted.session,
   });
 });
 
@@ -362,16 +534,27 @@ const xai = new OpenAI({ apiKey: env.xaiKey, baseURL: XAI, timeout: 45_000 });
 async function summarizeCall(botName: string, transcript: { role: string; text: string }[], tasks: string[]): Promise<string | null> {
   if (!transcript.length && !tasks.length) return null;
   const lines = transcript.map((t) => `${t.role === 'user' ? 'User' : botName}: ${t.text}`).join('\n').slice(-12_000);
-  const res: any = await xai.responses.create({
-    model: env.xaiModel,
-    reasoning: { effort: 'low' },
-    store: false,
-    input: [
-      { role: 'system', content: `Summarise this voice call between the user and ${botName} in one short sentence (max 25 words), past tense, third person ("Talked about…", "Asked ${botName} to…"). No preamble.` },
-      { role: 'user', content: `${lines || '(no transcript)'}${tasks.length ? `\n\nWork handed off during the call:\n${tasks.map((t) => `- ${t}`).join('\n')}` : ''}` },
-    ],
-  } as any);
-  const text = String(res.output_text ?? '').trim();
+  const system = `Summarise this voice call between the user and ${botName} in one short sentence (max 25 words), past tense, third person ("Talked about…", "Asked ${botName} to…"). No preamble.`;
+  const userMsg = `${lines || '(no transcript)'}${tasks.length ? `\n\nWork handed off during the call:\n${tasks.map((t) => `- ${t}`).join('\n')}` : ''}`;
+  let raw = '';
+  try {
+    const res: any = await xai.responses.create({
+      model: env.xaiModel,
+      reasoning: { effort: 'low' },
+      store: false,
+      input: [{ role: 'system', content: system }, { role: 'user', content: userMsg }],
+    } as any);
+    raw = String(res.output_text ?? '');
+  } catch (e: any) {
+    if (!env.openaiKey) throw e;
+    const alt = new OpenAI({ apiKey: env.openaiKey, baseURL: OPENAI, timeout: 45_000 });
+    const res: any = await alt.chat.completions.create({
+      model: process.env.OPENAI_SUMMARY_MODEL ?? 'gpt-4o-mini',
+      messages: [{ role: 'system', content: system }, { role: 'user', content: userMsg }],
+    });
+    raw = String(res.choices?.[0]?.message?.content ?? '');
+  }
+  const text = raw.trim();
   return text ? clip(text.replace(/\s+/g, ' '), 240) : null;
 }
 
@@ -421,20 +604,33 @@ voiceApi.post('/preview', async (c) => {
   const language = p.language && langName(p.language) ? p.language : s.language;
   const text = String(p.text || `Hi, I'm ${bot?.name ?? 'your Bot'}. This is how I'll sound when we talk.`).slice(0, 400);
   const codec = p.codec === 'pcm' ? 'pcm' : 'mp3';
-  const r = await fetch(`${XAI}/tts`, {
-    method: 'POST',
-    headers: { ...xaiHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice_id: voice, language, speed: clampSpeed(p.speed ?? s.speed), output_format: { codec, sample_rate: SAMPLE_RATE } }),
-    signal: AbortSignal.timeout(30_000),
-  }).catch(() => null);
-  if (!r?.ok) {
-    console.warn('[voice] tts failed', r?.status, (await r?.text().catch(() => ''))?.slice(0, 200));
-    return c.json({ error: 'Preview unavailable' }, 502);
+  const speed = clampSpeed(p.speed ?? s.speed);
+  for (const provider of voiceProviders()) {
+    const r = provider === 'xai'
+      ? await fetch(`${XAI}/tts`, {
+          method: 'POST',
+          headers: { ...xaiHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice_id: voice, language, speed, output_format: { codec, sample_rate: SAMPLE_RATE } }),
+          signal: AbortSignal.timeout(30_000),
+        }).catch(() => null)
+      : await fetch(`${OPENAI}/audio/speech`, {
+          method: 'POST',
+          headers: { ...openAiHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: OPENAI_TTS_MODEL, input: text, voice: providerVoice('openai', voice), speed, response_format: codec === 'pcm' ? 'pcm' : 'mp3' }),
+          signal: AbortSignal.timeout(30_000),
+        }).catch(() => null);
+    if (r?.ok) {
+      return c.body(Buffer.from(await r.arrayBuffer()), 200, {
+        'Content-Type': codec === 'pcm' ? `audio/pcm;rate=${SAMPLE_RATE}` : 'audio/mpeg',
+        'Cache-Control': 'no-store',
+      });
+    }
+    const detail = (await r?.text().catch(() => '')) ?? '';
+    console.warn(`[voice] ${provider} tts failed`, r?.status, detail.slice(0, 200));
+    noteProviderError(provider, r?.status ?? 0, detail);
+    if (r && !isProviderDown(r.status)) break;
   }
-  return c.body(Buffer.from(await r.arrayBuffer()), 200, {
-    'Content-Type': codec === 'pcm' ? `audio/pcm;rate=${SAMPLE_RATE}` : 'audio/mpeg',
-    'Cache-Control': 'no-store',
-  });
+  return c.json({ error: 'Preview unavailable' }, 502);
 });
 
 voiceApi.post('/stt', async (c) => {
@@ -443,16 +639,27 @@ voiceApi.post('/stt', async (c) => {
   if (!file || typeof file === 'string') return c.json({ error: 'file required' }, 400);
   if (file.size > 25 * 1024 * 1024) return c.json({ error: 'recording too long' }, 413);
   if (file.size < 200) return c.json({ text: '' });
-  const out = new FormData();
-  out.append('model', STT_MODEL);
   const lang = String(form?.get('language') ?? '');
-  if (lang && lang !== 'auto' && /^[a-z]{2}$/.test(lang)) out.append('language', lang);
-  out.append('file', file, file.name || 'dictation.webm'); // must be last
-  const r = await fetch(`${XAI}/stt`, { method: 'POST', headers: xaiHeaders(), body: out, signal: AbortSignal.timeout(60_000) }).catch(() => null);
-  if (!r?.ok) {
-    console.warn('[voice] stt failed', r?.status, (await r?.text().catch(() => ''))?.slice(0, 200));
-    return c.json({ error: 'Transcription failed' }, 502);
+  for (const provider of voiceProviders()) {
+    const out = new FormData();
+    out.append('model', provider === 'xai' ? STT_MODEL : OPENAI_STT_MODEL);
+    if (lang && lang !== 'auto' && /^[a-z]{2}$/.test(lang)) out.append('language', lang);
+    out.append('file', file, file.name || 'dictation.webm'); // must be last
+    const url = provider === 'xai' ? `${XAI}/stt` : `${OPENAI}/audio/transcriptions`;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: provider === 'xai' ? xaiHeaders() : openAiHeaders(),
+      body: out,
+      signal: AbortSignal.timeout(60_000),
+    }).catch(() => null);
+    if (r?.ok) {
+      const j = (await r.json()) as { text?: string };
+      return c.json({ text: (j.text ?? '').trim() });
+    }
+    const detail = (await r?.text().catch(() => '')) ?? '';
+    console.warn(`[voice] ${provider} stt failed`, r?.status, detail.slice(0, 200));
+    noteProviderError(provider, r?.status ?? 0, detail);
+    if (r && !isProviderDown(r.status)) break;
   }
-  const j = (await r.json()) as { text?: string };
-  return c.json({ text: (j.text ?? '').trim() });
+  return c.json({ error: 'Transcription failed' }, 502);
 });

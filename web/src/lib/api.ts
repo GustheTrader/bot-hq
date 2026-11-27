@@ -1,5 +1,7 @@
 import type { RevOpsMetrics } from '@shared/revops-metrics';
-import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
+import type { PublicTemplate } from '@shared/bot-templates';
+export type { PublicTemplate } from '@shared/bot-templates';
+import type { Bot, ComputerState, LiveState, RevOptKind, RevOptPriority, RevOptStatus, RevOptTask, Routine, Row, Space, SpaceKind, TeamBrief, TeamMember, TeamRole, Toolkit, User } from '@shared/types';export type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from '@shared/types';
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -35,7 +37,8 @@ export const api = {
   logout: () => req<{ ok: true }>('POST', '/auth/logout'),
 
   bots: () => req<{ bots: Bot[]; live: LiveState[] }>('GET', '/bots'),
-  createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'mode'>) => req<{ bot: Bot }>('POST', '/bots', b),
+  createBot: (b: Pick<Bot, 'name' | 'avatarShape' | 'avatarColor' | 'avatarImage' | 'mode' | 'spaceId'> & { template?: string; inputs?: Record<string, string>; timezone?: string }) => req<{ bot: Bot }>('POST', '/bots', b),
+  botTemplates: () => req<{ templates: PublicTemplate[] }>('GET', '/bot-templates'),
   markRead: (id: string) => req<{ ok: true }>('POST', `/bots/${id}/read`),
   rows: (id: string) => req<{ generation: number; rows: Row[] }>('GET', `/bots/${id}/rows`),
   send: (id: string, text: string) => req<{ row: Row }>('POST', `/bots/${id}/messages`, { text }),
@@ -62,9 +65,13 @@ export const api = {
   setTeamLead: (id: string, memberId: string | null) => req<{ ok: true; members: TeamMember[] }>('POST', `/rooms/${id}/lead`, { memberId }),
   createTeam: (name: string, botIds: string[], humanIds: string[] = [], people: { name: string; email?: string }[] = []) =>
     req<{ id: string }>('POST', '/rooms', { name, botIds, humanIds, people }),
+  spaces: () => req<{ spaces: Space[] }>('GET', '/spaces'),
+  createSpace: (s: { name: string; kind: SpaceKind; description?: string }) => req<{ space: Space }>('POST', '/spaces', s),
+  updateSpace: (id: string, s: Partial<Pick<Space, 'name' | 'kind' | 'description' | 'color'>>) => req<{ space: Space }>('PATCH', `/spaces/${id}`, s),
+  deleteSpace: (id: string) => req<{ ok: true }>('DELETE', `/spaces/${id}`),
   /** Create a team and its people in one go. People may be new (by name) or existing (by id). */
-  createTeamWithPeople: (name: string, botIds: string[], people: { id?: string; name: string; email?: string }[]) =>
-    req<{ id: string }>('POST', '/rooms', { name, botIds, people }),
+  createTeamWithPeople: (name: string, botIds: string[], people: { id?: string; name: string; email?: string }[], spaceId?: string | null) =>
+    req<{ id: string }>('POST', '/rooms', { name, botIds, people, spaceId }),
   teams: () => req<TeamsResponse>('GET', '/rooms'),
   teamBrief: (id: string) => req<TeamBrief>('GET', `/rooms/${id}/brief`),
   setTeamBrief: (id: string, text: string) => req<TeamBrief>('PUT', `/rooms/${id}/brief`, { text }),
@@ -88,20 +95,50 @@ export const api = {
   dispatchRevoptTask: (id: string) => req<{ ok: true; prompt: string; teamId: string }>('POST', `/revopt/tasks/${id}/dispatch`),
   /** RevOps dashboard numbers for the last `days`. */
   revoptMetrics: (days = 30) => req<RevOpsMetrics>('GET', `/revopt/metrics?days=${days}`),
-  memoryBanks: () => req<{ banks: { id: string; facts: number; lastWriteAt: string | null }[] }>('GET', '/revopt/memory/banks'),
+  memoryBanks: () => req<{ banks: MemoryBank[] }>('GET', '/revopt/memory/banks'),
   memoryGraph: (bank: string, limit = 150) => req<MemoryGraph>('GET', `/revopt/memory/graph?bank=${encodeURIComponent(bank)}&limit=${limit}`),
   biStatus: () => req<{ configured: boolean; publicUrl: string | null; dashboards: BiDashboard[] }>('GET', '/revopt/bi'),
   biEnableEmbed: (id: number) => req<{ embedId: string }>('POST', `/revopt/bi/dashboards/${id}/embed`),
   biGuestToken: (embedId: string) => req<{ token: string }>('POST', '/revopt/bi/guest-token', { embedId }),
   memoryEntity: (bank: string, id: string) => req<MemoryEntity>('GET', `/revopt/memory/entities/${encodeURIComponent(id)}?bank=${encodeURIComponent(bank)}`),
+  memoryOntology: () => req<MemoryOntology>('GET', '/revopt/memory/ontology'),
+  obsidianStatus: () => req<ObsidianStatus>('GET', '/revopt/memory/obsidian'),
+  obsidianSync: () => req<ObsidianStatus>('POST', '/revopt/memory/obsidian/sync'),
 };
+
+/** The memory ontology: what kinds of things bots remember (with graph colours) and the link fields notes use. */
+export interface MemoryOntology {
+  types: { id: string; label: string; plural: string; color: string; about: string }[];
+  relations: { id: string; label: string }[];
+}
+
+/** Two-way sync between the bots' memory and an Obsidian vault on the server. */
+export interface ObsidianStatus {
+  enabled: boolean;
+  /** Whether the vault belongs to this workspace; other workspaces see no details. */
+  mine: boolean;
+  /** Why a sync cannot run right now (no folder, no owner account), when it cannot. */
+  problem: string | null;
+  vault: string | null;
+  everyMinutes: number;
+  running: boolean;
+  last: null | {
+    at: number; ms: number; error?: string;
+    ingest?: { saved: string[]; unchanged: number; forgotten: string[]; skipped: { path: string; why: string }[] };
+    export?: { banks: { bank: string; label: string; entities: number; changed: number }[]; removed: number };
+  };
+}
 
 /** A Superset dashboard; `embedId` is set once embedding is turned on for it. */
 export interface BiDashboard { id: number; title: string; embedId: string | null; url: string; changedAt: string | null }
 
+/** A Hindsight bank the signed-in person may open: global (`everyone`), a team's, or one bot's (`me`). */
+export interface MemoryBank { id: string; layer: 'me' | 'team' | 'everyone'; label: string; facts: number; lastWriteAt: string | null }
+
 export interface MemoryGraph {
   bank: string;
-  nodes: { id: string; label: string; mentions: number }[];
+  /** `type` is an ontology type id (`person`, `company`, …; `entity` when not typed yet). */
+  nodes: { id: string; label: string; mentions: number; type?: string }[];
   edges: { source: string; target: string; weight: number; lastAt: string | null }[];
   totalEntities: number;
   totalEdges: number;

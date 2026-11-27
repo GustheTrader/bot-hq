@@ -1,0 +1,43 @@
+[package]
+name = "bothq-a2ui-agent"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+publish = false
+description = "bot-Hq durable A2UI 1.0 OrderTicket agent (PRD v1.1 MVP, paper trading only)"
+
+[[bin]]
+name = "bothq-a2ui-agent"
+path = "src/main.rs"
+
+[features]
+default = []
+# Real order routing. OFF; enabling it is a compile error until the live-trading
+# readiness review (docs/a2ui/FOLLOW-UP-BACKLOG.md B13) is done.
+live-routing = []
+
+[dependencies]
+# Journal: rpi-durable's SQLite backend (exact pins, see docs/a2ui/ADR-001-authoring-layer.md).
+rpi-durable = { version = "=0.27.1", features = ["sqlite"] }
+# Same rusqlite/libsqlite3-sys as rpi-durable (one bundled SQLite in the graph).
+rusqlite = { version = "=0.31.0", features = ["bundled"] }
+# Same jsonschema as ag-ui-a2ui 1.0.0 pins; no network/file resolvers.
+jsonschema = { version = "=0.61.2", default-features = false }
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+# Second-opinion validator: ag-ui-a2ui's Draft 2020-12 SchemaValidator over the same bundle.
+ag-ui-a2ui = { version = "=1.0.0", default-features = false, features = ["agent", "schema-validation"] }
+tempfile = "3"
+tokio-tungstenite = "0.28"

@@ -26,8 +26,15 @@ export interface Human {
   createdAt: number;
 }
 
+export type SpaceKind = 'business' | 'project';
+
+/** A workspace for one business or project. Bots, teams and projects belong to at most one; none = "General". */
+export interface Space { id: string; name: string; kind: SpaceKind; description: string; color: string; botCount: number; projectCount: number; createdAt: number }
+
 export interface Bot {
   id: string;
+  /** The workspace this bot or team belongs to; null = General. */
+  spaceId?: string | null;
   name: string;
   label: string;
   description: string;
@@ -293,6 +300,8 @@ export interface Task { id: string; botId: string; title: string; state: 'workin
  */
 export interface Project {
   id: string;
+  /** The workspace it belongs to; null = General. */
+  spaceId?: string | null;
   name: string;
   description: string;
   folder: string;

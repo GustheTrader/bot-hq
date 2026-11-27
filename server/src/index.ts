@@ -9,6 +9,7 @@ import type { Server } from 'node:http';
 import { env } from './env.js';
 import { api } from './routes.js';
 import { attachVncRelay } from './vnc.js';
+import { a2uiApi, attachA2uiRelay } from './a2ui-relay.js';
 import { initRoutines } from './routines.js';
 import { initTriggers } from './triggers.js';
 import { initProactive } from './proactive.js';
@@ -18,6 +19,7 @@ import { checkinsApi } from './routes-proactive.js';
 import { roomsApi } from './routes-rooms.js';
 import { revoptApi } from './routes-revopt.js';
 import { projectsApi } from './routes-projects.js';
+import { spacesApi } from './routes-spaces.js';
 import { launchApi } from './routes-launch.js';
 import { enqueue, expireStaleApprovals } from './agent/loop.js';
 import { restorePendingQuestions } from './store.js';
@@ -32,10 +34,13 @@ import { startGrokBridge } from './routes-grok.js';
 import { recoverGrokJobs, startGrokSweep } from './grok-jobs.js';
 import { startGrokCallbacks } from './grok-notify.js';
 import { proxyBuildflow, proxyField } from './buildflow.js';
+import { initObsidian, startObsidianSync } from './obsidian.js';
+import { startMemoryRetry } from './memory-banks.js';
 
 if (!desSelfTest()) throw new Error('DES self-test failed');
 initSubagents();
 initRooms();
+initObsidian();
 // Approvals wait in memory; whatever was still open when the last process stopped can no longer be answered.
 expireStaleApprovals();
 // Questions a bot asked (ask_user) stay answerable across a restart, so bring back their "needs you" state.
@@ -57,8 +62,10 @@ app.route('/api/checkins', checkinsApi);
 app.route('/api/rooms', roomsApi);
 app.route('/api/revopt', revoptApi);
 app.route('/api/projects', projectsApi);
+app.route('/api/spaces', spacesApi);
 app.route('/api/launch', launchApi);
 app.route('/api/workspace', workspaceApi);
+app.route('/a2ui', a2uiApi);
 app.route('/api', api);
 app.route('/api', configApi);
 
@@ -71,10 +78,13 @@ if (fs.existsSync(webDist)) {
 
 const server = serve({ fetch: app.fetch, port: env.port, hostname: process.env.HOST || undefined }, (info) => console.log(`[grokbot] server on http://localhost:${info.port}`));
 attachVncRelay(server as unknown as Server);
+attachA2uiRelay(server as unknown as Server);
 // GROKBOT_NO_SCHEDULER=1 for extra dev/test servers sharing a database copy, so routines and triggers don't fire twice.
 if (process.env.GROKBOT_NO_SCHEDULER !== '1') {
   initRoutines(enqueue);
   void initTriggers(enqueue);
+  startObsidianSync(); // only when OBSIDIAN_VAULT and OBSIDIAN_SYNC_MINUTES are set
+  startMemoryRetry(); // retries team-memory saves Hindsight could not take
 initProactive(enqueue);
 } else console.log('[grokbot] scheduler disabled (GROKBOT_NO_SCHEDULER=1)');
 startIdleWatcher();

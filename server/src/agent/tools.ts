@@ -8,11 +8,13 @@ import { executeComposio, innerToolSlugs, isReadOnlySlug, toolkitInfo } from '..
 import { scheduleRoutine, unscheduleRoutine } from '../routines.js';
 import { createEventRoutine, deleteEventTrigger, describeEvent, listTriggerTypes } from '../triggers.js';
 import { setCheckins } from '../proactive.js';
-import { createRoom, postToRoom } from './rooms.js';
+import { createRoom, outsiders, postToRoom, teamSpace } from './rooms.js';
+import { canReach } from '../spaces.js';
 import type { ActivityKind } from '../types.js';
 import { Cron } from 'croner';
 import { dataGrep, dataList, dataRead, dataSearch, DataError, defaultConfig, warmCatalog } from '../dataplane/fs.js';
 import { bf, BuildflowError, buildflowEnabled } from '../buildflow.js';
+import { formatRecall, MemoryBankError, pickBanks, recall, retain } from '../memory-banks.js';
 
 export interface ToolCtx {
   userId: string;
@@ -42,8 +44,30 @@ interface ToolDef {
 
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object', properties, required, additionalProperties: false });
 
-function botByName(userId: string, name: string) {
-  return db.prepare('SELECT * FROM bots WHERE user_id=? AND lower(name)=lower(?)').get(userId, name.trim()) as any;
+/** The bots one bot can see: its own workspace and the main bot; the main bot sees all (spaces.ts). */
+function reachable(userId: string, fromBotId: string): any[] {
+  const from = db.prepare('SELECT space_id, is_primary FROM bots WHERE id=? AND user_id=?').get(fromBotId, userId) as any;
+  if (!from) return [];
+  const all = db.prepare('SELECT * FROM bots WHERE user_id=? ORDER BY (space_id IS ?) DESC, created_at').all(userId, from.space_id ?? null) as any[];
+  return all.filter((b) => canReach(from, b));
+}
+
+/**
+ * A bot by id or name, among those the asking bot can reach; one in its own workspace wins over others.
+ * Several equally good matches are reported, never picked from.
+ */
+export function findBot(userId: string, fromBotId: string, nameOrId: string): { bot?: any; ambiguous?: string } {
+  const wanted = String(nameOrId ?? '').trim();
+  const all = reachable(userId, fromBotId);
+  const byId = all.find((b) => b.id === wanted);
+  if (byId) return { bot: byId };
+  const named = all.filter((b) => String(b.name).toLowerCase() === wanted.toLowerCase());
+  const own = (db.prepare('SELECT space_id FROM bots WHERE id=?').get(fromBotId) as any)?.space_id ?? null;
+  const near = named.filter((b) => (b.space_id ?? null) === own);
+  const best = near.length ? near : named;
+  if (best.length < 2) return { bot: best[0] };
+  const where = (id: string | null) => (id ? (db.prepare('SELECT name FROM spaces WHERE id=?').get(id) as any)?.name : null) ?? 'General';
+  return { ambiguous: `Several Bots are named "${wanted}". Use the id instead: ${best.map((b) => `${b.id} (${where(b.space_id)})`).join(', ')}.` };
 }
 
 /** Live X research through xAI's search tool. Returns the answer text followed by the posts it cites. */
@@ -154,6 +178,54 @@ const DATA_TOOLS: ToolDef[] = [
     activity: 'working',
     label: 'Searching files',
     impl: dataTool((a) => dataGrep(dataCfg, a), (a) => `Grepped for "${String(a.pattern).slice(0, 40)}"`),
+  },
+];
+
+/** Long-term memory in Hindsight: the bot's own bank, its teams' banks, and the shared one (see memory-banks.ts). */
+const bankTool = (fn: Impl): Impl => async (a, ctx) => {
+  try { return await fn(a, ctx); } catch (e: any) {
+    if (e instanceof MemoryBankError) return { output: JSON.stringify({ error: e.message }), summary: 'Memory request refused' };
+    throw e;
+  }
+};
+const scopeParam = (all: boolean) => ({
+  type: 'string',
+  enum: all ? ['all', 'me', 'team', 'everyone'] : ['me', 'team', 'everyone'],
+  description: `me = your own memory, team = the memory of a team you are on, everyone = memory shared by every bot in your workspace${all ? ', all = all of them (default)' : ' (default: me)'}.`,
+});
+const MEMORY_TOOLS: ToolDef[] = [
+  {
+    name: 'memory_recall',
+    description: 'Search long-term memory by meaning: facts, decisions and outcomes you, your teams or the other bots saved. Use it before starting work that may have history ("what do we know about Acme", "what did the team decide on pricing"). Results are grouped by where they came from.',
+    parameters: obj({
+      query: { type: 'string', description: 'What to recall, in plain words.' },
+      scope: scopeParam(true),
+      team: { type: 'string', description: 'Only this team, by name (or its id when two of your teams share a name).' },
+    }, ['query']),
+    activity: 'remembering',
+    label: 'Searching memory',
+    impl: bankTool(async (a, ctx) => {
+      const banks = pickBanks(ctx.userId, ctx.botId, { layer: a.scope, team: a.team });
+      return { output: formatRecall(await recall(banks, String(a.query ?? '')), banks).slice(0, 30000), summary: `Recalled "${String(a.query).slice(0, 50)}"` };
+    }),
+  },
+  {
+    name: 'memory_save',
+    description: "Save a fact, decision or outcome to long-term memory so it is there in later conversations. scope=team when the whole team should know it (a decision, a client fact, a task's result); scope=everyone only for something every bot in your workspace needs. Write one self-contained statement with names and dates, not \"he said yes\". Your own notes file (memory tool) still holds short working notes; this is for knowledge worth searching later.",
+    parameters: obj({
+      text: { type: 'string', description: 'The fact, in one or a few sentences (at most 8000 characters; split longer material into separate facts).' },
+      scope: scopeParam(false),
+      team: { type: 'string', description: 'Which team, by name (or its id when two share a name). Giving a team saves to that team even without scope.' },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Optional short tags, e.g. a client or project name.' },
+    }, ['text']),
+    activity: 'remembering',
+    label: 'Saving to memory',
+    impl: bankTool(async (a, ctx) => {
+      const [bank] = pickBanks(ctx.userId, ctx.botId, { layer: a.scope, team: a.team, write: true });
+      const tags = (Array.isArray(a.tags) ? a.tags : []).map((t: unknown) => String(t).trim().slice(0, 40)).filter(Boolean).slice(0, 8);
+      const r = await retain(bank, String(a.text ?? ''), { by: `${getBotName(ctx.botId)} (bot)`, tags });
+      return { output: JSON.stringify({ ok: true, saved_to: bank.label, ...r }), summary: `Saved to ${bank.label}` };
+    }),
   },
 ];
 
@@ -412,13 +484,14 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'send_to_bot',
-    description: "Send a message to another Bot on the user's team (by name) to delegate work or ask a question. Their reply will arrive later as a new message to you.",
+    description: "Send a message to another Bot on the user's team (by name, or by id when two share a name) to delegate work or ask a question. Their reply will arrive later as a new message to you.",
     parameters: obj({ bot_name: { type: 'string' }, message: { type: 'string' } }, ['bot_name', 'message']),
     activity: 'messaging_named',
     label: 'Messaging a Bot',
     impl: async (a, ctx) => {
-      const target = botByName(ctx.userId, a.bot_name);
-      if (!target) return { output: `No bot named "${a.bot_name}". Team: ${(db.prepare('SELECT name FROM bots WHERE user_id=?').all(ctx.userId) as any[]).map((b) => b.name).join(', ')}` };
+      const { bot: target, ambiguous } = findBot(ctx.userId, ctx.botId, a.bot_name);
+      if (ambiguous) return { output: ambiguous };
+      if (!target) return { output: `No bot named "${a.bot_name}". Team: ${reachable(ctx.userId, ctx.botId).map((b) => b.name).join(', ')}` };
       if (target.id === ctx.botId) return { output: 'That is you.' };
       if (target.kind === 'team') return { output: `"${target.name}" is a team channel; use post_to_group instead.` };
       if (ctx.depth >= 3) return { output: 'Too many hops between bots; answer the user directly instead.' };
@@ -428,7 +501,7 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: 'create_group',
-    description: "Create a group chat between the user and several Bots on the team (by name). It appears in the user's sidebar; when the user posts there, the relevant Bots answer.",
+    description: "Create a group chat between the user and several Bots on the team (by name, or by id when two share a name). It appears in the user's sidebar; when the user posts there, the relevant Bots answer.",
     parameters: obj({ name: { type: 'string' }, bot_names: { type: 'array', items: { type: 'string' } } }, ['name', 'bot_names']),
     activity: 'working',
     label: 'Setting up a group',
@@ -436,10 +509,13 @@ export const TOOLS: ToolDef[] = [
       const ids: string[] = [];
       const missing: string[] = [];
       for (const n of (a.bot_names ?? []) as string[]) {
-        const b = botByName(ctx.userId, n);
+        const { bot: b, ambiguous } = findBot(ctx.userId, ctx.botId, n);
+        if (ambiguous) return { output: ambiguous };
         if (b && b.kind !== 'team') ids.push(b.id); else missing.push(n);
       }
       if (ids.length < 2) return { output: `A team needs at least 2 Bots. Not found: ${missing.join(', ') || 'none'}.` };
+      const mixed = outsiders(ids, teamSpace(ids));
+      if (mixed.length) return { output: `A group stays inside one workspace. Not in it: ${mixed.join(', ')}.` };
       const id = createRoom(ctx.userId, String(a.name), [...new Set(ids)]);
       appendRow(id, 'event', { type: 'event', event: 'bot-message', text: `Team created with ${(a.bot_names as string[]).filter((n) => !missing.includes(n)).join(', ')}` });
       return { output: JSON.stringify({ ok: true, group_id: id, missing }), summary: `Created team ${a.name}` };
@@ -484,6 +560,7 @@ export const TOOLS: ToolDef[] = [
     },
   },
   ...DATA_TOOLS,
+  ...MEMORY_TOOLS,
   ...(buildflowEnabled() ? BUILDFLOW_TOOLS : []),
 ];
 

@@ -8,6 +8,13 @@ export const PORTRAIT_GROUPS = [
 
 export const PORTRAITS = PORTRAIT_GROUPS.flatMap((group) => group.names);
 
+/** The stored id of a preset portrait, by its name. */
+export function portraitPreset(name: string): string {
+  const index = PORTRAITS.indexOf(name);
+  if (index < 0) throw new Error(`No portrait is named ${name}.`);
+  return `preset:${index}`;
+}
+
 export function isPortraitPreset(value: unknown): value is string {
   if (typeof value !== 'string' || !/^preset:(0|[1-9]\d*)$/.test(value)) return false;
   return Number(value.slice(7)) < PORTRAITS.length;

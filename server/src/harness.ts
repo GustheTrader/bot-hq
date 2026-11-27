@@ -1,8 +1,10 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import os from 'node:os';
 import { env } from './env.js';
 import { displayFor } from './box.js';
+import { db } from './db.js';
 import { engineKind, mcpToken } from './engine.js';
 
 /**
@@ -12,7 +14,7 @@ import { engineKind, mcpToken } from './engine.js';
  * events Hermes streams, so the turn loop treats every harness alike.
  */
 
-export type HarnessId = 'hermes' | 'codex' | 'claude-code' | 'pi' | 'opencode';
+export type HarnessId = 'hermes' | 'codex' | 'claude-code' | 'pi' | 'opencode' | 'deepseek';
 
 interface HarnessDef { id: HarnessId; name: string; subscription: string; command?: string[] }
 
@@ -22,6 +24,7 @@ export const HARNESSES: HarnessDef[] = [
   { id: 'claude-code', name: 'Claude Code', subscription: 'Claude', command: ['claude-agent-acp'] },
   { id: 'pi', name: 'Pi', subscription: 'Its own providers', command: ['pi-acp'] },
   { id: 'opencode', name: 'OpenCode', subscription: 'Its own providers', command: ['opencode', 'acp'] },
+  { id: 'deepseek', name: 'DeepSeek Harness', subscription: 'Its own providers', command: ['dsh', '--profile', 'acp'] },
 ];
 
 export const isHarnessId = (v: unknown): v is HarnessId => HARNESSES.some((h) => h.id === v);
@@ -40,9 +43,53 @@ export interface HarnessEvent { type: string; data: any }
 // ---------- one ACP agent process per bot ----------
 
 interface Session { id: string; conversation: string; info: any; defaultModel: string | null; applied: { model: string | null; effort: string | null } }
-interface Agent { child: ChildProcess; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; session: Session | null; onUpdate: ((u: any) => void) | null; dead: boolean }
+interface Agent { child: ChildProcess; botId: string; harness: HarnessId; nextId: number; waiting: Map<number, (m: any) => void>; session: Session | null; onUpdate: ((u: any) => void) | null; dead: boolean }
 
 const agents = new Map<string, Agent>();
+
+/**
+ * One subscription serves every bot on that harness, and the plans meter how many sessions may run at once
+ * (a third Claude Code session on one plan is the classic "it just hangs"). A turn waits for a slot instead
+ * of failing, so the queue shows up as a slow turn rather than an error nobody can read.
+ * BH_MAX_CONCURRENT_<HARNESS> overrides per harness; BH_MAX_CONCURRENT sets every harness. 0 = no cap.
+ */
+const TURN_LIMIT = (id: HarnessId): number => {
+  const raw = process.env[`BH_MAX_CONCURRENT_${id.toUpperCase()}`] ?? process.env.BH_MAX_CONCURRENT ?? '2';
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+};
+const turnSlots = new Map<HarnessId, { active: number; waiters: (() => void)[] }>();
+
+/** Runs `fn` once this harness has a free turn slot. An aborted turn gives its place back. */
+export async function withTurnSlot<T>(id: HarnessId, signal: AbortSignal, fn: () => Promise<T>): Promise<T> {
+  const limit = TURN_LIMIT(id);
+  if (limit === 0) return fn();
+  let slot = turnSlots.get(id);
+  if (!slot) turnSlots.set(id, (slot = { active: 0, waiters: [] }));
+  while (slot.active >= limit) {
+    const parked = slot;
+    await new Promise<void>((resolve) => {
+      const wake = () => { signal.removeEventListener('abort', onAbort); resolve(); };
+      const onAbort = () => {
+        const i = parked.waiters.indexOf(wake);
+        if (i >= 0) parked.waiters.splice(i, 1);
+        resolve();
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      parked.waiters.push(wake);
+    });
+    if (signal.aborted) throw new Error('interrupted');
+  }
+  slot.active++;
+  try {
+    return await fn();
+  } finally {
+    slot.active--;
+    // The waiter re-checks the cap when it wakes and takes the slot itself; counting it here would
+    // count one turn twice and shrink the cap by one per turn.
+    slot.waiters.shift()?.();
+  }
+}
 /** Bots being deleted: no harness may start for them again. */
 const retired = new Set<string>();
 const LIB_ROOT = '/root/grokbot/files';
@@ -58,31 +105,139 @@ function call(a: Agent, method: string, params: object): Promise<any> {
   });
 }
 
-/** The agent asks something of us. Permission requests are allowed (as Hermes' own tools are); we offer no files or terminals. */
-function answer(a: Agent, m: any) {
-  if (m.method === 'session/request_permission') {
-    const opts: any[] = Array.isArray(m.params?.options) ? m.params.options : [];
-    const pick = opts.find((o) => o.kind === 'allow_once') ?? opts.find((o) => String(o.kind).startsWith('allow'));
-    send(a, { id: m.id, result: { outcome: pick ? { outcome: 'selected', optionId: pick.optionId } : { outcome: 'cancelled' } } });
-    return;
-  }
+/** The agent asks something of us. */
+async function answer(a: Agent, m: any) {
+  if (m.method === 'session/request_permission') return permission(a, m);
   send(a, { id: m.id, error: { code: -32601, message: `${m.method} is not offered by this client` } });
 }
 
 /**
- * What the harness process gets to see of our environment: what a program needs to run, plus the
- * variables that point harnesses at their own config. Never the server's secrets (session secret,
- * app keys), which the agent could otherwise read from its shell.
+ * How a harness's permission request is answered. `ask` puts it in the conversation as an approval
+ * card and waits, the same way the MCP tools do, and a standing "always allow" for that user and
+ * kind answers it without a card. `allow` is the old behaviour, where every request was granted;
+ * `deny` refuses everything, for a bot that should not touch its machine at all.
  */
-const PASS_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TERM', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'OPENCODE_CONFIG'];
-function harnessEnv(screenId: string | null, harness?: HarnessId): NodeJS.ProcessEnv {
+const permissionMode = (): 'ask' | 'allow' | 'deny' => {
+  const v = String(process.env.BH_HARNESS_PERMISSIONS ?? 'ask').toLowerCase();
+  return v === 'allow' || v === 'deny' ? v : 'ask';
+};
+
+async function permission(a: Agent, m: any) {
+  const opts: any[] = Array.isArray(m.params?.options) ? m.params.options : [];
+  const allowPick = opts.find((o) => o.kind === 'allow_once') ?? opts.find((o) => String(o.kind).startsWith('allow'));
+  const denyPick = opts.find((o) => o.kind === 'reject_once') ?? opts.find((o) => String(o.kind).startsWith('reject'));
+  const reply = (pick: any) =>
+    send(a, { id: m.id, result: { outcome: pick ? { outcome: 'selected', optionId: pick.optionId } : { outcome: 'cancelled' } } });
+
+  const mode = permissionMode();
+  const call = m.params?.toolCall ?? {};
+  const kind = String(call.kind ?? 'other');
+  const key = `harness:${kind}`;
+  const title = String(call.title ?? kind);
+
+  if (mode === 'allow') return reply(allowPick);
+  if (mode === 'deny') return reply(denyPick);
+
+  try {
+    const userId = (db.prepare('SELECT user_id FROM bots WHERE id=?').get(a.botId) as any)?.user_id;
+    if (!userId) return reply(denyPick);
+    const standing = db.prepare("SELECT 1 FROM policies WHERE user_id=? AND tool=? AND mode='always_allow'").get(userId, key);
+    if (standing) return reply(allowPick);
+    const { requestApproval } = await import('./agent/loop.js');
+    const decision = await requestApproval(
+      { userId, botId: a.botId },
+      { key, title: `harness: ${title}` },
+      call.rawInput ?? { title, kind, locations: call.locations },
+      null,
+    );
+    reply(decision === 'allow' ? allowPick : denyPick);
+  } catch {
+    reply(denyPick);
+  }
+}
+
+/**
+ * Per-bot home and tool config dirs. Default `isolated`: every bot gets its own HOME, CODEX_HOME,
+ * CLAUDE_CONFIG_DIR and PI_CODING_AGENT_DIR under BH_HOME_ROOT, and the shared config dirs are
+ * symlinked in rather than copied, so a sign-in done once keeps working (and rotating it updates
+ * every bot). `shared` keeps the old behaviour: one set of dirs for the whole server.
+ */
+const BOT_HOME_MODE = (process.env.BH_BOT_HOME ?? 'isolated').toLowerCase();
+const HOME_ROOT = process.env.BH_HOME_ROOT ?? `${LIB_ROOT}/.homes`;
+const SHARED_CONFIG = {
+  codex: process.env.CODEX_HOME ?? `${os.homedir()}/.codex`,
+  claude: process.env.CLAUDE_CONFIG_DIR ?? `${os.homedir()}/.claude`,
+  pi: process.env.PI_CODING_AGENT_DIR ?? `${os.homedir()}/.pi/agent`,
+  claudeJson: `${os.homedir()}/.claude.json`,
+};
+/** What stays shared per tool: the sign-in, the model list, the skills. Everything else is per-bot. */
+function sharedLinks(dirs: Record<string, string>): [to: string, from: string][] {
+  return [
+    [`${dirs.CODEX_HOME}/auth.json`, `${SHARED_CONFIG.codex}/auth.json`],
+    [`${dirs.CODEX_HOME}/config.toml`, `${SHARED_CONFIG.codex}/config.toml`],
+    [`${dirs.CODEX_HOME}/skills`, `${SHARED_CONFIG.codex}/skills`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/.claude.json`, SHARED_CONFIG.claudeJson],
+    [`${dirs.CLAUDE_CONFIG_DIR}/.credentials.json`, `${SHARED_CONFIG.claude}/.credentials.json`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/settings.json`, `${SHARED_CONFIG.claude}/settings.json`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/skills`, `${SHARED_CONFIG.claude}/skills`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/plugins`, `${SHARED_CONFIG.claude}/plugins`],
+    [`${dirs.CLAUDE_CONFIG_DIR}/policy-limits.json`, `${SHARED_CONFIG.claude}/policy-limits.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/auth.json`, `${SHARED_CONFIG.pi}/auth.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/models.json`, `${SHARED_CONFIG.pi}/models.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/models-store.json`, `${SHARED_CONFIG.pi}/models-store.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/settings.json`, `${SHARED_CONFIG.pi}/settings.json`],
+    [`${dirs.PI_CODING_AGENT_DIR}/skills`, `${SHARED_CONFIG.pi}/skills`],
+    // Identity, not config: a bot that cannot see these cannot push or sign a commit, and it could
+    // see them anyway when HOME was the server's own (the behaviour this replaces).
+    [`${dirs.HOME}/.gitconfig`, `${os.homedir()}/.gitconfig`],
+    [`${dirs.HOME}/.git-credentials`, `${os.homedir()}/.git-credentials`],
+    [`${dirs.HOME}/.ssh`, `${os.homedir()}/.ssh`],
+    [`${dirs.HOME}/.config/gh`, `${os.homedir()}/.config/gh`],
+  ];
+}
+
+/**
+ * The env a bot's harness processes get for home and config. Bots must not share these: a harness
+ * turn can read anything in its own config dir, including another bot's transcripts. Credentials are
+ * symlinked from the shared dirs, so one sign-in still serves every bot.
+ */
+export function botEnvDirs(botId: string): Record<string, string> {
+  if (BOT_HOME_MODE === 'shared') return {};
+  const root = `${HOME_ROOT}/${botId}`;
+  const home = `${root}/home`;
+  const dirs: Record<string, string> = {
+    HOME: home,
+    XDG_CONFIG_HOME: `${home}/.config`,
+    XDG_CACHE_HOME: `${home}/.cache`,
+    XDG_DATA_HOME: `${home}/.local/share`,
+    XDG_RUNTIME_DIR: `${home}/.run`,
+    CODEX_HOME: `${root}/codex`,
+    CLAUDE_CONFIG_DIR: `${root}/claude`,
+    PI_CODING_AGENT_DIR: `${root}/pi`,
+  };
+  try {
+    for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(`${dirs.HOME}/.config`, { recursive: true, mode: 0o700 });
+    for (const [to, from] of sharedLinks(dirs)) {
+      if (fs.existsSync(to) || !fs.existsSync(from)) continue;
+      fs.symlinkSync(from, to);
+    }
+  } catch { /* a missing link costs a sign-in, not the turn */ }
+  return dirs;
+}
+
+const PASS_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TERM', 'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'PI_CODING_AGENT_DIR', 'OPENCODE_CONFIG',
+  // Model keys the harness itself reads from the environment (the DeepSeek Harness); the ACP
+  // agents that keep keys in files get them through their config dirs instead.
+  'DEEPSEEK_API_KEY', 'OPENROUTER_API_KEY'];
+function harnessEnv(screenId: string | null, harness?: HarnessId, botId?: string): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {};
   for (const k of PASS_ENV) if (process.env[k] !== undefined) out[k] = process.env[k];
   // pi-acp starts `pi` itself; the wrapper adds --approve so the bot's own .pi/mcp.json (which
   // carries the app's hq server) is read without an interactive trust prompt.
   if (harness === 'pi') out.PI_ACP_PI_COMMAND = fileURLToPath(new URL('../scripts/pi-trusted', import.meta.url));
   // Its windows and browser land on the bot's own screen.
-  return { ...out, DISPLAY: displayFor(screenId), NO_COLOR: '1' };
+  return { ...out, ...(botId ? botEnvDirs(botId) : {}), DISPLAY: displayFor(screenId), NO_COLOR: '1' };
 }
 
 /**
@@ -137,9 +292,9 @@ function startAgent(key: string, botId: string, harness: HarnessDef, screenId: s
     stdio: ['pipe', 'pipe', 'pipe'],
     // Its own process group, so stopping it also stops what it started (Codex runs a helper process).
     detached: true,
-    env: harnessEnv(screenId, harness.id),
+    env: harnessEnv(screenId, harness.id, botId),
   });
-  const a: Agent = { child, harness: harness.id, nextId: 1, waiting: new Map(), session: null, onUpdate: null, dead: false };
+  const a: Agent = { child, botId, harness: harness.id, nextId: 1, waiting: new Map(), session: null, onUpdate: null, dead: false };
   let buf = '';
   child.stdout?.on('data', (d: Buffer) => {
     buf += d.toString('utf8');
@@ -152,7 +307,7 @@ function startAgent(key: string, botId: string, harness: HarnessDef, screenId: s
       try { m = JSON.parse(line); } catch { continue; }
       if (m.id !== undefined && !m.method && a.waiting.has(m.id)) { a.waiting.get(m.id)!(m); a.waiting.delete(m.id); }
       else if (m.method === 'session/update') a.onUpdate?.(m.params?.update);
-      else if (m.method && m.id !== undefined) answer(a, m);
+      else if (m.method && m.id !== undefined) void answer(a, m).catch(() => { /* the harness gets no reply; the turn fails, the server stays up */ });
     }
   });
   child.stderr?.on('data', () => { /* adapters log here; not ours to show */ });
@@ -445,7 +600,7 @@ async function* runPrompt(a: Agent, def: HarnessDef, opts: {
   // A Stop pressed while the harness was starting must still keep the prompt from running.
   if (opts.signal.aborted) { a.onUpdate = null; throw new Error('interrupted'); }
   opts.signal.addEventListener('abort', stop, { once: true });
-  call(a, 'session/prompt', { sessionId, prompt: [{ type: 'text', text }] })
+  withTurnSlot(a.harness, opts.signal, () => call(a, 'session/prompt', { sessionId, prompt: [{ type: 'text', text }] }))
     .catch((e) => { failure = e instanceof Error ? e : new Error(String(e)); })
     .finally(() => { finished = true; wake?.(); });
 

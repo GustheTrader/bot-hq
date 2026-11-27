@@ -37,7 +37,12 @@ export function userFromToken(t: string | undefined): User | null {
 
 export function userFromCookieHeader(cookieHeader: string | undefined): User | null {
   const m = cookieHeader?.split(/;\s*/).find((p) => p.startsWith(`${COOKIE}=`));
-  return userFromToken(m ? decodeURIComponent(m.slice(COOKIE.length + 1)) : undefined);
+  if (!m) return userFromToken(undefined);
+  // A malformed value (e.g. "grokbot_session=%") makes decodeURIComponent throw; in the VNC upgrade
+  // listener that was an uncaught exception that took the whole server down. Treat it as signed out.
+  let token: string;
+  try { token = decodeURIComponent(m.slice(COOKIE.length + 1)); } catch { return null; }
+  return userFromToken(token);
 }
 
 export const requireUser: MiddlewareHandler<AuthVars> = async (c, next) => {

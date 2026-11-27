@@ -254,3 +254,14 @@
 .wiki-code { padding: 10px 12px; overflow-x: auto; }
 .wiki-code .cfg-code { white-space: nowrap; font-size: 12px; color: var(--color-ink); }
 .engine__wiki { padding: 0 8px 6px; font-size: 12px; line-height: 16px; }
+/* Settings > Models (9Router) */
+.models__provider + .models__provider { box-shadow: var(--color-border-tertiary) 0 -0.5px 0; }
+.models__provider .cfg-row + .cfg-row { box-shadow: none; }
+.models__form { display: flex; flex-direction: column; gap: 8px; padding: 0 10px 10px 36px; }
+.models__form-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.models__error { color: var(--color-danger); }
+.models__warn { color: var(--color-warning, var(--color-danger)); }
+.models__excluded summary { cursor: pointer; list-style: none; margin-bottom: 14px; }
+.models__excluded summary::-webkit-details-marker { display: none; }
+.models__excluded summary::before { content: '▸ '; }
+.models__excluded[open] summary::before { content: '▾ '; }

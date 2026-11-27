@@ -1,6 +1,6 @@
 # 9Router in Bot HQ: scope and plan
 
-Status: **Phase 1 done 2026-11-24** (9Router 0.5.116 running on Zo, localhost only; combos `hq-google`, `hq-free`, `hq-smart`; no provider keys connected yet).
+Status: **Phase 1 done 2026-11-24** (9Router 0.5.116 running on Zo, localhost only; combos `hq-google`, `hq-free`, `hq-smart`; no provider keys connected yet). **Phase 2 done the same day:** Hermes provider `9router` added to the primary and all 7 managed bots; it shows in every bot's Engine panel. Hermes reloads provider config live, so no restart was needed.
 
 **Model rule (user decision):** no frontier labs (Anthropic, OpenAI including gpt-oss, xAI) in 9Router. Open-weight models only, plus all new Google models (Gemini + Gemma). This rules out Kiro, OpenCode Free and llm7, so §3's tiers become Google + open-weight hosts (NVIDIA, Cerebras, Groq, Cloudflare).
 

@@ -8,7 +8,10 @@ import { teamMembers, teamBrief } from './agent/rooms.js';
 import { env } from './env.js';
 import type { RevOptKind, RevOptPriority, RevOptStatus, RevOptTask } from './types.js';
 import { computeMetrics, type BotTaskRow, type QueueRow } from './revops-metrics.js';
-import { MemoryGraphError, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
+import { MemoryGraphError, checkBank, entityFacts, listBanks, memoryGraph } from './memory-graph.js';
+import { MAX_MEMORY, banksForUser, retainDurably, teamBank, userMayView } from './memory-banks.js';
+import { ENTITY_TYPES, RELATIONS, UNTYPED, entityTyper } from './ontology.js';
+import { syncProblem, syncStatus, syncVault } from './obsidian.js';
 import { SupersetError, enableEmbedding, guestToken, listDashboards, supersetConfig } from './superset.js';
 import { bf, buildflowEnabled, jobBrief, jobByNumber, looksLikeJobNumber, type JobRef } from './buildflow.js';
 
@@ -212,8 +215,55 @@ revoptApi.post('/tasks', async (c) => {
     (body.status as string) ?? 'todo', cleaned.patch.priority ?? 'normal',
     JSON.stringify(body.payload ?? {}), t, t, body.dueAt ?? null,
   );
+  // A task logged as already finished is remembered too.
+  if (body.status === 'done') rememberDone(userId, db.prepare('SELECT * FROM revopt_tasks WHERE id=?').get(id) as TaskRow, u.name);
   return c.json({ id });
 });
+
+/**
+ * What the team said about a dispatched task: the bots' last replies in the team channel after the
+ * task was posted there (newest last, at most two), or '' when it was never dispatched.
+ */
+export function taskOutcome(t: Pick<TaskRow, 'team_id' | 'row_seq'>): string {
+  if (t.row_seq == null) return '';
+  const rows = db.prepare(
+    `SELECT body FROM rows WHERE bot_id=? AND kind='message' AND seq>? AND generation=(SELECT generation FROM bots WHERE id=?)
+     ORDER BY seq DESC LIMIT 20`,
+  ).all(t.team_id, t.row_seq, t.team_id) as { body: string }[];
+  const replies: string[] = [];
+  for (const r of rows) {
+    let b: any;
+    try { b = JSON.parse(r.body); } catch { continue; }
+    if (b?.role !== 'assistant' || !b.text) continue;
+    replies.unshift(`${b.from?.name ? `${b.from.name}: ` : ''}${String(b.text).replace(/\s+/g, ' ').trim()}`);
+    if (replies.length === 2) break;
+  }
+  return replies.join(' / ').slice(0, 3000);
+}
+
+/**
+ * A finished task becomes part of its team's memory, so the next task about the same client or
+ * deal starts from what this one found: the brief, and what the team replied. One document per task
+ * (re-finishing a reopened task replaces it), kept until Hindsight takes it, in the background, so
+ * a slow or absent memory store never holds up the status change.
+ */
+function rememberDone(userId: string, t: TaskRow, by: string) {
+  const bank = teamBank(userId, t.team_id);
+  if (!bank) return;
+  const job = (toTask(t).payload as any)?.buildflowJob;
+  const outcome = taskOutcome(t);
+  // Each part is capped so the whole always fits in one memory (MAX_MEMORY); a save that is too long would be dropped.
+  const cap = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+  const text = [
+    `RevOpt ${t.kind} task finished on ${new Date().toISOString().slice(0, 10)}: ${cap(t.title, 400)}.`,
+    t.target ? `Target: ${cap(t.target, 400)}.` : '',
+    job?.number ? `Build-flow job ${cap(String(job.number), 40)}${job.name ? ` (${cap(String(job.name), 200)})` : ''}.` : '',
+    t.detail ? `Brief: ${cap(t.detail, 3000)}` : '',
+    outcome ? `Outcome, from the team: ${cap(outcome, 3000)}` : 'No outcome was posted in the team channel.',
+  ].filter(Boolean).join(' ').slice(0, MAX_MEMORY);
+  retainDurably(userId, bank, text, { by, context: `RevOpt task ${t.id} marked done`, tags: ['revopt', t.kind], documentId: `revopt-${t.id}` })
+    .catch((e) => console.warn(`[memory] could not save finished task ${t.id} to ${bank.id} (will retry): ${e instanceof Error ? e.message : e}`));
+}
 
 /** Update a task (status, priority, title, detail, target, payload, dueAt). */
 revoptApi.patch('/tasks/:id', async (c) => {
@@ -251,6 +301,7 @@ revoptApi.patch('/tasks/:id', async (c) => {
   args.push(id, userId);
   db.prepare(`UPDATE revopt_tasks SET ${sets.join(', ')} WHERE id=? AND user_id=?`).run(...args);
   const fresh = db.prepare('SELECT * FROM revopt_tasks WHERE id=?').get(id) as TaskRow;
+  if (fresh.status === 'done' && row.status !== 'done') rememberDone(userId, fresh, c.get('user').name);
   return c.json({ ok: true, task: toTask(fresh) });
 });
 
@@ -333,10 +384,55 @@ const graphGuard = async (c: any, fn: () => Promise<Response>) => {
   }
 };
 
-/** The bots' shared memory (Hindsight) as an entity graph. */
-revoptApi.get('/memory/banks', (c) => graphGuard(c, async () => c.json({ banks: await listBanks() })));
-revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => c.json(await memoryGraph(c.req.query('bank'), c.req.query('limit')))));
-revoptApi.get('/memory/entities/:id', (c) => graphGuard(c, async () => c.json(await entityFacts(c.req.query('bank'), c.req.param('id')))));
+/**
+ * The bots' memory (Hindsight) as an entity graph, one bank at a time: shared, a team's or a bot's.
+ * Only the signed-in person's own banks are listed or opened; a bank nobody has written to yet is
+ * listed with 0 facts.
+ */
+revoptApi.get('/memory/banks', (c) => graphGuard(c, async () => {
+  const live = new Map((await listBanks()).map((b) => [b.id, b]));
+  const banks = banksForUser(c.get('user').id).map((b) => ({ ...b, facts: live.get(b.id)?.facts ?? 0, lastWriteAt: live.get(b.id)?.lastWriteAt ?? null }));
+  return c.json({ banks });
+}));
+const viewable = (c: any) => {
+  const bank = checkBank(c.req.query('bank'));
+  if (!userMayView(c.get('user').id, bank)) throw new MemoryGraphError('Unknown memory bank.', 404);
+  return bank;
+};
+revoptApi.get('/memory/graph', (c) => graphGuard(c, async () => {
+  const bank = viewable(c);
+  try {
+    const g = await memoryGraph(bank, c.req.query('limit'));
+    const typer = entityTyper(c.get('user').id);
+    return c.json({ ...g, nodes: g.nodes.map((n) => ({ ...n, type: typer(n.label).id })) });
+  } catch (e) {
+    // A bot's or team's bank is only created on its first save; until then it is empty, not missing.
+    if (e instanceof MemoryGraphError && e.status === 404) return c.json({ bank, nodes: [], edges: [], totalEntities: 0, totalEdges: 0, stats: null });
+    throw e;
+  }
+}));
+revoptApi.get('/memory/entities/:id', (c) => graphGuard(c, async () => c.json(await entityFacts(viewable(c), c.req.param('id')))));
+
+/** The ontology: entity types (with their graph colours) and the link fields notes may use. */
+revoptApi.get('/memory/ontology', (c) => c.json({
+  types: [...ENTITY_TYPES, UNTYPED].map(({ id, label, plural, color, about }) => ({ id, label, plural, color, about })),
+  relations: RELATIONS.map(({ id, label }) => ({ id, label })),
+}));
+
+/** Obsidian sync: its state, and "sync now" (runs in the background; poll the state). */
+// The vault belongs to one workspace: only that account sees the details or can start a sync.
+revoptApi.get('/memory/obsidian', (c) => c.json(syncStatus(c.get('user').id)));
+revoptApi.post('/memory/obsidian/sync', (c) => {
+  const userId = c.get('user').id;
+  const s = syncStatus(userId);
+  // Setup problems first (no vault, no folder, no owner account): they need a fix on the server, not another account.
+  const problem = syncProblem();
+  if (problem) return c.json({ error: problem }, 400);
+  if (!s.mine) return c.json({ error: 'The Obsidian vault belongs to another workspace.' }, 403);
+  if (s.running) return c.json(s, 202);
+  syncVault().catch((e) => console.warn(`[obsidian] sync failed: ${e instanceof Error ? e.message : e}`));
+  return c.json(syncStatus(userId), 202);
+});
 
 // ---------- BI (Apache Superset, embedded) ----------
 

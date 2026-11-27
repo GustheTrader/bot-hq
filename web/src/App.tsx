@@ -14,10 +14,12 @@ import { ConnectAppsModal } from './components/modals/ConnectAppsModal';
 import { CreateBotModal } from './components/modals/CreateBotModal';
 import { CreateGroupModal } from './components/modals/CreateGroupModal';
 import { SearchModal } from './components/modals/SearchModal';
+import { SpacesModal } from './components/modals/SpacesModal';
 import { ConfigLayer } from './components/config/ConfigLayer';
 import { GnoesisWork } from './components/gnoesis/GnoesisWork';
 import { TeamsView } from './components/TeamsView';
 import { RevOptView } from './components/RevOptView';
+import { TradingView } from './components/TradingView';
 import { useConfigUI } from './configStore';
 
 function Shell() {
@@ -75,6 +77,8 @@ function Shell() {
         <GnoesisWork />
         {modal === 'search' && <SearchModal />}
         {modal === 'apps' && <ConnectAppsModal />}
+        {modal === 'spaces' && <SpacesModal />}
+        {modal === 'create' && <CreateBotModal />}
         {viewerOpen && <ComputerViewer />}
         <ConfigLayer />
       </>
@@ -84,10 +88,11 @@ function Shell() {
   return (
     <div className={`app${collapsed ? ' is-sidebar-collapsed' : ''}${detailsOpen && hasBot && view === 'chat' ? ' has-details' : ''}`}>
       <Sidebar />
-      {view === 'code' ? <CodeView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'buildflow' ? <BuildflowView /> :view === 'hq' ? <HqView /> : <ChatView />}
+      {view === 'code' ? <CodeView /> : view === 'teams' ? <TeamsView /> : view === 'revopt' ? <RevOptView /> : view === 'macro' ? <MacroView /> : view === 'buildflow' ? <BuildflowView /> : view === 'trading' ? <TradingView /> : view === 'hq' ? <HqView /> : <ChatView />}
       {detailsOpen && hasBot && view === 'chat' && <DetailsPanel />}
       {modal === 'create' && <CreateBotModal />}
       {modal === 'group' && <CreateGroupModal />}
+      {modal === 'spaces' && <SpacesModal />}
       {modal === 'search' && <SearchModal />}
       {modal === 'apps' && <ConnectAppsModal />}
       {viewerOpen && <ComputerViewer />}

@@ -4,6 +4,7 @@ import { connectedToolkits } from '../composio.js';
 import { LIBRARY_ROOT } from './tools.js';
 import { testFlag } from '../grok-guard.js';
 import { macroEnabled } from '../macro.js';
+import { canReach } from '../spaces.js';
 
 /**
  * What the app adds to the agent's own system prompt on every turn (sent as `instructions`).
@@ -19,7 +20,9 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
   const owner = user?.name ?? 'the user';
   const primaryEngine = bot.engine === 'primary';
 
-  const team = (db.prepare("SELECT name, label, is_primary FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'team' ORDER BY created_at").all(userId, botId) as any[])
+  const space = bot.space_id ? (db.prepare('SELECT name, kind, description FROM spaces WHERE id=? AND user_id=?').get(bot.space_id, userId) as any) : null;
+  const team = (db.prepare("SELECT name, label, is_primary, space_id FROM bots WHERE user_id=? AND id<>? AND COALESCE(hidden,0)=0 AND COALESCE(kind,'agent')<>'team' ORDER BY created_at").all(userId, botId) as any[])
+    .filter((b) => canReach(bot, b))
     .map((b) => `- ${b.name}${b.label ? ` (${b.label})` : ''}${b.is_primary ? ' [main point of contact]' : ''}`)
     .join('\n');
   const groups = (db.prepare("SELECT name FROM bots WHERE user_id=? AND kind='team' AND id IN (SELECT team_id FROM team_members WHERE member_kind='bot' AND member_id=?) ORDER BY created_at").all(userId, botId) as any[]).map((g) => g.name).join(', ');
@@ -32,8 +35,12 @@ export async function instructionsFor(userId: string, botId: string): Promise<st
     ? `This conversation comes from ${owner}'s team app, where you appear as "${bot.name}"${bot.label ? ` (${bot.label})` : ''}. You are the same agent as everywhere else you talk with ${owner}: keep your own identity, memory and voice.${bot.is_primary ? ` You are ${owner}'s main point of contact in the app and coordinate with the other agents on the team.` : ''}`
     : `You are ${bot.name}${bot.label ? `, ${bot.label},` : ''} on ${owner}'s team of AI agents. ${owner} talks to you in their team app.${bot.description ? `\nAbout you: ${bot.description}` : ''}${bot.is_primary ? `\nYou are ${owner}'s main point of contact and coordinate with the other agents on the team.` : ''}`;
 
+  const workspace = space
+    ? `\n\n## Your workspace\nYou work for the ${space.kind} "${space.name}".${space.description ? ` ${space.description}` : ''}\nKeep its information inside this workspace. Memory scope "everyone" means the bots of this workspace.`
+    : '';
+
   return `# Team app
-${who}
+${who}${workspace}
 
 ## The app's tools
 The app gives you extra tools through its MCP server "hq"; their names carry that prefix (save_file appears as mcp_hq_save_file or mcp__hq__save_file).
@@ -42,6 +49,7 @@ The app gives you extra tools through its MCP server "hq"; their names carry tha
 ${macroEnabled() ? `- Macro (macro.com) is the team's CRM, email, docs and tasks, reached through the MCP server "macro" (ReadCodeDocs and DescribeCodeTools to find the SDK methods, then ExecuteCode). In team channels and RevOpt tasks, look up the company or contact being discussed there (their email history, notes and deal status) and keep their CRM record up to date. Macro's actions run without ${owner}'s approval, so be careful with anything that sends or deletes: only do it when ${owner} or the task clearly asked for it.\n` : ''}- x_search researches X (Twitter) live: what is being posted, what is going viral, what an account said.
 - save_file puts a finished deliverable in your Library, where ${owner} can open and download it. Anything you write under ${LIBRARY_ROOT}/${botId}/ shows up there too.
 - ask_user asks a multiple-choice question when you need a real decision. After calling it, stop; the answer arrives as the next message. Use it whenever a request is ambiguous or you would otherwise be guessing at something that matters (which account, which file, how far to go, anything hard to undo): a quick question beats a wrong guess. Ask one question at a time, give 2 to 4 short options, and put the one you recommend first. Do not ask about things you can work out yourself or were already told.
+- memory_recall and memory_save are long-term memory shared in layers: your own, each team you are on, and everyone's. Recall before work that may have history; save decisions, client facts and outcomes worth finding later (scope=team when your team should know).
 - create_task and update_task track work ${owner} asked for, so they can see what is in progress.
 - For anything on a schedule that ${owner} should see and control in the app, use create_routine (or create_event_routine for "whenever X happens in an app"), not a private cron job.
 - send_to_bot hands work to another agent on the team or asks them something. Their reply comes back to you as a message. post_to_group posts into a group chat you belong to.
