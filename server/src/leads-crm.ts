@@ -150,7 +150,11 @@ const isoDate = (s?: string) => {
   // A date written as YYYY-MM-DD (with or without a time) is kept as written: converting it to UTC
   // would move an evening post in Reno to the next day.
   const lit = /^(\d{4}-\d{2}-\d{2})(?:$|[T ])/.exec(s.trim());
-  if (lit && !Number.isNaN(new Date(`${lit[1]}T00:00:00Z`).getTime())) return lit[1];
+  if (lit) {
+    // Date rolls impossible days over (2026-02-30 becomes March 2), so the parts must come back unchanged.
+    const d = new Date(`${lit[1]}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === lit[1] ? lit[1] : '';
+  }
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 };

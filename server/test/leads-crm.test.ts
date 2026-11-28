@@ -157,3 +157,10 @@ test('a posted date is kept as written, not moved to the next day by UTC', async
   const ins = calls.find((x) => x.slug === 'NOTION_INSERT_ROW_DATABASE')!;
   assert.equal(valueOf(ins.args.properties, 'Posted'), '2026-11-25');
 });
+
+test('an impossible posted date is left out rather than rolled over to another day', async () => {
+  calls.length = 0;
+  await crm.upsertLeads(user, [lead({ name: 'Bad date', url: 'https://reno.craigslist.org/x/baddate.html', posted: '2026-02-30' })]);
+  const ins = calls.find((x) => x.slug === 'NOTION_INSERT_ROW_DATABASE')!;
+  assert.equal(valueOf(ins.args.properties, 'Posted'), undefined);
+});

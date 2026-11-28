@@ -157,8 +157,10 @@ async function readCraigslist(u: URL): Promise<{ url: string; title: string; tex
   // requested: with redirect 'follow' the off-Craigslist address would already have been fetched.
   let at = u;
   let res: Response | null = null;
+  // One 30 s deadline for the whole read (every hop and the body), not 30 s per hop.
+  const signal = AbortSignal.timeout(30_000);
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
-    res = await doFetch(at.toString(), { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+    res = await doFetch(at.toString(), { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'manual', signal });
     if (res.status < 300 || res.status >= 400) break;
     const loc = res.headers.get('location');
     await res.body?.cancel().catch(() => {});
