@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const dir = fs.mkdtempSync(path.join(process.env.TMPDIR!, 'outbox-test-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbox-test-'));
 process.env.NODE_ENV = 'test';
 process.env.DB_PATH = path.join(dir, 'db');
 process.env.XAI_API_KEY = 'test-only'; process.env.COMPOSIO_API_KEY = 'test-only'; process.env.SESSION_SECRET = 'test-only'; process.env.COMPUTER_PROVIDER = 'local';

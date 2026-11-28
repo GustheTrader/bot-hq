@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const dir = fs.mkdtempSync(path.join(process.env.TMPDIR!, 'bridge-hardening-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bridge-hardening-'));
 process.env.NODE_ENV = 'test';
 process.env.DB_PATH = path.join(dir, 'db.sqlite');
 process.env.XAI_API_KEY = 'test'; process.env.COMPOSIO_API_KEY = 'test'; process.env.SESSION_SECRET = 'test'; process.env.COMPUTER_PROVIDER = 'local';

@@ -147,6 +147,10 @@ export function leadKey(l: Pick<LeadIn, 'url' | 'name' | 'area'>): string {
 const clip = (s: unknown, n = 1900) => (typeof s === 'string' ? s.trim().slice(0, n) : '');
 const isoDate = (s?: string) => {
   if (!s) return '';
+  // A date written as YYYY-MM-DD (with or without a time) is kept as written: converting it to UTC
+  // would move an evening post in Reno to the next day.
+  const lit = /^(\d{4}-\d{2}-\d{2})(?:$|[T ])/.exec(s.trim());
+  if (lit && !Number.isNaN(new Date(`${lit[1]}T00:00:00Z`).getTime())) return lit[1];
   const d = new Date(s);
   return Number.isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10);
 };
@@ -212,6 +216,8 @@ export async function upsertLeads(userId: string, raw: unknown[]): Promise<Upser
   const out: UpsertResult = { added: 0, updated: 0, unchanged: 0, failed: [], mirrored: 0, mirrorError: null, hot: [] };
   const fresh: { lead: LeadIn; key: string }[] = [];
   const seen = new Set<string>();
+  // Over the limit: reported back so the bot sends the rest in another call, never silently dropped.
+  for (const r of raw.slice(25)) out.failed.push({ name: String((r as any)?.name ?? '?').slice(0, 80), error: 'over the 25-per-call limit: send it again in another call' });
   for (const r of raw.slice(0, 25)) {
     const lead = validateLead(r);
     if (typeof lead === 'string') { out.failed.push({ name: String((r as any)?.name ?? '?').slice(0, 80), error: lead }); continue; }
@@ -240,7 +246,9 @@ export async function upsertLeads(userId: string, raw: unknown[]): Promise<Upser
       const rows = fresh.filter((f) => f.lead.category === cat).map((f) => sheetRow(f.lead, f.key));
       if (!rows.length) continue;
       try {
-        await run(userId, 'GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND', { spreadsheetId: cfg.sheetId, range: `'${tab}'!A1`, valueInputOption: 'USER_ENTERED', insertDataOption: 'INSERT_ROWS', values: rows });
+        // RAW, not USER_ENTERED: lead text comes from strangers' posts, and a cell starting with "=" must
+        // stay text in the Sheet, never run as a formula (e.g. =IMPORTXML or =HYPERLINK).
+        await run(userId, 'GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND', { spreadsheetId: cfg.sheetId, range: `'${tab}'!A1`, valueInputOption: 'RAW', insertDataOption: 'INSERT_ROWS', values: rows });
         out.mirrored += rows.length;
       } catch (e: any) {
         // Notion is the record; a Sheet hiccup (they time out) never undoes it.
