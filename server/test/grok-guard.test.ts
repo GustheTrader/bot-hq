@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 
 process.env.NODE_ENV = 'test';
@@ -46,7 +47,7 @@ function boot(extra: Record<string, string>) {
   // Only PATH/HOME/TMPDIR plus the switch under test: the guard must stop the process before anything else loads.
   return spawnSync(tsx, ['src/index.ts'], {
     cwd: serverDir,
-    env: { PATH: process.env.PATH!, HOME: process.env.TMPDIR!, TMPDIR: process.env.TMPDIR!, ...extra },
+    env: { PATH: process.env.PATH!, HOME: os.tmpdir(), TMPDIR: os.tmpdir(), ...extra },
     encoding: 'utf8',
     timeout: 30_000,
   });

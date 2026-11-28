@@ -11,7 +11,7 @@ const web = await import('../src/websearch.js');
 type Seen = { url: string; method: string; ua?: string };
 const seen: Seen[] = [];
 let firecrawl: { status: number; body: any; headers?: Record<string, string> }[] = [];
-let pages: Record<string, { status?: number; html: string; landed?: string }> = {};
+let pages: Record<string, { status?: number; html: string; redirect?: string }> = {};
 const slept: number[] = [];
 web.setSleepForTests(async (ms) => { slept.push(ms); });
 web.setFetchForTests((async (url: any, init: any = {}) => {
@@ -23,9 +23,9 @@ web.setFetchForTests((async (url: any, init: any = {}) => {
   }
   const p = pages[u];
   if (!p) return new Response('not found', { status: 404 });
-  const res = new Response(p.html, { status: p.status ?? 200 });
-  Object.defineProperty(res, 'url', { value: p.landed ?? u });
-  return res;
+  // A redirect is answered as one, like a real server with redirect: 'manual'.
+  if (p.redirect) return new Response(null, { status: 302, headers: { location: p.redirect } });
+  return new Response(p.html, { status: p.status ?? 200 });
 }) as typeof fetch);
 
 const POST = `<html><head><title>I need someone - labor gigs - craigslist</title></head><body>
@@ -60,7 +60,10 @@ test('a Craigslist post is read directly (not through Firecrawl) into title, dat
 
 test('a Craigslist search page becomes a list of posts with their links', async () => {
   const url = 'https://reno.craigslist.org/search/ggg?query=gazebo';
-  pages[url] = { html: SEARCH, landed: 'https://www.craigslist.org/search/area/reno?cat=ggg&query=gazebo' };
+  // Craigslist sends reno.craigslist.org searches on to www.craigslist.org (a relative Location here).
+  pages[url] = { html: '', redirect: '/search/area/reno?cat=ggg&query=gazebo' };
+  pages['https://reno.craigslist.org/search/area/reno?cat=ggg&query=gazebo'] = { html: '', redirect: 'https://www.craigslist.org/search/area/reno?cat=ggg&query=gazebo' };
+  pages['https://www.craigslist.org/search/area/reno?cat=ggg&query=gazebo'] = { html: SEARCH };
   const p = await web.webRead(url);
   assert.equal(p.url, 'https://www.craigslist.org/search/area/reno?cat=ggg&query=gazebo');
   assert.equal(p.text, '2 posts on this page (newest first; open one with web_read for its date and text):\n- Gazebo help | $300 | Reno\n  https://www.craigslist.org/view/d/reno-gazebo-help/AAA\n- Hiring & paying\n  https://www.craigslist.org/view/d/reno-hiring/BBB');
@@ -71,8 +74,14 @@ test('Craigslist reading stays on Craigslist: no http, no lookalike hosts, no re
   assert.equal(web.isCraigslist(new URL('https://craigslist.org.evil.com/x')), false);
   assert.equal(web.isCraigslist(new URL('https://evilcraigslist.org/x')), false);
   const away = 'https://reno.craigslist.org/away';
-  pages[away] = { html: 'x', landed: 'http://127.0.0.1:8797/api/bots' };
+  pages[away] = { html: '', redirect: 'http://127.0.0.1:8797/api/bots' };
+  pages['http://127.0.0.1:8797/api/bots'] = { html: 'internal' };
+  seen.length = 0;
   await assert.rejects(web.webRead(away), /redirects off Craigslist/);
+  assert.ok(!seen.some((s) => s.url.includes('127.0.0.1')), 'the off-Craigslist address is never requested');
+  const loop = 'https://reno.craigslist.org/loop';
+  pages[loop] = { html: '', redirect: loop };
+  await assert.rejects(web.webRead(loop), /too many times/);
   const gone = 'https://www.craigslist.org/view/d/old/OLD';
   pages[gone] = { html: 'gone', status: 410 };
   await assert.rejects(web.webRead(gone), /gone \(deleted or expired\)/);

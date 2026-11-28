@@ -2,9 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-const dir = fs.mkdtempSync(path.join(process.env.TMPDIR!, 'grok-bridge-test-'));
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-bridge-test-'));
 process.env.NODE_ENV = 'test';
 process.env.DB_PATH = path.join(dir, 'test.db');
 process.env.XAI_API_KEY = 'test'; process.env.COMPOSIO_API_KEY = 'test';

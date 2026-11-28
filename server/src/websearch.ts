@@ -133,14 +133,49 @@ export const isCraigslist = (u: URL) => u.protocol === 'https:' && onHost(u, ['c
 const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
 const MAX_HTML = 3 * 1024 * 1024;
 
+const MAX_HOPS = 5;
+
+/** The body as text, read no further than `max` bytes, so one huge page can't fill the server's memory. */
+async function readCapped(res: Response, max: number): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (size < max) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.byteLength;
+    }
+  } finally { reader.cancel().catch(() => {}); }
+  return Buffer.concat(chunks).subarray(0, max).toString('utf8');
+}
+
 async function readCraigslist(u: URL): Promise<{ url: string; title: string; text: string; cut: boolean }> {
-  const res = await doFetch(u.toString(), { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'follow', signal: AbortSignal.timeout(30_000) });
-  let landed: URL;
-  try { landed = new URL(res.url || u.toString()); } catch { landed = u; }
-  if (!isCraigslist(landed)) throw new Error('That Craigslist link redirects off Craigslist; not followed.');
+  // Redirects are followed by hand, one hop at a time, and each address is checked BEFORE it is
+  // requested: with redirect 'follow' the off-Craigslist address would already have been fetched.
+  let at = u;
+  let res: Response | null = null;
+  // One 30 s deadline for the whole read (every hop and the body), not 30 s per hop.
+  const signal = AbortSignal.timeout(30_000);
+  for (let hop = 0; hop <= MAX_HOPS; hop++) {
+    res = await doFetch(at.toString(), { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'manual', signal });
+    if (res.status < 300 || res.status >= 400) break;
+    const loc = res.headers.get('location');
+    await res.body?.cancel().catch(() => {});
+    if (!loc) throw new Error(`Craigslist answered ${res.status} without saying where to.`);
+    let next: URL;
+    try { next = new URL(loc, at); } catch { throw new Error('That Craigslist link redirects somewhere unreadable; not followed.'); }
+    if (!isCraigslist(next)) throw new Error('That Craigslist link redirects off Craigslist; not followed.');
+    if (hop === MAX_HOPS) throw new Error('That Craigslist link redirects too many times.');
+    at = next;
+  }
+  if (!res) throw new Error('Craigslist did not answer.');
   if (res.status === 404 || res.status === 410) throw new Error('That Craigslist post is gone (deleted or expired).');
   if (!res.ok) throw new Error(`Craigslist answered ${res.status}.`);
-  const html = (await res.text()).slice(0, MAX_HTML);
+  const landed = at;
+  const html = await readCapped(res, MAX_HTML);
   const page = parseCraigslist(html);
   const text = page.text || '(The page had no readable text.)';
   return { url: landed.toString(), title: page.title, text: text.slice(0, MAX_PAGE), cut: text.length > MAX_PAGE };
